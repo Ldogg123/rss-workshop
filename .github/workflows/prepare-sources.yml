@@ -2,6 +2,8 @@ name: Prepare release source archives
 
 # This workflow attaches verified sources to an existing draft. It never creates
 # or publishes a release, changes a tag, or writes to a container registry.
+# Dispatch from a reviewed workflow ref; builds are pinned to the resolved tag
+# commit so workflow maintenance does not require moving an existing release tag.
 on:
   workflow_dispatch:
     inputs:
@@ -25,9 +27,14 @@ jobs:
   metadata:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # GitHub denies draft-release inspection to a contents:read GITHUB_TOKEN.
+    # No repository code is checked out or executed in this validation job.
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.draft.outputs.version }}
       release_id: ${{ steps.draft.outputs.release_id }}
+      commit: ${{ steps.draft.outputs.commit }}
       created: ${{ steps.draft.outputs.created }}
     steps:
       - name: Validate the selected tag and exact draft release
@@ -43,8 +50,17 @@ jobs:
             exit 1
           fi
           [[ "$RELEASE_ID" =~ ^[1-9][0-9]{0,19}$ ]] || { printf '%s\n' 'A numeric draft release ID is required.' >&2; exit 1; }
-          release_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
-          [[ "$release_sha" == "$GITHUB_SHA" ]] || { printf '%s\n' 'The selected workflow ref must match the release tag commit.' >&2; exit 1; }
+          # Resolve only refs/tags/VERSION, including annotated tags. A branch
+          # with the same name must never select different release code.
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit ]] || { printf '%s\n' 'Release tag nesting exceeds the supported limit.' >&2; exit 1; }
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "$RUNNER_TEMP/draft.json"
           python3 - "$RUNNER_TEMP/draft.json" <<'PY'
           import json, os, sys
@@ -54,7 +70,7 @@ jobs:
           if any(a['name'].startswith('debian-sources-') for a in release.get('assets', [])):
               sys.exit('The draft already has source assets. Review and remove an incomplete set explicitly before retrying; nothing is overwritten.')
           PY
-          printf 'version=%s\nrelease_id=%s\ncreated=%s\n' "$VERSION" "$RELEASE_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\nrelease_id=%s\ncommit=%s\ncreated=%s\n' "$VERSION" "$RELEASE_ID" "$release_sha" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
   sources:
     name: Collect and verify sources (${{ matrix.arch }})
@@ -72,10 +88,12 @@ jobs:
     env:
       DOCKER_BUILD_RECORD_UPLOAD: false
       VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
       ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.metadata.outputs.commit }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Build static release runtime locally
@@ -88,7 +106,7 @@ jobs:
           tags: rss-workshop:sources-static
           build-args: |
             VERSION=${{ needs.metadata.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.metadata.outputs.commit }}
             BUILD_DATE=${{ needs.metadata.outputs.created }}
             SOURCE_URL=https://github.com/${{ github.repository }}
           provenance: false
@@ -105,7 +123,7 @@ jobs:
           tags: rss-workshop:sources-browser
           build-args: |
             VERSION=${{ needs.metadata.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.metadata.outputs.commit }}
             BUILD_DATE=${{ needs.metadata.outputs.created }}
             SOURCE_URL=https://github.com/${{ github.repository }}
           provenance: false
@@ -120,7 +138,7 @@ jobs:
           browser_id=$(docker image inspect --format '{{.Id}}' rss-workshop:sources-browser)
           printf 'static=%s\nbrowser=%s\n' "$static_id" "$browser_id" >> "$GITHUB_OUTPUT"
           printf 'version=%s\ncommit=%s\narchitecture=%s\nstatic=%s\nbrowser=%s\n' \
-            "$VERSION" "$GITHUB_SHA" "$ARCH" "$static_id" "$browser_id" > "$RUNNER_TEMP/source-report/build.txt"
+            "$VERSION" "$RELEASE_COMMIT" "$ARCH" "$static_id" "$browser_id" > "$RUNNER_TEMP/source-report/build.txt"
           # This is an ephemeral hosted runner; loaded final images are retained.
           docker buildx prune --all --force
           python3 - <<'PY'
@@ -182,7 +200,7 @@ jobs:
           cp "$prefix.sha256" "$prefix.parts.sha256" "$RUNNER_TEMP/source-report/"
           {
             printf '### Verified source archive: %s\n\n' "$ARCH"
-            printf 'Version: `%s`; commit: `%s`.\n\n' "$VERSION" "$GITHUB_SHA"
+            printf 'Version: `%s`; commit: `%s`.\n\n' "$VERSION" "$RELEASE_COMMIT"
             printf 'Whole-archive checksum: `%s`.\n\n' "${checksum%% *}"
             printf 'The source report artifact contains exact package versions and verification results. Sources are attached to the draft only after both architectures pass.\n'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -227,6 +245,7 @@ jobs:
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_ID: ${{ needs.metadata.outputs.release_id }}
+      RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -269,8 +288,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          release_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
-          [[ "$release_sha" == "$GITHUB_SHA" ]] || { printf '%s\n' 'The release tag changed during source preparation.' >&2; exit 1; }
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit && "$release_sha" == "$RELEASE_COMMIT" ]] || { printf '%s\n' 'The release tag changed during source preparation.' >&2; exit 1; }
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "$RUNNER_TEMP/draft.json"
           python3 - "$RUNNER_TEMP/draft.json" <<'PY'
           import json, os, sys
