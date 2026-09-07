@@ -16,12 +16,22 @@ spec.loader.exec_module(collector)
 
 
 class SourceCollectionTests(unittest.TestCase):
-    def fixture(self, output, *, wrong_descriptor=False, bad_filename=False):
+    def fixture(self, output, *, wrong_descriptor=False, bad_filename=False,
+                extra_snapshot_file=False, missing_archive=False, change_descriptor=None):
         archive = b"a deterministic source archive"
         sha256 = "0" * 64 if wrong_descriptor else hashlib.sha256(archive).hexdigest()
         descriptor = f"Format: 3.0 (native)\nSource: fixture\nVersion: 1.0\nChecksums-Sha256:\n {sha256} {len(archive)} fixture_1.0.tar.xz\n".encode()
+        if change_descriptor:
+            descriptor = change_descriptor(descriptor)
         blobs = {hashlib.sha1(archive).hexdigest(): archive, hashlib.sha1(descriptor).hexdigest(): descriptor}
         names = dict(zip(blobs, ("../escape" if bad_filename else "fixture_1.0.tar.xz", "fixture_1.0.dsc")))
+        if missing_archive:
+            del blobs[hashlib.sha1(archive).hexdigest()]
+        if extra_snapshot_file:
+            auxiliary = b"auxiliary VCS history, not part of the Debian source package"
+            digest = hashlib.sha1(auxiliary).hexdigest()
+            blobs[digest] = auxiliary
+            names[digest] = "fixture_1.0.git.tar.xz"
 
         def metadata(path):
             if path == "/mr/package/fixture/1.0/srcfiles":
@@ -53,6 +63,52 @@ class SourceCollectionTests(unittest.TestCase):
             metadata, get = self.fixture(output, wrong_descriptor=True)
             with metadata, get, self.assertRaisesRegex(ValueError, "differs from its .dsc"):
                 collector.download_source("fixture", "1.0", output)
+
+    def test_snapshot_auxiliary_git_archive_is_not_a_source_package_input(self):
+        # Debianutils 5.23.2's Snapshot srcfiles endpoint includes .git.tar.xz,
+        # while its .dsc correctly lists only the native .tar.xz source archive.
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            metadata, get = self.fixture(output, extra_snapshot_file=True)
+            with metadata, get as calls:
+                result = collector.download_source("fixture", "1.0", output)
+            expected = {"fixture_1.0.dsc", "fixture_1.0.tar.xz"}
+            self.assertEqual({pathlib.Path(item["path"]).name for item in result["files"]}, expected)
+            self.assertEqual({p.name for p in (output / "sources/fixture/1.0").iterdir()}, expected)
+            self.assertEqual(calls.call_count, 2, "unreferenced Git archives must not download")
+
+    def test_every_descriptor_listed_archive_must_exist_in_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            metadata, get = self.fixture(output, missing_archive=True)
+            with metadata, get, self.assertRaisesRegex(ValueError, "unavailable Snapshot archive"):
+                collector.download_source("fixture", "1.0", output)
+
+    def test_descriptor_identity_and_duplicate_checksums_are_rejected(self):
+        changes = (
+            lambda data: data.replace(b"Source: fixture", b"Source: other"),
+            lambda data: data.replace(b"Version: 1.0", b"Version: 2.0"),
+            lambda data: data + b"Version: 1.0\n",
+            lambda data: data + data.splitlines(keepends=True)[-1],
+        )
+        for change in changes:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory)
+                metadata, get = self.fixture(output, change_descriptor=change)
+                with metadata, get as calls, self.assertRaises(ValueError):
+                    collector.download_source("fixture", "1.0", output)
+                self.assertEqual(calls.call_count, 1, "invalid descriptors must stop before source archives download")
+
+    def test_old_auxiliary_download_is_preserved_and_requires_fresh_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            old_file = output / "sources/fixture/1.0/fixture_1.0.git.tar.xz"
+            old_file.parent.mkdir(parents=True)
+            old_file.write_bytes(b"preserve previous collector output")
+            metadata, get = self.fixture(output, extra_snapshot_file=True)
+            with metadata, get, self.assertRaisesRegex(ValueError, "new empty output directory"):
+                collector.download_source("fixture", "1.0", output)
+            self.assertEqual(old_file.read_bytes(), b"preserve previous collector output")
 
     def test_snapshot_cannot_choose_parent_paths(self):
         with tempfile.TemporaryDirectory() as directory:

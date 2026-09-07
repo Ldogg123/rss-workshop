@@ -89,6 +89,7 @@ jobs:
       DOCKER_BUILD_RECORD_UPLOAD: false
       VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+      TOOLING_COMMIT: ${{ github.sha }}
       ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,6 +130,15 @@ jobs:
           provenance: false
           sbom: false
           cache-from: type=gha,scope=browser-${{ matrix.arch }}
+      - name: Check out maintained release tooling after image builds
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+        # Images above contain only the immutable release commit. Collector
+        # maintenance follows the reviewed workflow revision in a separate tree.
       - name: Record immutable images and reserve source workspace
         id: images
         shell: bash
@@ -137,8 +147,8 @@ jobs:
           static_id=$(docker image inspect --format '{{.Id}}' rss-workshop:sources-static)
           browser_id=$(docker image inspect --format '{{.Id}}' rss-workshop:sources-browser)
           printf 'static=%s\nbrowser=%s\n' "$static_id" "$browser_id" >> "$GITHUB_OUTPUT"
-          printf 'version=%s\ncommit=%s\narchitecture=%s\nstatic=%s\nbrowser=%s\n' \
-            "$VERSION" "$RELEASE_COMMIT" "$ARCH" "$static_id" "$browser_id" > "$RUNNER_TEMP/source-report/build.txt"
+          printf 'version=%s\ncommit=%s\ntooling_commit=%s\narchitecture=%s\nstatic=%s\nbrowser=%s\n' \
+            "$VERSION" "$RELEASE_COMMIT" "$TOOLING_COMMIT" "$ARCH" "$static_id" "$browser_id" > "$RUNNER_TEMP/source-report/build.txt"
           # This is an ephemeral hosted runner; loaded final images are retained.
           docker buildx prune --all --force
           python3 - <<'PY'
@@ -157,7 +167,7 @@ jobs:
           collect() {
             local variant="$1" image_id="$2" attempt
             for attempt in 1 2 3; do
-              if python3 -u scripts/collect-debian-sources.py --image "$image_id" \
+              if python3 -u "$GITHUB_WORKSPACE/.release-tools/scripts/collect-debian-sources.py" --image "$image_id" \
                   --output "$RUNNER_TEMP/source-collection/$variant" --download \
                   2>&1 | tee -a "$RUNNER_TEMP/source-report/$variant.log"; then
                 return 0
@@ -194,13 +204,14 @@ jobs:
           sha256sum "$prefix".part-?? > "$prefix.parts.sha256"
           arguments=()
           for archive in "$directory/$prefix".part-??; do arguments+=(--archive "$archive"); done
-          python3 "$GITHUB_WORKSPACE/scripts/check-release-sources.py" "${arguments[@]}" \
+          python3 "$GITHUB_WORKSPACE/.release-tools/scripts/check-release-sources.py" "${arguments[@]}" \
             --architecture "$ARCH" --static-image "$STATIC_ID" --browser-image "$BROWSER_ID" \
             | tee "$RUNNER_TEMP/source-report/verification.txt"
           cp "$prefix.sha256" "$prefix.parts.sha256" "$RUNNER_TEMP/source-report/"
           {
             printf '### Verified source archive: %s\n\n' "$ARCH"
             printf 'Version: `%s`; commit: `%s`.\n\n' "$VERSION" "$RELEASE_COMMIT"
+            printf 'Collector and verifier revision: `%s`.\n\n' "$TOOLING_COMMIT"
             printf 'Whole-archive checksum: `%s`.\n\n' "${checksum%% *}"
             printf 'The source report artifact contains exact package versions and verification results. Sources are attached to the draft only after both architectures pass.\n'
           } >> "$GITHUB_STEP_SUMMARY"

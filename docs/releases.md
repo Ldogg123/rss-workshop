@@ -76,7 +76,7 @@ Before distributing a release, collect the exact Debian source archives for each
 
 ### Prepare sources with GitHub Actions
 
-The manual **Prepare release source archives** workflow builds and verifies both architectures on native GitHub runners. Run the reviewed workflow from the default branch; it resolves the release tag once and checks out that exact commit for both builds. This lets preparation tooling be fixed without moving an existing release tag. It uploads dependency source bundles to an existing draft release; it does not publish images or make the release public.
+The manual **Prepare release source archives** workflow builds and verifies both architectures on native GitHub runners. Run the reviewed workflow from the default branch; it resolves the release tag once and checks out that exact commit for both image builds. Archive collection and validation use the scripts from the reviewed workflow revision, recorded alongside the image commit in the reports. This lets preparation tooling be fixed without moving an existing release tag. It uploads dependency source bundles to an existing draft release; it does not publish images or make the release public.
 
 1. Push the reviewed commit and its version tag, then create a draft GitHub release for that exact tag. The workflow must already be on the default branch.
 2. Open **Actions → Prepare release source archives → Run workflow**, select the reviewed default branch, and enter the version and the draft's numeric release ID. The ID is available through `gh api repos/Ldogg123/rss-workshop/releases`; use the entry matching the draft's tag.

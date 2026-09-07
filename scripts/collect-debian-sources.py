@@ -95,6 +95,30 @@ def hashes(path):
     return sha1.hexdigest(), sha256.hexdigest()
 
 
+def download_file(filename, info, directory, output):
+    digest, size = info["snapshot_sha1"], info["size"]
+    destination = directory / filename
+    existing = hashes(destination)[0] if destination.is_file() else ""
+    if existing != digest or destination.stat().st_size != size:
+        partial = destination.with_name(destination.name + ".part")
+        try:
+            with get(SNAPSHOT + "/file/" + digest) as response, partial.open("wb") as target:
+                received = 0
+                for block in iter(lambda: response.read(1 << 20), b""):
+                    received += len(block)
+                    if received > size:
+                        raise ValueError("source file exceeds recorded size")
+                    target.write(block)
+            if received != size or hashes(partial)[0] != digest:
+                raise ValueError("source file size or Snapshot identity mismatch")
+            partial.replace(destination)
+        finally:
+            partial.unlink(missing_ok=True)
+    return dict(path=str(destination.relative_to(output)), size=size,
+                sha256=hashes(destination)[1], snapshot_sha1=digest,
+                origin=SNAPSHOT + "/file/" + digest)
+
+
 def download_source(name, version, output):
     path = "/mr/package/" + urllib.parse.quote(name, safe="") + "/" + urllib.parse.quote(version, safe="") + "/srcfiles"
     response = metadata(path)
@@ -102,7 +126,7 @@ def download_source(name, version, output):
         raise ValueError("Snapshot did not return the exact requested source version")
     directory = output / "sources" / name / urllib.parse.quote(version, safe="")
     directory.mkdir(parents=True, exist_ok=True)
-    files = []
+    available = {}
     for entry in response["result"]:
         digest = entry["hash"]
         if not re.fullmatch(r"[0-9a-f]{40}", digest):
@@ -112,48 +136,48 @@ def download_source(name, version, output):
             raise ValueError("missing source file metadata")
         info = variants[0]
         filename, size = info["name"], info["size"]
-        if pathlib.PurePosixPath(filename).name != filename or filename in ("", ".", "..") or not isinstance(size, int) or size < 1:
+        if not isinstance(filename, str) or pathlib.PurePosixPath(filename).name != filename or filename in ("", ".", "..") or "\\" in filename or type(size) is not int or size < 1:
             raise ValueError("invalid source file metadata")
-        destination = directory / filename
-        existing = hashes(destination)[0] if destination.is_file() else ""
-        if existing != digest or destination.stat().st_size != size:
-            partial = destination.with_name(destination.name + ".part")
-            try:
-                with get(SNAPSHOT + "/file/" + digest) as response, partial.open("wb") as target:
-                    received = 0
-                    for block in iter(lambda: response.read(1 << 20), b""):
-                        received += len(block)
-                        if received > size:
-                            raise ValueError("source file exceeds recorded size")
-                        target.write(block)
-                if received != size or hashes(partial)[0] != digest:
-                    raise ValueError("source file size or Snapshot identity mismatch")
-                partial.replace(destination)
-            finally:
-                partial.unlink(missing_ok=True)
-        files.append(dict(path=str(destination.relative_to(output)), size=size,
-                          sha256=hashes(destination)[1], snapshot_sha1=digest,
-                          origin=SNAPSHOT + "/file/" + digest))
-    descriptors = [item for item in files if item["path"].endswith(".dsc")]
+        if filename in available:
+            raise ValueError("duplicate source filename in Snapshot metadata")
+        available[filename] = dict(size=size, snapshot_sha1=digest)
+    descriptors = [filename for filename in available if filename.endswith(".dsc")]
     if len(descriptors) != 1:
         raise ValueError("source package must contain exactly one Debian .dsc descriptor")
+    descriptor_name = descriptors[0]
+    if available[descriptor_name]["size"] > 4 << 20:
+        raise ValueError("source descriptor exceeds the metadata size limit")
+    files = [download_file(descriptor_name, available[descriptor_name], directory, output)]
     # Check the package's own SHA-256 list as well as Snapshot's content identity.
     # This is not a verification of the uploader's OpenPGP signature.
-    descriptor = (output / descriptors[0]["path"]).read_text()
-    match = re.search(r"(?m)^Checksums-Sha256:\n((?:[ \t].*\n)+)", descriptor)
-    if not match:
-        raise ValueError("source descriptor has no SHA-256 checksums")
-    indexed = {pathlib.Path(item["path"]).name: item for item in files}
-    verified = set()
-    for line in match[1].splitlines():
+    descriptor = (directory / descriptor_name).read_text()
+    for field, expected in (("Source", name), ("Version", version)):
+        if re.findall(r"(?m)^" + field + r": ([^\n]+)$", descriptor) != [expected]:
+            raise ValueError("source descriptor does not match the requested package/version")
+    matches = re.findall(r"(?m)^Checksums-Sha256:\n((?:[ \t].*\n)+)", descriptor)
+    if len(matches) != 1:
+        raise ValueError("source descriptor has no unique SHA-256 checksum list")
+    required = {}
+    for line in matches[0].splitlines():
         digest, size, filename = line.split()
-        item = indexed.get(filename)
-        if not item or item["sha256"] != digest or item["size"] != int(size):
+        if not re.fullmatch(r"[0-9a-f]{64}", digest) or not re.fullmatch(r"[0-9]+", size) or filename in required or filename == descriptor_name:
+            raise ValueError("invalid source descriptor checksum entry")
+        if filename not in available:
+            raise ValueError("source descriptor names an unavailable Snapshot archive")
+        if available[filename]["size"] != int(size):
             raise ValueError("source archive differs from its .dsc descriptor")
-        verified.add(filename)
-    expected = set(indexed) - {pathlib.Path(descriptors[0]["path"]).name}
-    if verified != expected:
-        raise ValueError("source descriptor does not cover every downloaded archive")
+        required[filename] = digest
+    # Snapshot also indexes auxiliary artifacts, such as debianutils' .git.tar.xz.
+    # Debian Policy 5.6.24 defines the .dsc checksum list as the complete source
+    # package. Download every listed file; do not add unreferenced VCS archives.
+    # https://www.debian.org/doc/debian-policy/ch-controlfields.html#checksums-sha1-and-checksums-sha256
+    if {path.name for path in directory.iterdir()} - set(required) - {descriptor_name}:
+        raise ValueError("source output contains files not listed by its .dsc; choose a new empty output directory")
+    for filename, digest in required.items():
+        item = download_file(filename, available[filename], directory, output)
+        if item["sha256"] != digest:
+            raise ValueError("source archive differs from its .dsc descriptor")
+        files.append(item)
     return dict(package=name, version=version, files=files)
 
 
