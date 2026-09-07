@@ -1,0 +1,296 @@
+name: Prepare release source archives
+
+# This workflow attaches verified sources to an existing draft. It never creates
+# or publishes a release, changes a tag, or writes to a container registry.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release tag, for example v0.1.0'
+        type: string
+        required: true
+      release_id:
+        description: 'Numeric ID of the existing draft GitHub release'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release-sources
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.draft.outputs.version }}
+      release_id: ${{ steps.draft.outputs.release_id }}
+      created: ${{ steps.draft.outputs.created }}
+    steps:
+      - name: Validate the selected tag and exact draft release
+        id: draft
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || (( ${#VERSION} > 100 )); then
+            printf '%s\n' 'Version must be vMAJOR.MINOR.PATCH, optionally followed by -rc.N.' >&2
+            exit 1
+          fi
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]{0,19}$ ]] || { printf '%s\n' 'A numeric draft release ID is required.' >&2; exit 1; }
+          release_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
+          [[ "$release_sha" == "$GITHUB_SHA" ]] || { printf '%s\n' 'The selected workflow ref must match the release tag commit.' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "$RUNNER_TEMP/draft.json"
+          python3 - "$RUNNER_TEMP/draft.json" <<'PY'
+          import json, os, sys
+          release = json.load(open(sys.argv[1]))
+          if release['id'] != int(os.environ['RELEASE_ID']) or release['tag_name'] != os.environ['VERSION'] or release.get('draft') is not True:
+              sys.exit('The supplied release must be the existing draft for this exact version.')
+          if any(a['name'].startswith('debian-sources-') for a in release.get('assets', [])):
+              sys.exit('The draft already has source assets. Review and remove an incomplete set explicitly before retrying; nothing is overwritten.')
+          PY
+          printf 'version=%s\nrelease_id=%s\ncreated=%s\n' "$VERSION" "$RELEASE_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  sources:
+    name: Collect and verify sources (${{ matrix.arch }})
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: false
+      VERSION: ${{ needs.metadata.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build static release runtime locally
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: rss-workshop:sources-static
+          build-args: |
+            VERSION=${{ needs.metadata.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.metadata.outputs.created }}
+            SOURCE_URL=https://github.com/${{ github.repository }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=static-${{ matrix.arch }}
+      - name: Build browser release runtime locally
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.browser
+          target: app
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: rss-workshop:sources-browser
+          build-args: |
+            VERSION=${{ needs.metadata.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.metadata.outputs.created }}
+            SOURCE_URL=https://github.com/${{ github.repository }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=browser-${{ matrix.arch }}
+      - name: Record immutable images and reserve source workspace
+        id: images
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-report" "$RUNNER_TEMP/source-assets"
+          static_id=$(docker image inspect --format '{{.Id}}' rss-workshop:sources-static)
+          browser_id=$(docker image inspect --format '{{.Id}}' rss-workshop:sources-browser)
+          printf 'static=%s\nbrowser=%s\n' "$static_id" "$browser_id" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\ncommit=%s\narchitecture=%s\nstatic=%s\nbrowser=%s\n' \
+            "$VERSION" "$GITHUB_SHA" "$ARCH" "$static_id" "$browser_id" > "$RUNNER_TEMP/source-report/build.txt"
+          # This is an ephemeral hosted runner; loaded final images are retained.
+          docker buildx prune --all --force
+          python3 - <<'PY'
+          import os, shutil, sys
+          free = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
+          print(f'Free source workspace: {free / (1 << 30):.1f} GiB')
+          if free < 8 << 30:
+              sys.exit('At least 8 GiB free space is required after building. Use a larger hosted runner before retrying.')
+          PY
+      - name: Download and verify exact Debian source versions
+        env:
+          STATIC_ID: ${{ steps.images.outputs.static }}
+          BROWSER_ID: ${{ steps.images.outputs.browser }}
+        shell: bash
+        run: |
+          collect() {
+            local variant="$1" image_id="$2" attempt
+            for attempt in 1 2 3; do
+              if python3 -u scripts/collect-debian-sources.py --image "$image_id" \
+                  --output "$RUNNER_TEMP/source-collection/$variant" --download \
+                  2>&1 | tee -a "$RUNNER_TEMP/source-report/$variant.log"; then
+                return 0
+              fi
+              if (( attempt < 3 )); then sleep "$((attempt * 15))"; fi
+            done
+            return 1
+          }
+          collect static "$STATIC_ID"
+          collect browser "$BROWSER_ID"
+      - name: Stream archives into bounded parts and verify the actual bytes
+        env:
+          STATIC_ID: ${{ steps.images.outputs.static }}
+          BROWSER_ID: ${{ steps.images.outputs.browser }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, shutil, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          size = sum(p.stat().st_size for p in (root / 'source-collection').rglob('*') if p.is_file())
+          if shutil.disk_usage(root).free < size + (512 << 20):
+              sys.exit('Insufficient space for the compressed source parts; collected files and report remain available until this job ends.')
+          PY
+          prefix="debian-sources-${VERSION}-linux-${ARCH}.tar.gz"
+          directory="$RUNNER_TEMP/source-assets"
+          # Sources are already compressed. A fast outer gzip keeps packaging
+          # bounded; no combined archive or second set of split copies is made.
+          tar -C "$RUNNER_TEMP/source-collection" --sort=name --mtime=@0 \
+            --owner=0 --group=0 --numeric-owner -cf - static browser \
+            | gzip -n -1 | split -b 1900M -d -a 2 - "$directory/$prefix.part-"
+          cd "$directory"
+          checksum=$(cat "$prefix".part-?? | sha256sum)
+          printf '%s  %s\n' "${checksum%% *}" "$prefix" > "$prefix.sha256"
+          sha256sum "$prefix".part-?? > "$prefix.parts.sha256"
+          arguments=()
+          for archive in "$directory/$prefix".part-??; do arguments+=(--archive "$archive"); done
+          python3 "$GITHUB_WORKSPACE/scripts/check-release-sources.py" "${arguments[@]}" \
+            --architecture "$ARCH" --static-image "$STATIC_ID" --browser-image "$BROWSER_ID" \
+            | tee "$RUNNER_TEMP/source-report/verification.txt"
+          cp "$prefix.sha256" "$prefix.parts.sha256" "$RUNNER_TEMP/source-report/"
+          {
+            printf '### Verified source archive: %s\n\n' "$ARCH"
+            printf 'Version: `%s`; commit: `%s`.\n\n' "$VERSION" "$GITHUB_SHA"
+            printf 'Whole-archive checksum: `%s`.\n\n' "${checksum%% *}"
+            printf 'The source report artifact contains exact package versions and verification results. Sources are attached to the draft only after both architectures pass.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Transfer verified source parts to the asset job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-bundles-${{ matrix.arch }}
+          path: ${{ runner.temp }}/source-assets/
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 3
+      - name: Gather small inventories and reports
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-report"
+          for variant in static browser; do
+            for file in index.json SHA256SUMS; do
+              source="$RUNNER_TEMP/source-collection/$variant/$file"
+              if [[ -f "$source" ]]; then cp "$source" "$RUNNER_TEMP/source-report/$variant-$file"; fi
+            done
+          done
+          df -h "$RUNNER_TEMP" > "$RUNNER_TEMP/source-report/disk.txt"
+      - name: Retain source inventories and verification reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-report-${{ matrix.arch }}
+          path: ${{ runner.temp }}/source-report/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+  assets:
+    name: Attach verified sources to the draft release
+    needs: [metadata, sources]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_ID: ${{ needs.metadata.outputs.release_id }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: source-bundles-*
+          path: ${{ runner.temp }}/source-assets
+          merge-multiple: true
+      - name: Verify transferred parts and complete architecture coverage
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'source-assets'
+          expected = set()
+          for arch in ('amd64', 'arm64'):
+              prefix = f"debian-sources-{os.environ['VERSION']}-linux-{arch}.tar.gz"
+              parts = sorted(root.glob(prefix + '.part-??'))
+              if not parts or [p.name for p in parts] != [f'{prefix}.part-{i:02d}' for i in range(len(parts))]:
+                  sys.exit('Missing or noncontiguous transferred source parts.')
+              whole, lines = hashlib.sha256(), []
+              for part in parts:
+                  if part.is_symlink() or not part.is_file() or not 0 < part.stat().st_size <= 1900 << 20:
+                      sys.exit('Invalid transferred source part.')
+                  digest = hashlib.sha256()
+                  with part.open('rb') as source:
+                      for block in iter(lambda: source.read(1 << 20), b''):
+                          whole.update(block)
+                          digest.update(block)
+                  lines.append(f'{digest.hexdigest()}  {part.name}\n')
+              if (root / (prefix + '.parts.sha256')).read_text() != ''.join(lines):
+                  sys.exit('Transferred part checksum mismatch.')
+              if (root / (prefix + '.sha256')).read_text() != f'{whole.hexdigest()}  {prefix}\n':
+                  sys.exit('Transferred whole-archive checksum mismatch.')
+              expected.update(p.name for p in parts)
+              expected.update((prefix + '.sha256', prefix + '.parts.sha256'))
+          if {p.name for p in root.iterdir()} != expected:
+              sys.exit('Unexpected files in transferred source artifacts.')
+          PY
+      - name: Recheck the draft and upload without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          release_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${VERSION}" --jq .sha)
+          [[ "$release_sha" == "$GITHUB_SHA" ]] || { printf '%s\n' 'The release tag changed during source preparation.' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "$RUNNER_TEMP/draft.json"
+          python3 - "$RUNNER_TEMP/draft.json" <<'PY'
+          import json, os, sys
+          release = json.load(open(sys.argv[1]))
+          if release['id'] != int(os.environ['RELEASE_ID']) or release['tag_name'] != os.environ['VERSION'] or release.get('draft') is not True:
+              sys.exit('The release must still be the same draft for this tag.')
+          if any(a['name'].startswith('debian-sources-') for a in release.get('assets', [])):
+              sys.exit('Source assets already exist. Nothing will be overwritten; review any partial earlier upload before retrying.')
+          PY
+          # Address the validated release ID directly, avoiding a second tag-to-
+          # release lookup. The API refuses duplicate asset names; no clobber.
+          for asset in "$RUNNER_TEMP/source-assets/"*; do
+            gh api --method POST \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset##*/}" \
+              --header 'Content-Type: application/octet-stream' --input "$asset" --silent
+          done
+          {
+            printf '### Source archives attached to draft %s\n\n' "$VERSION"
+            printf 'Both native architectures passed exact-image source verification. The draft remains unpublished; no container images were uploaded.\n\n'
+            printf 'Review the small source-report artifacts and the release assets, then publish the draft before dispatching Publish container images.\n\n'
+            printf 'Each archive uses contiguous 1900 MiB parts. Reassemble with `cat debian-sources-VERSION-linux-ARCH.tar.gz.part-* > debian-sources-VERSION-linux-ARCH.tar.gz`, then verify its `.sha256` file.\n\n'
+            printf 'If upload failed partway, explicitly review and remove that incomplete source-asset set before rerunning the asset job. This workflow never clobbers assets.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

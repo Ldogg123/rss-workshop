@@ -2,14 +2,14 @@
 
 CI validates changes without publishing images. Container publication uses a manually dispatched GitHub Container Registry workflow that requires a matching release tag, passing tests, and verified corresponding-source archives.
 
-The source repository is [Ldogg123/rss-workshop](https://github.com/Ldogg123/rss-workshop). Tagged releases and prebuilt images have not been published yet. Versioned image names below illustrate the release format; use source builds until a release is available.
+The source repository is [Ldogg123/rss-workshop](https://github.com/Ldogg123/rss-workshop). Check [GitHub Releases](https://github.com/Ldogg123/rss-workshop/releases) for published versions and prebuilt image availability. The examples below use `v0.1.0`.
 
 ## Images and architectures
 
 | Variant | Example image tag | Runtime |
 | --- | --- | --- |
-| Browser (default) | `ghcr.io/ldogg123/rss-workshop:v0.4.0-browser` | App with the pinned Debian slim Chromium runtime |
-| Static | `ghcr.io/ldogg123/rss-workshop:v0.4.0-static` | Statically linked Go executable, CA certificates and license notices; no shell or local browser |
+| Browser (default) | `ghcr.io/ldogg123/rss-workshop:v0.1.0-browser` | App with the pinned Debian slim Chromium runtime |
+| Static | `ghcr.io/ldogg123/rss-workshop:v0.1.0-static` | Statically linked Go executable, CA certificates and license notices; no shell or local browser |
 
 Both variants support the configured external FlareSolverr service. The browser variant additionally supports local Chromium and Auto rendering. The publishing workflow builds Linux `amd64` and `arm64` manifests for both tags. The lowercased GitHub repository determines the GHCR namespace: `Ldogg123/rss-workshop` publishes under `ghcr.io/ldogg123/rss-workshop`.
 
@@ -56,9 +56,9 @@ The container checks create isolated smoke-test projects and private temporary h
 ## Version and image metadata
 
 ```sh
-make build VERSION=v0.4.0 COMMIT=COMMIT_SHA
+make build VERSION=v0.1.0 COMMIT=COMMIT_SHA
 ./bin/rss-workshop -version
-make docker-static docker-browser VERSION=v0.4.0 COMMIT=COMMIT_SHA \
+make docker-static docker-browser VERSION=v0.1.0 COMMIT=COMMIT_SHA \
   SOURCE_URL=https://github.com/Ldogg123/rss-workshop
 ```
 
@@ -74,6 +74,19 @@ The production browser target excludes the race test binaries. Both runtime imag
 
 Before distributing a release, collect the exact Debian source archives for each final platform image, including the static image's CA package. See [licensing and corresponding source](licensing.md). An SBOM, a package list, a source URL, or an expiring Actions artifact is not a replacement for the actual matching source files.
 
+### Prepare sources with GitHub Actions
+
+The manual **Prepare release source archives** workflow builds and verifies both architectures on native GitHub runners. It uploads dependency source bundles to an existing draft release; it does not publish images or make the release public.
+
+1. Push the reviewed commit and its version tag, then create a draft GitHub release for that exact tag. The workflow must already be on the default branch.
+2. Open **Actions → Prepare release source archives → Run workflow**, select the version tag, and enter the version and the draft's numeric release ID. The ID is available through `gh api repos/Ldogg123/rss-workshop/releases`; use the entry matching the draft's tag.
+3. Review the completed run's verification reports and package inventories for both architectures. Each job collects exact Debian sources, verifies checksums and descriptors, and compares the archives with its locally built image IDs. Large archives are streamed into numbered parts to limit disk use.
+4. Confirm that both source bundles and their checksums are attached to the draft. Include the source download/reassembly instructions below in the release notes, then publish the release before running the image publication workflow.
+
+Source preparation refuses to replace existing release assets. If an upload is interrupted, inspect the draft and remove only incomplete assets from that preparation attempt before retrying. Preserve published archives. The separate image workflow verifies the durable downloads again against the final images before pushing them.
+
+### Prepare sources locally
+
 On each native architecture, build the intended release images and collect their sources. Example for `amd64`:
 
 ```sh
@@ -81,8 +94,8 @@ python3 scripts/collect-debian-sources.py --image rss-workshop:static-check \
   --output dist/debian-sources/linux-amd64/static --download
 python3 scripts/collect-debian-sources.py --image rss-workshop:browser-check \
   --output dist/debian-sources/linux-amd64/browser --download
-tar -C dist/debian-sources/linux-amd64 -czf dist/debian-sources-v0.4.0-linux-amd64.tar.gz static browser
-(cd dist && sha256sum debian-sources-v0.4.0-linux-amd64.tar.gz > debian-sources-v0.4.0-linux-amd64.tar.gz.sha256)
+tar -C dist/debian-sources/linux-amd64 -czf dist/debian-sources-v0.1.0-linux-amd64.tar.gz static browser
+(cd dist && sha256sum debian-sources-v0.1.0-linux-amd64.tar.gz > debian-sources-v0.1.0-linux-amd64.tar.gz.sha256)
 ```
 
 Use `linux-arm64` and the native ARM images for the other archive. Add `--docker 'sudo docker'` where Docker requires sudo. Start with empty output directories; an interrupted collection can resume in the same directory only while the image's installed package inventory is unchanged. If packages change, collect into a new directory so the archive cannot include old versions left by an earlier build. Each archive must contain `static/` and `browser/` at its root, including their `index.json`, `SHA256SUMS`, and actual source files. The collector records image identity, installed package/source versions, checksum manifest, and completion status. All downloads must finish and the inventories must match the released images. Chromium's source archive is large; allow sufficient disk space and download time. Keep these generated archives outside Git.
@@ -90,11 +103,11 @@ Use `linux-arm64` and the native ARM images for the other archive. Add `--docker
 Attach the two archives to the durable GitHub release for the same version, using exactly `debian-sources-VERSION-linux-amd64.tar.gz` and `debian-sources-VERSION-linux-arm64.tar.gz`. GitHub requires [each release asset to be under 2 GiB](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases). Split a larger archive into 1900 MiB chunks:
 
 ```sh
-split -b 1900M -d -a 2 dist/debian-sources-v0.4.0-linux-amd64.tar.gz \
-  dist/debian-sources-v0.4.0-linux-amd64.tar.gz.part-
+split -b 1900M -d -a 2 dist/debian-sources-v0.1.0-linux-amd64.tar.gz \
+  dist/debian-sources-v0.1.0-linux-amd64.tar.gz.part-
 ```
 
-Upload either the single archive or its complete contiguous `.part-00`, `.part-01`, and subsequent parts, never both. Include the original archive's `.sha256` file in either case. The verifier streams parts in order without extracting or creating another combined copy. Anyone downloading split sources can reconstruct the archive with `cat debian-sources-v0.4.0-linux-amd64.tar.gz.part-* > debian-sources-v0.4.0-linux-amd64.tar.gz`, then run `sha256sum -c debian-sources-v0.4.0-linux-amd64.tar.gz.sha256`; publish those instructions with the assets.
+Upload either the single archive or its complete contiguous `.part-00`, `.part-01`, and subsequent parts, never both. Include the original archive's `.sha256` file in either case. The verifier streams parts in order without extracting or creating another combined copy. Anyone downloading split sources can reconstruct the archive with `cat debian-sources-v0.1.0-linux-amd64.tar.gz.part-* > debian-sources-v0.1.0-linux-amd64.tar.gz`, then run `sha256sum -c debian-sources-v0.1.0-linux-amd64.tar.gz.sha256`; publish those instructions with the assets.
 
 Make the release and archives accessible to recipients before publishing the images. Preserve them alongside the release; do not rely on an upstream package mirror retaining an old version indefinitely. Refresh the source archives if a rebuild changes the installed packages.
 

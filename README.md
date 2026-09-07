@@ -20,7 +20,7 @@ docker compose up -d --build --wait
 
 Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`.
 
-For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Prebuilt images have not been published yet. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
+For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available prebuilt images and follow [registry deployment](docs/deployment.md#registry-images) to use one. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
 
 ## Optional PostgreSQL
 

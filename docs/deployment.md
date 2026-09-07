@@ -48,10 +48,10 @@ Changing the selected database does not copy recipes, articles, or reader tokens
 
 ## Registry images
 
-Prebuilt images have not been published yet; use the source-build instructions above. After the first image release, set `RSS_IMAGE` in `.env` to an available tag or immutable digest under `ghcr.io/ldogg123/rss-workshop`. Tags include a runtime suffix; this is a format example, not an available release:
+Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available prebuilt images. Set `RSS_IMAGE` in `.env` to a published tag or immutable digest under `ghcr.io/ldogg123/rss-workshop`. Tags include a runtime suffix; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.4.0-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser
 ```
 
 Apply `compose.image.yaml` last to use that image without building locally:

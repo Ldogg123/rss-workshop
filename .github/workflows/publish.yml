@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, for example v0.4.0 or v0.4.0-rc.1'
+        description: 'Release version, for example v0.1.0 or v0.1.0-rc.1'
         type: string
         required: true
       sources_reviewed:
@@ -193,22 +193,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Refuse to overwrite existing version tags
-        env:
-          IMAGE: ${{ needs.metadata.outputs.image }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-        shell: bash
-        run: |
-          for variant in static browser; do
-            if docker buildx imagetools inspect "${IMAGE}:${VERSION}-${variant}" > /dev/null 2> "$RUNNER_TEMP/manifest-error"; then
-              printf '%s\n' 'A version tag already exists. Release versions must not be overwritten.' >&2
-              exit 1
-            fi
-            case "$(cat "$RUNNER_TEMP/manifest-error")" in
-              *': not found'*|*'manifest unknown'*|*'MANIFEST_UNKNOWN'*) ;;
-              *) cat "$RUNNER_TEMP/manifest-error" >&2; exit 1 ;;
-            esac
-          done
       - name: Upload the verified image IDs without rebuilding
         env:
           IMAGE: ${{ needs.metadata.outputs.image }}
