@@ -72,6 +72,7 @@ def package_pairs(packages):
 
 
 def verify_descriptor(text, source, indexed):
+    text = collector.descriptor_payload(text)
     for field, expected in (("Source", source["package"]), ("Version", source["version"])):
         matches = re.findall(r"(?m)^" + field + r": ([^\n]+)$", text)
         if matches != [expected]:

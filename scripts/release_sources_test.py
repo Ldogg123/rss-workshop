@@ -99,6 +99,23 @@ class ReleaseSourceTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "architecture"):
                     verifier.check_images(indices, "amd64", dict(static="static", browser="browser"), ["docker"])
 
+    def test_signed_descriptor_ignores_only_armor_version_metadata(self):
+        digest = "a" * 64
+        payload = f"Source: fixture\nVersion: 1.0\nChecksums-Sha256:\n {digest} 10 fixture_1.0.tar.xz\n"
+        source = dict(package="fixture", version="1.0")
+        indexed = {"fixture_1.0.tar.xz": dict(sha256=digest, size=10), "fixture_1.0.dsc": {}}
+
+        def signed(body):
+            return ("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n" + body +
+                    "\n-----BEGIN PGP SIGNATURE-----\nVersion: GnuPG v1\n\n" +
+                    "synthetic-signature\n-----END PGP SIGNATURE-----\n")
+
+        verifier.verify_descriptor(signed(payload), source, indexed)
+        for wrong in (payload.replace("Version: 1.0", "Version: 2.0"),
+                      payload.replace("Version: 1.0", "Version: 1.0\nVersion: 1.0")):
+            with self.subTest(payload=wrong), self.assertRaisesRegex(ValueError, "package/version"):
+                verifier.verify_descriptor(signed(wrong), source, indexed)
+
 
 if __name__ == "__main__":
     unittest.main()

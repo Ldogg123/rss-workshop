@@ -95,6 +95,30 @@ def hashes(path):
     return sha1.hexdigest(), sha256.hexdigest()
 
 
+def descriptor_payload(text):
+    """Return Debian control fields, excluding optional OpenPGP armor metadata.
+
+    This extracts cleartext only; it does not verify the signature. Preserve the
+    original downloaded .dsc bytes for their Snapshot identity and release hash.
+    """
+    text = text.replace("\r\n", "\n")
+    signed = "-----BEGIN PGP SIGNED MESSAGE-----\n"
+    signature = "\n-----BEGIN PGP SIGNATURE-----\n"
+    if not text.startswith(signed):
+        if "-----BEGIN PGP " in text:
+            raise ValueError("malformed source descriptor OpenPGP armor")
+        return text
+    _, separator, remainder = text.partition("\n\n")
+    if not separator:
+        raise ValueError("malformed source descriptor OpenPGP headers")
+    payload, separator, armor = remainder.partition(signature)
+    if not separator or not armor.rstrip().endswith("\n-----END PGP SIGNATURE-----"):
+        raise ValueError("malformed source descriptor OpenPGP signature armor")
+    # OpenPGP cleartext signatures dash-escape lines that begin with a dash.
+    return "\n".join(line[2:] if line.startswith("- ") else line
+                     for line in payload.splitlines()) + "\n"
+
+
 def download_file(filename, info, directory, output):
     digest, size = info["snapshot_sha1"], info["size"]
     destination = directory / filename
@@ -134,23 +158,33 @@ def download_source(name, version, output):
         variants = metadata("/mr/file/" + digest + "/info")["result"]
         if not variants:
             raise ValueError("missing source file metadata")
-        info = variants[0]
-        filename, size = info["name"], info["size"]
-        if not isinstance(filename, str) or pathlib.PurePosixPath(filename).name != filename or filename in ("", ".", "..") or "\\" in filename or type(size) is not int or size < 1:
-            raise ValueError("invalid source file metadata")
-        if filename in available:
-            raise ValueError("duplicate source filename in Snapshot metadata")
-        available[filename] = dict(size=size, snapshot_sha1=digest)
-    descriptors = [filename for filename in available if filename.endswith(".dsc")]
-    if len(descriptors) != 1:
+        size_for_digest = None
+        # Snapshot is content-addressed: one blob can appear under several
+        # package filenames. Fonts-liberation's original archive, for example,
+        # first appeared under fonts-liberation2. Preserve every safe alias so
+        # the .dsc can select its own exact filename, independently of order.
+        for info in variants:
+            filename, size = info["name"], info["size"]
+            if not isinstance(filename, str) or pathlib.PurePosixPath(filename).name != filename or filename in ("", ".", "..") or "\\" in filename or type(size) is not int or size < 1:
+                raise ValueError("invalid source file metadata")
+            if size_for_digest is not None and size_for_digest != size:
+                raise ValueError("conflicting source file sizes in Snapshot metadata")
+            size_for_digest = size
+            record = dict(size=size, snapshot_sha1=digest)
+            if filename in available and available[filename] != record:
+                raise ValueError("ambiguous source filename in Snapshot metadata")
+            available[filename] = record
+    descriptors = sorted(filename for filename in available if filename.endswith(".dsc"))
+    if len({available[filename]["snapshot_sha1"] for filename in descriptors}) != 1:
         raise ValueError("source package must contain exactly one Debian .dsc descriptor")
-    descriptor_name = descriptors[0]
+    canonical_name = name + "_" + version.split(":", 1)[-1] + ".dsc"
+    descriptor_name = canonical_name if canonical_name in descriptors else descriptors[0]
     if available[descriptor_name]["size"] > 4 << 20:
         raise ValueError("source descriptor exceeds the metadata size limit")
     files = [download_file(descriptor_name, available[descriptor_name], directory, output)]
     # Check the package's own SHA-256 list as well as Snapshot's content identity.
     # This is not a verification of the uploader's OpenPGP signature.
-    descriptor = (directory / descriptor_name).read_text()
+    descriptor = descriptor_payload((directory / descriptor_name).read_text())
     for field, expected in (("Source", name), ("Version", version)):
         if re.findall(r"(?m)^" + field + r": ([^\n]+)$", descriptor) != [expected]:
             raise ValueError("source descriptor does not match the requested package/version")

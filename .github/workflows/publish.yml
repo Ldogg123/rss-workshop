@@ -2,6 +2,8 @@ name: Publish container images
 
 # Publishing is an explicit release action. Pushes, pull requests, and creating
 # a Git tag run no registry writes through this workflow.
+# Dispatch from a reviewed workflow revision. CI and image builds use the
+# immutable release tag commit; source verification uses maintained tooling.
 on:
   workflow_dispatch:
     inputs:
@@ -29,6 +31,7 @@ jobs:
     outputs:
       image: ${{ steps.release.outputs.image }}
       version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
       created: ${{ steps.release.outputs.created }}
     steps:
       - name: Validate version and derive registry coordinates
@@ -48,18 +51,22 @@ jobs:
             exit 1
           fi
           gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" > "$RUNNER_TEMP/release.json"
-          release_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_VERSION}" --jq .sha)
-          if [[ "$release_sha" != "$GITHUB_SHA" ]]; then
-            printf '%s\n' 'The selected workflow ref must match the release tag commit.' >&2
-            exit 1
-          fi
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit ]] || { printf '%s\n' 'Release tag nesting exceeds the supported limit.' >&2; exit 1; }
           python3 - "$RUNNER_TEMP/release.json" <<'PY'
           import json, os, sys
           with open(sys.argv[1]) as file:
               release = json.load(file)
           assets = {asset['name'] for asset in release.get('assets', []) if asset.get('size', 0) > 0}
-          if release.get('draft'):
-              sys.exit('Corresponding sources must be on a published GitHub release.')
+          if release.get('draft') is not False or release.get('tag_name') != os.environ['RELEASE_VERSION']:
+              sys.exit('Corresponding sources must be on the published GitHub release for this exact version.')
           for arch in ('amd64', 'arm64'):
               prefix = f"debian-sources-{os.environ['RELEASE_VERSION']}-linux-{arch}.tar.gz"
               parts = sorted(name for name in assets if name.startswith(prefix + '.part-'))
@@ -70,12 +77,14 @@ jobs:
                   continue
               sys.exit(f'Missing, mixed, or noncontiguous source archive assets for {arch}; see docs/releases.md.')
           PY
-          printf 'image=ghcr.io/%s\nversion=%s\ncreated=%s\n' \
-            "${GITHUB_REPOSITORY,,}" "$RELEASE_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          printf 'image=ghcr.io/%s\nversion=%s\ncommit=%s\ncreated=%s\n' \
+            "${GITHUB_REPOSITORY,,}" "$RELEASE_VERSION" "$release_sha" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
   validate:
     needs: metadata
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.metadata.outputs.commit }}
     permissions:
       contents: read
 
@@ -87,6 +96,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+      TOOLING_COMMIT: ${{ github.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,6 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.metadata.outputs.commit }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Build final static image locally
@@ -110,7 +123,7 @@ jobs:
           tags: rss-workshop:release-static
           build-args: |
             VERSION=${{ needs.metadata.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.metadata.outputs.commit }}
             BUILD_DATE=${{ needs.metadata.outputs.created }}
             SOURCE_URL=https://github.com/${{ github.repository }}
           labels: |
@@ -129,7 +142,7 @@ jobs:
           tags: rss-workshop:release-browser
           build-args: |
             VERSION=${{ needs.metadata.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.metadata.outputs.commit }}
             BUILD_DATE=${{ needs.metadata.outputs.created }}
             SOURCE_URL=https://github.com/${{ github.repository }}
           labels: |
@@ -154,6 +167,13 @@ jobs:
           RSS_SMOKE_BROWSER: '1'
           RSS_SMOKE_IMAGE: ${{ steps.built.outputs.browser }}
         run: python3 scripts/smoke.py
+      - name: Check out maintained verification tools after image builds
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+          persist-credentials: false
       - name: Verify durable corresponding source against these exact images
         env:
           GH_TOKEN: ${{ github.token }}
@@ -182,11 +202,30 @@ jobs:
           fi
           arguments=()
           for archive in "${archives[@]}"; do arguments+=(--archive "$archive"); done
-          python3 scripts/check-release-sources.py "${arguments[@]}" --architecture "$ARCH" \
+          python3 "$GITHUB_WORKSPACE/.release-tools/scripts/check-release-sources.py" "${arguments[@]}" --architecture "$ARCH" \
             --static-image "$STATIC_ID" --browser-image "$BROWSER_ID"
           mkdir -p "$RUNNER_TEMP/release-digests"
+          printf 'version=%s\ncommit=%s\ntooling_commit=%s\narchitecture=%s\nstatic=%s\nbrowser=%s\n' \
+            "$VERSION" "$RELEASE_COMMIT" "$TOOLING_COMMIT" "$ARCH" "$STATIC_ID" "$BROWSER_ID" \
+            > "$RUNNER_TEMP/release-digests/build-${ARCH}.txt"
           docker image inspect "$STATIC_ID" "$BROWSER_ID" > "$RUNNER_TEMP/release-digests/images-${ARCH}.json"
           sha256sum "${archives[@]}" > "$RUNNER_TEMP/release-digests/sources-${ARCH}.sha256"
+          printf 'Application commit: `%s`; verification tooling: `%s`.\n' "$RELEASE_COMMIT" "$TOOLING_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck the release tag before registry uploads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit && "$release_sha" == "$RELEASE_COMMIT" ]] || { printf '%s\n' 'The release tag changed during publication.' >&2; exit 1; }
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -245,11 +284,22 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Merge only verified platform digests into the version tag
         env:
+          GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ needs.metadata.outputs.image }}
           VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
           VARIANT: ${{ matrix.variant }}
         shell: bash
         run: |
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit && "$release_sha" == "$RELEASE_COMMIT" ]] || { printf '%s\n' 'The release tag changed during publication.' >&2; exit 1; }
           tag="${IMAGE}:${VERSION}-${VARIANT}"
           if docker buildx imagetools inspect "$tag" > /dev/null 2> "$RUNNER_TEMP/manifest-error"; then
             printf '%s\n' 'This version tag already exists and will not be overwritten.' >&2

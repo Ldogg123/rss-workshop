@@ -15,9 +15,16 @@ collector = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(collector)
 
 
+def signed_descriptor(payload):
+    return (b"-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n" + payload +
+            b"\n-----BEGIN PGP SIGNATURE-----\nVersion: GnuPG v2\n\n" +
+            b"synthetic-signature-not-cryptographically-verified\n-----END PGP SIGNATURE-----\n")
+
+
 class SourceCollectionTests(unittest.TestCase):
     def fixture(self, output, *, wrong_descriptor=False, bad_filename=False,
-                extra_snapshot_file=False, missing_archive=False, change_descriptor=None):
+                extra_snapshot_file=False, missing_archive=False, change_descriptor=None,
+                change_file_metadata=None):
         archive = b"a deterministic source archive"
         sha256 = "0" * 64 if wrong_descriptor else hashlib.sha256(archive).hexdigest()
         descriptor = f"Format: 3.0 (native)\nSource: fixture\nVersion: 1.0\nChecksums-Sha256:\n {sha256} {len(archive)} fixture_1.0.tar.xz\n".encode()
@@ -38,7 +45,10 @@ class SourceCollectionTests(unittest.TestCase):
                 return dict(package="fixture", version="1.0", result=[dict(hash=key) for key in blobs])
             for digest, data in blobs.items():
                 if path == "/mr/file/" + digest + "/info":
-                    return dict(result=[dict(name=names[digest], size=len(data))])
+                    result = [dict(name=names[digest], size=len(data))]
+                    if change_file_metadata:
+                        result = change_file_metadata(result)
+                    return dict(result=result)
             raise AssertionError("unexpected metadata path: " + path)
 
         def get(url):
@@ -84,6 +94,48 @@ class SourceCollectionTests(unittest.TestCase):
             with metadata, get, self.assertRaisesRegex(ValueError, "unavailable Snapshot archive"):
                 collector.download_source("fixture", "1.0", output)
 
+    def test_uses_descriptor_filename_from_later_snapshot_alias(self):
+        def aliases(records):
+            original = records[0]
+            # Also exercise duplicate appearances in debian/debian-debug and
+            # identical descriptor bytes under multiple safe filenames.
+            alias = dict(original, name=original["name"].replace("fixture_", "fixture2_"))
+            return [alias, original, dict(original)]
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            metadata, get = self.fixture(output, change_file_metadata=aliases)
+            with metadata, get as calls:
+                result = collector.download_source("fixture", "1.0", output)
+            expected = {"fixture_1.0.dsc", "fixture_1.0.tar.xz"}
+            self.assertEqual({pathlib.Path(item["path"]).name for item in result["files"]}, expected)
+            self.assertEqual({p.name for p in (output / "sources/fixture/1.0").iterdir()}, expected)
+            self.assertEqual(calls.call_count, 2)
+
+    def test_ambiguous_aliases_and_inconsistent_sizes_are_rejected(self):
+        def ambiguous(records):
+            # Distinct descriptor/archive content cannot share one filename.
+            return records + [dict(records[0], name="shared-alias.tar.xz")]
+
+        def wrong_size(records):
+            return records + [dict(records[0], name="other-alias.tar.xz", size=records[0]["size"] + 1)]
+
+        def unsafe_alias(records):
+            return records + [dict(records[0], name="../escape")]
+
+        def multiple_descriptors(records):
+            if records[0]["name"].endswith(".tar.xz"):
+                return records + [dict(records[0], name="other.dsc")]
+            return records
+
+        for change in (ambiguous, wrong_size, unsafe_alias, multiple_descriptors):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory)
+                metadata, get = self.fixture(output, change_file_metadata=change)
+                with metadata, get as calls, self.assertRaises(ValueError):
+                    collector.download_source("fixture", "1.0", output)
+                self.assertEqual(calls.call_count, 0, "invalid aliases must fail before downloads")
+
     def test_descriptor_identity_and_duplicate_checksums_are_rejected(self):
         changes = (
             lambda data: data.replace(b"Source: fixture", b"Source: other"),
@@ -98,6 +150,36 @@ class SourceCollectionTests(unittest.TestCase):
                 with metadata, get as calls, self.assertRaises(ValueError):
                     collector.download_source("fixture", "1.0", output)
                 self.assertEqual(calls.call_count, 1, "invalid descriptors must stop before source archives download")
+
+    def test_signature_version_metadata_is_outside_debian_control_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            metadata, get = self.fixture(output, change_descriptor=signed_descriptor)
+            with metadata, get:
+                result = collector.download_source("fixture", "1.0", output)
+            self.assertEqual(len(result["files"]), 2)
+            descriptor = (output / "sources/fixture/1.0/fixture_1.0.dsc").read_bytes()
+            self.assertIn(b"Version: GnuPG v2", descriptor, "published descriptor bytes must remain unaltered")
+
+    def test_wrong_or_duplicate_signed_payload_versions_are_rejected(self):
+        for transform in (
+            lambda data: data.replace(b"Version: 1.0", b"Version: 2.0"),
+            lambda data: data.replace(b"Version: 1.0", b"Version: 1.0\nVersion: 1.0"),
+        ):
+            with self.subTest(transform=transform), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory)
+                metadata, get = self.fixture(output, change_descriptor=lambda data: signed_descriptor(transform(data)))
+                with metadata, get, self.assertRaisesRegex(ValueError, "requested package/version"):
+                    collector.download_source("fixture", "1.0", output)
+
+    def test_incomplete_signature_armor_is_rejected(self):
+        for text in (
+            "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n",
+            "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nSource: fixture\n",
+            signed_descriptor(b"Source: fixture\n").decode().replace("-----END PGP SIGNATURE-----", ""),
+        ):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "OpenPGP"):
+                collector.descriptor_payload(text)
 
     def test_old_auxiliary_download_is_preserved_and_requires_fresh_directory(self):
         with tempfile.TemporaryDirectory() as directory:
