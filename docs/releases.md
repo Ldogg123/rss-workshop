@@ -1,6 +1,6 @@
-# Builds and container releases
+# Builds and releases
 
-CI validates changes without publishing images. Container publication uses a manually dispatched GitHub Container Registry workflow that requires a matching release tag, passing tests, and verified corresponding-source archives.
+CI validates changes without publishing release assets. Separate manual workflows publish native executable archives and container images for a matching release tag. Container publication additionally requires verified corresponding-source archives.
 
 The source repository is [Ldogg123/rss-workshop](https://github.com/Ldogg123/rss-workshop). Check [GitHub Releases](https://github.com/Ldogg123/rss-workshop/releases) for published versions and prebuilt image availability. The examples below use `v0.1.0`.
 
@@ -16,6 +16,21 @@ Both variants support the configured external FlareSolverr service. The browser 
 Tags include the full version and variant. There is no implicit `latest` tag. Record the digest shown by the publishing job and prefer that digest for a repeatable deployment. The [Compose image override](../compose.image.yaml) accepts a tagged image or digest through `RSS_IMAGE`. The base Compose setup includes Chromium; use `compose.yaml` followed by `compose.image.yaml` for a browser image. For a static image, insert [compose.static.yaml](../compose.static.yaml) before the image override.
 
 The Dockerfiles support cross-compiling the Go app on the builder's native CPU. The publishing workflow uses native amd64 and arm64 runners for the whole image, checks each locally built image, and combines its verified platform digests into a multi-platform manifest. Race-enabled browser test images also require native builders. This follows Docker's [multi-platform build guidance](https://docs.docker.com/build/building/multi-platform/).
+
+## Native executable archives
+
+Linux users can download `rss-workshop-v0.1.0-linux-amd64.tar.gz` or `rss-workshop-v0.1.0-linux-arm64.tar.gz`, plus the archive's `.sha256` file. Each extracts into a directory of the same name without `.tar.gz`, containing the executable, `LICENSE`, dependency notices in `licenses/`, and build information. See [native installation](deployment.md#run-a-prebuilt-executable) for checksum verification, environment variables, and persistent storage.
+
+The executable embeds the UI and SQLite support. It uses the host's CA certificate store and optionally an installed Chromium browser or external FlareSolverr. Native archives do not contain the container's Debian packages or Chromium and do not require the Debian source bundles to run. Prebuilt support is limited to Linux `amd64` and `arm64`, tested on native runners.
+
+To publish these archives:
+
+1. Push the reviewed version tag and publish its GitHub release. Existing container releases can receive native archives for the same immutable tag without rebuilding their images.
+2. Open **Actions → Publish Linux executables → Run workflow**, select the reviewed default branch, and enter the version. The workflow resolves the exact tag commit and rejects a draft/missing release or colliding native asset names.
+3. Review both native jobs. They verify modules and reachable vulnerabilities, run the race suite and native fixture workflow, then package the same tested CGo-free executable with its version, commit, license notices, and checksums. Archive extraction and version checks run on each architecture before upload.
+4. Confirm both archives and checksum files are attached to the release. The upload job rechecks the release and tag before writing; existing assets are never overwritten. It does not change release tags, publish images, or rebuild after testing.
+
+If publication is interrupted, inspect the release and workflow before retrying. Preserve valid published assets; do not overwrite an existing executable under the same version.
 
 ## Source publication
 

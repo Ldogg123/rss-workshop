@@ -1,0 +1,236 @@
+name: Publish Linux executables
+
+# Run from reviewed main. Application code and notices come from the immutable
+# release tag; this workflow only adds native assets to an existing release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing published release, for example v0.1.0'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-linux-executables
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      release_id: ${{ steps.release.outputs.release_id }}
+      commit: ${{ steps.release.outputs.commit }}
+      created: ${{ steps.release.outputs.created }}
+    steps:
+      - name: Validate the existing release and resolve its tag
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || (( ${#VERSION} > 100 )); then
+            printf '%s\n' 'Version must be vMAJOR.MINOR.PATCH, optionally followed by -rc.N.' >&2
+            exit 1
+          fi
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit ]] || { printf '%s\n' 'Release tag nesting exceeds the supported limit.' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/release.json" <<'PY'
+          import json, os, sys
+          release = json.load(open(sys.argv[1]))
+          if release.get('draft') is not False or release.get('tag_name') != os.environ['VERSION']:
+              sys.exit('The version must have an existing published GitHub release.')
+          prefix = f"rss-workshop-{os.environ['VERSION']}-linux-"
+          if any(a['name'].startswith(prefix) for a in release.get('assets', [])):
+              sys.exit('Native assets already exist. Review partial earlier uploads explicitly; nothing will be overwritten.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"release_id={int(release['id'])}\n")
+          PY
+          printf 'version=%s\ncommit=%s\ncreated=%s\n' "$VERSION" "$release_sha" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: Test and package Linux ${{ matrix.arch }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      COMMIT: ${{ needs.metadata.outputs.commit }}
+      BUILD_DATE: ${{ needs.metadata.outputs.created }}
+      TOOLING_COMMIT: ${{ github.sha }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Verify modules and reachable vulnerabilities
+        run: |
+          go mod verify
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
+      - name: Run checks and the native workflow with the release executable
+        run: make check
+      - name: Package and verify the same tested executable
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, shutil, subprocess, tarfile, tempfile
+          version, arch = os.environ['VERSION'], os.environ['ARCH']
+          root = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          binary = root / 'bin/rss-workshop'
+          settings = {line.split()[-1] for line in subprocess.check_output(['go', 'version', '-m', str(binary)], text=True).splitlines() if line.split()}
+          assert {'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH=' + arch} <= settings, 'unexpected executable build settings'
+          base = f'rss-workshop-{version}-linux-{arch}'
+          assets = pathlib.Path(os.environ['RUNNER_TEMP']) / 'native-assets'
+          assets.mkdir()
+          with tempfile.TemporaryDirectory(prefix='native-package-', dir=os.environ['RUNNER_TEMP']) as temporary:
+              package = pathlib.Path(temporary) / base
+              package.mkdir()
+              shutil.copyfile(binary, package / 'rss-workshop')
+              (package / 'rss-workshop').chmod(0o755)
+              shutil.copyfile(root / 'LICENSE', package / 'LICENSE')
+              shutil.copytree(root / 'docs/licenses', package / 'licenses')
+              (package / 'README.txt').write_text(
+                  f'RSS Workshop {version} for Linux {arch}\n\n'
+                  'Setup and configuration:\n'
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/blob/main/docs/deployment.md\n\n"
+                  'Run ./rss-workshop -version to check the executable.\n'
+                  'Configure an admin password, public URL and data directory before starting.\n'
+                  'Local Chromium is installed separately when browser rendering is needed.\n'
+                  'LICENSE and licenses/ contain application and third-party notices.\n')
+              (package / 'BUILD-INFO.txt').write_text(
+                  f"version={version}\ncommit={os.environ['COMMIT']}\n"
+                  f"tooling_commit={os.environ['TOOLING_COMMIT']}\nbuilt={os.environ['BUILD_DATE']}\n"
+                  f'os=linux\narchitecture={arch}\ncgo_enabled=0\n'
+                  f"executable_sha256={hashlib.sha256(binary.read_bytes()).hexdigest()}\n")
+              expected = {str(p.relative_to(package.parent)): p for p in package.rglob('*')}
+              expected[base] = package
+              assert all(not p.is_symlink() and (p.is_file() or p.is_dir()) for p in expected.values())
+              notices = [p for p in (root / 'docs/licenses').rglob('*') if p.is_file()]
+              assert notices and all((package / 'licenses' / p.relative_to(root / 'docs/licenses')).read_bytes() == p.read_bytes() for p in notices)
+              archive = assets / (base + '.tar.gz')
+              with tarfile.open(archive, 'w:gz') as bundle:
+                  bundle.add(package, arcname=base)
+              with tarfile.open(archive) as bundle:
+                  members = bundle.getmembers()
+                  names = [entry.name.rstrip('/') for entry in members]
+                  assert len(names) == len(set(names)) and set(names) == set(expected), 'unexpected archive inventory'
+                  for entry, name in zip(members, names):
+                      source = expected[name]
+                      assert entry.isdir() if source.is_dir() else entry.isfile(), 'archive links or special files are forbidden'
+                      assert entry.mode == source.stat().st_mode & 0o777, 'archive permissions differ'
+                      if source.is_file():
+                          assert bundle.extractfile(entry).read() == source.read_bytes(), 'archive content differs'
+                  with tempfile.TemporaryDirectory(prefix='native-unpack-', dir=os.environ['RUNNER_TEMP']) as unpacked:
+                      bundle.extractall(unpacked, filter='data')
+                      executable = pathlib.Path(unpacked) / base / 'rss-workshop'
+                      subprocess.run(['cmp', str(binary), str(executable)], check=True)
+                      actual = subprocess.check_output([str(executable), '-version'], text=True).strip()
+                      expected_version = f"RSS Workshop {version} (commit {os.environ['COMMIT']}, built {os.environ['BUILD_DATE']})"
+                      assert actual == expected_version, 'packaged executable version differs'
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              (assets / (archive.name + '.sha256')).write_text(f'{digest}  {archive.name}\n')
+              assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write(f'Verified `{archive.name}`: `{digest}`.\n\n')
+                  summary.write(f"Application commit: `{os.environ['COMMIT']}`; packaging workflow: `{os.environ['TOOLING_COMMIT']}`.\n")
+          PY
+      - name: Transfer the verified archive and checksum
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-binary-${{ matrix.arch }}
+          path: ${{ runner.temp }}/native-assets/
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  assets:
+    name: Attach Linux executables to the existing release
+    needs: [metadata, binaries]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_ID: ${{ needs.metadata.outputs.release_id }}
+      RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-binary-*
+          path: ${{ runner.temp }}/native-assets
+          merge-multiple: true
+      - name: Verify both transferred archives and their exact asset names
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'native-assets'
+          expected = set()
+          for arch in ('amd64', 'arm64'):
+              name = f"rss-workshop-{os.environ['VERSION']}-linux-{arch}.tar.gz"
+              archive, checksum = root / name, root / (name + '.sha256')
+              assert archive.is_file() and not archive.is_symlink() and 0 < archive.stat().st_size < 512 << 20
+              assert checksum.is_file() and not checksum.is_symlink()
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              assert checksum.read_text() == f'{digest}  {name}\n', 'transferred archive checksum mismatch'
+              expected.update((name, name + '.sha256'))
+          assert {p.name for p in root.iterdir()} == expected, 'unexpected or missing native assets'
+          PY
+      - name: Recheck the release and upload without overwriting assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '[.object.type, .object.sha] | @tsv')
+          for depth in 1 2 3 4 5 6 7 8; do
+            read -r kind release_sha <<< "$object"
+            [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { printf '%s\n' 'Invalid release tag object.' >&2; exit 1; }
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]] || { printf '%s\n' 'The release tag does not resolve to a commit.' >&2; exit 1; }
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${release_sha}" --jq '[.object.type, .object.sha] | @tsv')
+          done
+          [[ "$kind" == commit && "$release_sha" == "$RELEASE_COMMIT" ]] || { printf '%s\n' 'The release tag changed during native builds.' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/release.json" <<'PY'
+          import json, os, sys
+          release = json.load(open(sys.argv[1]))
+          if release['id'] != int(os.environ['RELEASE_ID']) or release.get('tag_name') != os.environ['VERSION'] or release.get('draft') is not False:
+              sys.exit('The same release must still be published for this exact version.')
+          prefix = f"rss-workshop-{os.environ['VERSION']}-linux-"
+          if any(a['name'].startswith(prefix) for a in release.get('assets', [])):
+              sys.exit('Native assets already exist. Nothing is overwritten; review any partial earlier upload before retrying.')
+          PY
+          for asset in "$RUNNER_TEMP/native-assets/"*; do
+            gh api --method POST \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset##*/}" \
+              --header 'Content-Type: application/octet-stream' --input "$asset" --silent
+          done
+          printf 'Linux amd64 and arm64 executables and checksums attached to release `%s` (application commit `%s`). Existing tags, images and source assets are unchanged.\n' \
+            "$VERSION" "$RELEASE_COMMIT" >> "$GITHUB_STEP_SUMMARY"

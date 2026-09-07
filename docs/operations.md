@@ -5,12 +5,14 @@
 `GET /healthz` checks liveness; `GET /readyz` checks the selected database connection. The container uses `/rss-workshop -healthcheck` for readiness. Use the same Compose files and project options as your deployment:
 
 ```sh
-docker compose ps
-docker compose exec -T rss-workshop /rss-workshop -healthcheck
-docker compose logs --tail 30 rss-workshop
+docker compose -f compose.yaml -f compose.image.yaml ps
+docker compose -f compose.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.image.yaml logs --tail 30 rss-workshop
 ```
 
 The dashboard reports saved items, refresh status, due feeds, and fetch capacity. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. Refresh logs include the internal feed ID, HTTP status, duration, item count, and success flag; source URLs and reader tokens are omitted.
+
+These examples use the published image selected by `RSS_IMAGE` in `.env`. Keep any static, PostgreSQL, VPN, or local overrides before the final `compose.image.yaml`. Local source builds omit the image override.
 
 ## Backup and restore
 
@@ -28,10 +30,10 @@ sudo python3 scripts/backup.py backup \
   --container rss-workshop-rss-workshop-1 \
   --output /var/backups/rss-workshop/before-upgrade
 sudo python3 scripts/backup.py verify /var/backups/rss-workshop/before-upgrade
-docker compose exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
-Confirm the actual container name with `docker compose ps` and choose a new output directory for each backup. The utility refuses existing output directories and concurrent backups of the same container. It also refuses storage that overlaps another running container's mounts, including a parent directory or a named volume exposed through a bind mount. Stop any native processes using the same files too; Docker inspection cannot identify those writers. Do not use a remote Docker context for host-directory operations.
+Confirm the actual container name with your deployment's Compose `ps` command and choose a new output directory for each backup. The utility refuses existing output directories and concurrent backups of the same container. It also refuses storage that overlaps another running container's mounts, including a parent directory or a named volume exposed through a bind mount. Stop any native processes using the same files too; Docker inspection cannot identify those writers. Do not use a remote Docker context for host-directory operations.
 
 Backup briefly stops the selected app, copies `/data` using [Docker's stopped-container copy support](https://docs.docker.com/reference/cli/docker/container/cp/), and restarts it before validating the copy. Readers and the UI are unavailable during the copy; restarting ends login sessions. A previously stopped container remains stopped. Do not start or recreate the app during this operation. After an error or interruption, check readiness; the utility attempts to restart an originally running app even if copying fails.
 
@@ -60,8 +62,8 @@ RSS_DATA_DIR=/srv/rss-workshop/data-restored
 Recreate the service using the same project, runtime, networking, and image options as before:
 
 ```sh
-docker compose up -d --no-build --wait
-docker compose exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.image.yaml up -d --no-build --wait
+docker compose -f compose.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
 Sign in and check the saved feeds and RSS/Atom output. Preserve the previous storage and image until verification succeeds. To roll back from another host directory, stop the app, restore the old `RSS_DATA_DIR` setting, and recreate it. An older backup restores old tokens and schedules too; reset reader links if needed.
@@ -71,7 +73,7 @@ Sign in and check the saved feeds and RSS/Atom output. Preserve the previous sto
 Upgrading the Compose file does not copy a named volume into `./data`. Confirm the current container and volume before recreating anything; the default older volume was `rss-workshop_rss-data`, but project names can change it:
 
 ```sh
-docker compose ps
+docker compose -f compose.yaml -f compose.image.yaml ps
 docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}} {{.Name}}{{end}}{{end}}' \
   rss-workshop-rss-workshop-1
 ```
@@ -96,12 +98,12 @@ For rollback to that original volume, stop the app and use the explicit named-vo
 
 ### Restore or select a named volume
 
-Named-volume restore remains available for existing deployments and accepts backups from either mount type. Use an unused name and an already-local compatible image:
+Named-volume restore remains available for existing deployments and accepts backups from either mount type. Use an unused name and the already-local compatible image from your deployment; replace the example image below with your saved tag or digest:
 
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image rss-workshop:local
+  --image ghcr.io/ldogg123/rss-workshop:v0.1.0-browser
 ```
 
 This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. The backup format is unchanged, so earlier version-1 backups remain usable.
@@ -121,20 +123,27 @@ volumes:
     name: rss-workshop-restored
 ```
 
-Include any additional app mounts from your own configuration when replacing the mount list. Stop the current app, then append this override to its normal Compose files:
+Include any additional app mounts from your own configuration when replacing the mount list. Stop the current app, then insert this storage override before the final image override:
 
 ```sh
-docker compose -f compose.yaml -f compose.restore.yaml up -d --no-build --wait
-docker compose -f compose.yaml -f compose.restore.yaml exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.restore.yaml -f compose.image.yaml up -d --no-build --wait
+docker compose -f compose.yaml -f compose.restore.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
-The base deployment includes Chromium. For static-only operation, include `-f compose.static.yaml` after the base file. For a registry image, use the matching runtime variant and append `compose.image.yaml` last with your pinned `RSS_IMAGE`; a `-static` image requires the static override before it. Keep the same files for later operations. Never run two app processes against one database, and never use `docker compose down -v` to perform a storage switch.
+The default image includes Chromium. For static-only operation, keep your `-static` `RSS_IMAGE` paired with `-f compose.static.yaml` after the base file. Keep the same files for later operations. Never run two app processes against one database, and never use `docker compose down -v` to perform a storage switch.
 
 For native installations, stop the process and copy the entire `DATA_DIR`, including WAL/SHM files, into a new private directory before restarting. A live backup must use a SQLite backup API or an administrator-managed `sqlite3 .backup` command.
 
 ## Upgrades
 
-Back up the data and retain the current configuration and image digest. For source builds, run your normal Compose command with `up -d --build --wait`. For registry deployments, pull the intended immutable image, then use `up -d --no-build --wait`. Check readiness and a saved feed afterward; see [deployment](deployment.md).
+Back up the data and retain the current configuration and image digest. Set `RSS_IMAGE` in `.env` to the intended release tag or immutable digest, keeping the same browser/static variant, then pull and recreate the app:
+
+```sh
+docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
+```
+
+Include all overrides used by your deployment, with `compose.image.yaml` last. For local source builds, omit the image override and use `up -d --build --wait`. Check a saved feed afterward; see [deployment](deployment.md).
 
 The app supports schema version 1 and rejects unsupported versions. There is no automatic rollback or in-place schema downgrade. A downgrade across schema versions requires a compatible database backup. Review the backup tool alongside any schema migration.
 

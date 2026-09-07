@@ -13,10 +13,10 @@ cp .env.example .env
 chmod 600 .env
 # Edit .env before starting.
 sudo install -d -m 700 -o 65532 -g 65532 ./data
-docker compose up -d --build --wait
+docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
-Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop`, container `rss-workshop-rss-workshop-1`, and image `rss-workshop:local`.
+Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. The example `.env` sets `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser`; `compose.image.yaml` removes the local build and selects that published image. Keep the same Compose files and order for subsequent commands.
 
 `RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the `install` command. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
 
@@ -28,13 +28,13 @@ Keep the default Chromium sandbox and resource settings. See [Chromium rendering
 
 ## Lightweight static runtime
 
-If you only need static pages or an external FlareSolverr service, select the smaller image with the static override. It contains the Go application and CA certificates, with no shell or local browser:
+If you only need static pages or an external FlareSolverr service, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-static` in `.env` and select the static override. This image contains the Go application and CA certificates, with no shell or local browser:
 
 ```sh
-docker compose -f compose.yaml -f compose.static.yaml up -d --build --wait
+docker compose -f compose.yaml -f compose.static.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
-Include `compose.static.yaml` for subsequent operations on that deployment. Data paths and database selection work the same way in both runtimes.
+Include both overrides in that order for subsequent operations on that deployment. Data paths and database selection work the same way in both runtimes.
 
 ## Gluetun VPN
 
@@ -62,6 +62,8 @@ docker compose -f compose.yaml -f compose.image.yaml up -d --no-build --wait
 ```
 
 The commands above use a `-browser` image with the default browser settings. For a `-static` image, include `-f compose.static.yaml` before `-f compose.image.yaml` in both commands. Use the same files and order for later operations. The image override preserves the host data mount. Prefer immutable digests and keep the previous digest for rollback; [release preparation](releases.md) describes the published variants.
+
+To build your local checkout instead, omit `compose.image.yaml` and use `docker compose up -d --build --wait`. Include any database, static, or network overrides you use. The base file's local build produces `rss-workshop:local`; setting `RSS_IMAGE` alone does not select the registry image without the image override.
 
 ## Public URL and HTTPS
 
@@ -105,7 +107,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |
 | `MAX_ITEMS` | `500` | 1–10,000 retained items per feed |
 | `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
-| `RSS_IMAGE` | required for image override | Runtime image tag or digest |
+| `RSS_IMAGE` | `v0.1.0-browser` image in example `.env` | Full runtime image tag or digest; required by `compose.image.yaml` |
 | `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
 | `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
 
@@ -113,11 +115,26 @@ Keep `.env` out of version control. Single-quote bcrypt hashes and literal secre
 
 Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chromium proxy check destinations before dialing; environment HTTP proxies are ignored. FlareSolverr has a separate remote network boundary, and its private service endpoint does not require a source allowlist exception.
 
-## Run from source
+## Run a prebuilt executable
 
-Use the Go version specified in [go.mod](../go.mod) and Make; tests also require Python 3.9+ and a C compiler. `make build` produces `bin/rss-workshop`. Export the environment variables above and run the binary under a non-root service account with a writable local data directory. Native execution does not load `.env` automatically. See [contributing](../CONTRIBUTING.md) for build and test commands.
+Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For a local SQLite instance in Bash:
+For example, download and verify `v0.1.0` for Linux x86-64 in an empty directory:
+
+```sh
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.0/rss-workshop-v0.1.0-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.0/rss-workshop-v0.1.0-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v0.1.0-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v0.1.0-linux-amd64.tar.gz
+cd rss-workshop-v0.1.0-linux-amd64
+./rss-workshop -version
+```
+
+Use `arm64` in both filenames for ARM. Only extract after the checksum succeeds. The `debian-sources-*` release assets are dependency sources for container redistribution; they are not needed to install the native executable.
+
+### Configure and run
+
+Run as your normal user or a dedicated non-root service account. Native execution reads environment variables and **does not load `.env` automatically**. For a local SQLite instance in Bash, choose a unique admin password of 12–72 bytes:
 
 ```bash
 read -r -s -p 'Admin password: ' ADMIN_PASSWORD
@@ -125,11 +142,20 @@ printf '\n'
 export ADMIN_PASSWORD
 export PUBLIC_BASE_URL=http://localhost:8080
 export LISTEN_ADDR=127.0.0.1:8080
-export DATA_DIR=./data
+export DATA_DIR="$HOME/.local/share/rss-workshop"
 export DATABASE_URL=
-make run
+install -d -m 700 "$DATA_DIR"
+./rss-workshop
 ```
 
-Use another port and data directory if an instance is already running. For an unattended native deployment, supply these variables through your service manager and keep the same persistent data directory across restarts.
+Open [localhost:8080](http://localhost:8080). SQLite is stored at `$DATA_DIR/rss.db`; keeping it outside the extracted archive preserves the library when replacing the executable. Use another port and data directory if an instance is already running. For an unattended deployment, supply these variables through your service manager and keep the same absolute data path across restarts. For LAN access, set `LISTEN_ADDR` to an appropriate listening address and `PUBLIC_BASE_URL` to the origin readers and your browser will use.
+
+Static fetching and visual selection work without Chromium. To render JavaScript pages, install Chromium separately and export `CHROMIUM_PATH` with its executable's absolute path before starting the app, for example `export CHROMIUM_PATH=/usr/bin/chromium`. The host must support Chromium's sandbox; run as non-root and follow [browser rendering](browser.md). [External FlareSolverr](flaresolverr.md) also works without local Chromium. To use an existing PostgreSQL server, set `DATABASE_URL` as described in [PostgreSQL setup](postgresql.md); changing the database does not migrate existing data.
+
+For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
+
+## Run from source
+
+Use the Go version specified in [go.mod](../go.mod) and Make; tests also require Python 3.9+ and a C compiler. `make build` produces `bin/rss-workshop`. Follow [native configuration](#configure-and-run), then run `./bin/rss-workshop` from the repository root instead of `./rss-workshop`. See [contributing](../CONTRIBUTING.md) for build and test commands.
 
 Check readiness, sign in through the final URL, and preview a source before connecting readers. Follow [operations](operations.md) for health checks, verified backups, restores, and upgrades.

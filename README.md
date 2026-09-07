@@ -2,7 +2,7 @@
 
 Turn website pages into persistent RSS and Atom feeds. Choose repeating elements visually, refine CSS or XPath selectors with live highlights, and let scheduled refreshes collect new stories.
 
-The default installation includes Chromium for JavaScript pages, SQLite, a single-admin interface, and dark mode. Data stays in local folders on your host.
+The default Docker installation includes Chromium for JavaScript pages, SQLite, a single-admin interface, and dark mode. Data stays in local folders on your host.
 
 ## Quickstart
 
@@ -15,12 +15,18 @@ cp .env.example .env
 chmod 600 .env
 # Set ADMIN_PASSWORD in .env to a unique password of 12–72 bytes.
 sudo install -d -m 700 -o 65532 -g 65532 ./data
-docker compose up -d --build --wait
+docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
-Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`.
+Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`. `RSS_IMAGE` selects the published browser image, so startup downloads it without compiling. Use the same Compose files for subsequent commands.
 
-For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available prebuilt images and follow [registry deployment](docs/deployment.md#registry-images) to use one. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
+For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for versions and [registry deployment](docs/deployment.md#registry-images) for image selection or building locally. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
+
+## Run without Docker
+
+Download a Linux `amd64` (x86-64) or `arm64` executable archive and its `.sha256` file from [Releases](https://github.com/Ldogg123/rss-workshop/releases). The executable includes the web UI and SQLite support; Go and Docker are not required. Chromium is optional and installed separately on the host.
+
+Follow [native installation](docs/deployment.md#run-a-prebuilt-executable) to verify the download, set the password and data path, and start the server.
 
 ## Optional PostgreSQL
 
@@ -33,7 +39,7 @@ DATABASE_URL='postgres://rss_workshop:YOUR_GENERATED_HEX_PASSWORD@postgres:5432/
 
 ```sh
 sudo install -d -m 755 ./postgres-data
-docker compose -f compose.yaml -f compose.postgres.yaml up -d --build --wait
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
 This includes Chromium and stores PostgreSQL in `./postgres-data`. Both data paths can be changed in `.env`. Switching databases does not migrate existing data; see [PostgreSQL setup](docs/postgresql.md) for existing servers and migration.

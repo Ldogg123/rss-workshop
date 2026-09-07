@@ -38,13 +38,13 @@ The [override](../compose.gluetun.yaml) uses `network_mode: container:NAME` and 
 
 ```sh
 docker inspect --format '{{.State.Health.Status}}' gluetun
-docker compose -f compose.yaml -f compose.gluetun.yaml up -d --build --wait
-docker compose -f compose.yaml -f compose.gluetun.yaml exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
-The default installation includes Chromium. For static-only operation, add `-f compose.static.yaml` immediately after `-f compose.yaml`.
+This pulls the published browser image selected by `RSS_IMAGE` in `.env`, defaulting to `ghcr.io/ldogg123/rss-workshop:v0.1.0-browser`. For static-only operation, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-static` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`.
 
-For a published image, set `RSS_IMAGE` to the matching `-browser` image or digest and apply `compose.image.yaml` last, as in [registry deployment](deployment.md#registry-images). A `-static` image also requires `compose.static.yaml` before the image override. Keep the same overrides for subsequent app operations. Do not add `ports`, `networks`, or custom `dns` settings to RSS Workshop when it shares another container's network; configure networking on Gluetun instead. Docker documents the [restrictions of container network mode](https://docs.docker.com/engine/network/#container-networks).
+Do not add `ports`, `networks`, or custom `dns` settings to RSS Workshop when it shares another container's network; configure networking on Gluetun instead. Docker documents the [restrictions of container network mode](https://docs.docker.com/engine/network/#container-networks).
 
 Use the configured public URL to sign in. With a host reverse proxy, keep its upstream at the published host port. A containerized proxy on Gluetun's Docker network connects to `gluetun:8080` (or the chosen internal port). Set `PUBLIC_BASE_URL` to the real browser-facing HTTPS origin; it is not the VPN exit address.
 
@@ -68,10 +68,10 @@ networks:
 Replace the network name with the one Gluetun actually uses, configure `POSTGRES_PASSWORD` and `DATABASE_URL`, and prepare the `POSTGRES_DATA_DIR` host directory from the [PostgreSQL guide](postgresql.md), then include every override:
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.gluetun.yaml -f compose.local.yaml up -d --build --wait
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.gluetun.yaml -f compose.local.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
-For static-only operation, add `-f compose.static.yaml` after the base file. For registry images, use the matching runtime variant and add `compose.image.yaml` last. Keep PostgreSQL's host data mount and health check. Its port does not need to be published on the host or VPN. Gluetun 3.41 and newer supports resolving peers on its Docker network by service name; consult its [inter-container networking guide](https://github.com/qdm12/gluetun-wiki/blob/main/setup/inter-containers-networking.md) for your version.
+For static-only operation, pair the `-static` image with `-f compose.static.yaml` after the base file. Keep PostgreSQL's host data mount and health check. Its port does not need to be published on the host or VPN. Gluetun 3.41 and newer supports resolving peers on its Docker network by service name; consult its [inter-container networking guide](https://github.com/qdm12/gluetun-wiki/blob/main/setup/inter-containers-networking.md) for your version.
 
 For a database or solver outside that Docker network, configure a reachable address and narrowly scoped `FIREWALL_OUTBOUND_SUBNETS` exceptions on Gluetun where required. These destinations bypass the VPN; do not allow all networks or overlap the VPN tunnel range. Private DNS names may also require Gluetun's `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES`. Follow its [firewall documentation](https://github.com/qdm12/gluetun-wiki/blob/main/setup/options/firewall.md) for the actual network layout.
 
@@ -88,7 +88,7 @@ Keep Gluetun's firewall enabled. Its [firewall design](https://github.com/qdm12/
 After Gluetun is **recreated or replaced**, recreate RSS Workshop as well so it joins the current container's network namespace:
 
 ```sh
-docker compose -f compose.yaml -f compose.gluetun.yaml up -d --no-deps --no-build --force-recreate --wait rss-workshop
+docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml up -d --no-deps --no-build --force-recreate --wait rss-workshop
 ```
 
 Include all the extra overrides used at startup. Do the same for other apps that share Gluetun, following their own deployment instructions. Do not switch RSS Workshop to ordinary bridge networking as a VPN recovery step.

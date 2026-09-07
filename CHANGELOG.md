@@ -9,6 +9,7 @@
 - Static HTTP, sandboxed Chromium/Auto, and optional external FlareSolverr fetch modes.
 - Recipe export/import as paused copies and verified database backup/restore tooling.
 - Lightweight static and browser images, version metadata, CI, and a manual GHCR release workflow.
+- Prebuilt native Linux AMD64 and ARM64 executable archives, with license notices, SHA-256 checksums, and a separate manual release workflow.
 - Optional Compose networking through an existing Gluetun container, with port-conflict, database, and remote-solver guidance.
 - Configurable host directories for SQLite and PostgreSQL persistence, with verified SQLite directory restore and migration from existing Docker volumes.
 - Browser-enabled default Compose installation, with an explicit lightweight static override and local-folder quickstart examples for SQLite and PostgreSQL.
