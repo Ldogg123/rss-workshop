@@ -1,0 +1,40 @@
+{
+  "format": "rss-workshop.recipes",
+  "version": 1,
+  "feeds": [
+    {
+      "title": "GoBlog visual example",
+      "url": "https://go.dev/blog/",
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ""
+        },
+        "date": {
+          "attr": "",
+          "selector": ""
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "",
+          "selector": ""
+        },
+        "items": "p.blogtitle:has(span.date)",
+        "link": {
+          "attr": "href",
+          "selector": "a"
+        },
+        "mode": "static",
+        "settle_ms": 500,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": "a"
+        },
+        "type": "css",
+        "wait_selector": ""
+      },
+      "interval": 900
+    }
+  ]
+}

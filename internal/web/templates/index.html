@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RSS Workshop</title><meta name="description" content="Build and manage RSS feeds from websites."><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script><script src="/assets/portability.js" defer></script><script src="/assets/selector.js" defer></script><script src="/assets/selector-help.js" defer></script></head>
+<body>
+<header><a class="brand" href="/">◔ <span>RSS Workshop</span></a><span class="tag">SELF-HOSTED</span><div class="header-actions"><button id="theme-toggle" class="quiet" type="button">Dark mode</button><button id="logout" class="quiet" hidden>Sign out</button></div></header>
+<main>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+<section id="login-panel" class="login panel"><p class="eyebrow">YOUR FEEDS, YOUR SERVER</p><h1>Welcome back.</h1><p>Sign in to build and manage your feeds.</p><form id="login-form"><label for="password">Admin password</label><input id="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></section>
+<div id="workspace" hidden>
+<div class="heading"><div><p class="eyebrow">FEED LIBRARY</p><h1>Keep up with what matters.</h1></div><div class="library-actions"><a id="export-recipes" class="quiet button-link" href="/api/recipes/export" download>Export recipes</a><button id="import-recipes" class="quiet" type="button">Import recipes</button><button id="new-feed">+ New feed</button></div></div>
+<p id="queue" class="meta"></p>
+<div class="layout">
+<section class="library" aria-label="Saved feeds"><div id="feeds"></div><div id="empty" class="panel empty" hidden><div class="empty-icon">◔</div><h2>Your first feed starts here.</h2><p>Add a page URL, select its article cards, and preview the results.</p><button id="empty-new">Create a feed</button></div></section>
+<section id="editor" class="panel" hidden><div class="editor-heading"><h2 id="editor-title">New feed</h2><button id="close-editor" class="quiet" aria-label="Close editor">Close</button></div>
+<form id="recipe-form">
+<input name="id" type="hidden">
+<label>Feed name<input name="title" required maxlength="200" placeholder="My reading list"></label>
+<label>Page URL<input name="url" type="url" required placeholder="https://example.com/news"></label>
+<div class="row"><label>Selector type<select name="type"><option value="css">CSS</option><option value="xpath">XPath</option></select></label><label>Refresh every (minutes)<input name="interval" type="number" value="15" min="1" max="10080" required></label></div>
+<label>Fetch mode<select name="mode" aria-describedby="fetch-mode-help"><option value="static">Static HTTP</option><option value="auto">Auto (render if no items)</option><option value="browser">Chromium</option><option value="flaresolverr">FlareSolverr (Cloudflare)</option></select></label>
+<p class="hint" id="fetch-mode-help"></p>
+<div id="render-settings" hidden><label>Wait for element (CSS)<input name="wait_selector" placeholder="article.card"></label><label>Extra render wait (milliseconds)<input name="settle_ms" type="number" min="0" max="5000" value="500"></label></div>
+<div class="visual-launch"><button id="visual-button" type="button" class="secondary">Choose elements visually</button><p class="hint">Select elements on the page, then fine-tune CSS or XPath with live highlights.</p></div>
+<label>Repeated item selector<textarea name="items" required placeholder="article.card" rows="2" maxlength="1000" spellcheck="false"></textarea></label>
+<p class="hint" id="selector-help">Fields are relative to each card. Use . for the card itself. Choose an attribute separately, such as href or datetime.</p>
+<div class="field-heading"><span>Field selector</span><span>Attribute (optional)</span></div>
+<div class="field-row"><label>Title<textarea name="title_selector" required placeholder="h2" rows="2" maxlength="1000" spellcheck="false"></textarea></label><label>Title attribute<input name="title_attr" placeholder="text by default"></label></div>
+<div class="field-row"><label>Link<textarea name="link_selector" placeholder="a" rows="2" maxlength="1000" spellcheck="false"></textarea></label><label>Link attribute<input name="link_attr" placeholder="href by default"></label></div>
+<div class="field-row"><label>Description<textarea name="content_selector" placeholder=".summary" rows="2" maxlength="1000" spellcheck="false"></textarea></label><label>Description attribute<input name="content_attr" placeholder="HTML by default"></label></div>
+<div class="field-row"><label>Image<textarea name="image_selector" placeholder="img (auto if empty)" rows="2" maxlength="1000" spellcheck="false"></textarea></label><label>Image attribute<input name="image_attr" placeholder="auto lazy-load detection"></label></div>
+<div class="field-row"><label>Date<textarea name="date_selector" placeholder="time or .date" rows="2" maxlength="1000" spellcheck="false" aria-describedby="date-field-help"></textarea></label><label>Date attribute<input name="date_attr" placeholder="auto: datetime, then text" aria-describedby="date-field-help"></label></div>
+<p class="hint" id="date-field-help">Select an exact date or a relative label such as “2 minutes ago”. Leave the attribute blank to prefer a valid exact datetime, then text.</p>
+<details><summary>Date settings</summary><label>Go date layout<input name="date_layout" placeholder="Optional, e.g. 2006-01-02" aria-describedby="date-layout-help"></label><p class="hint" id="date-layout-help">A custom format is tried first. Standard dates and English relative phrases are recognized automatically.</p><label>Time zone<input name="timezone" placeholder="UTC" aria-describedby="date-timezone-help"></label><p class="hint" id="date-timezone-help">Use the site’s time zone, such as America/New_York, for dates without an offset and relative calendar dates. Blank uses UTC.</p></details>
+<label class="check"><input name="enabled" type="checkbox" checked>Refresh automatically</label>
+<div class="actions"><button id="preview-button" type="button" class="secondary">Preview items</button><button type="submit">Save feed</button></div>
+<p class="hint">RSS and Atom links allow anyone who has the link to read the feed.</p>
+</form>
+<div id="preview" aria-live="polite"></div>
+</section>
+</div></div>
+</main>
+<dialog id="visual-selector" aria-labelledby="visual-title">
+<div class="selector-heading editor-heading"><div><h2 id="visual-title">Choose your feed elements</h2><p class="hint" id="selector-live-help">Click the page or edit a selector to see matching elements highlighted. Your changes stay in the feed editor.</p></div><button id="selector-close" class="secondary" type="button">Done</button></div>
+<div class="selector-layout">
+<aside class="selector-controls" aria-label="Selector controls">
+<div class="selector-toolbar"><label>Page version<select id="selector-mode" aria-describedby="selector-mode-help"><option value="static">Static HTML</option><option value="browser">Rendered with Chromium</option><option value="flaresolverr">FlareSolverr (Cloudflare)</option></select></label><button id="selector-load" class="quiet" type="button">Reload page</button></div>
+<p class="hint" id="selector-mode-help"></p>
+<p id="selector-status" role="status" aria-live="polite"></p>
+<section class="selector-pick" aria-label="Visual selection">
+<label>Highlight field<select id="selector-field"><option value="items">1. Repeated items</option><option value="title">2. Title</option><option value="link">Link</option><option value="content">Description</option><option value="image">Image</option><option value="date">Date</option></select></label>
+<p id="selector-selected">Click an element in the page preview.</p>
+<button id="selector-parent" class="quiet" type="button" disabled>Select parent</button>
+<label id="selector-level-label" hidden>Selection level<select id="selector-level"></select></label>
+<label><span id="selector-choices-label">Suggested CSS</span><select id="selector-choices"></select></label><button id="selector-apply" type="button" disabled>Use selection</button>
+<p class="hint">Start with a headline, then choose its repeating card with Selection level. Select the fields inside each card next.</p>
+</section>
+<section class="selector-recipe" aria-label="Edit selectors">
+<h3>Fine-tune selectors</h3>
+<div class="selector-type-row"><div class="selector-control"><div class="selector-label-row"><label for="visual-type">Selector type</label><button type="button" class="field-help" data-help-for="visual-type" aria-label="What’s this? Selector type" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><select id="visual-type" aria-describedby="selector-syntax-help"><option value="css">CSS</option><option value="xpath">XPath</option></select></div><button id="selector-convert" class="quiet" type="button">Convert to XPath</button></div>
+<p class="hint" id="selector-syntax-help">Fields are relative to each card. Use . for the card itself; enter attributes separately.</p>
+<div class="selector-control selector-item-input" data-highlight-field="items"><div class="selector-label-row"><label for="visual-items">Repeated items</label><button type="button" class="field-help" data-help-for="visual-items" aria-label="What’s this? Repeated items" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><textarea id="visual-items" rows="2" maxlength="1000" class="selector-code" placeholder="article.card" spellcheck="false" autocomplete="off" aria-describedby="selector-syntax-help"></textarea></div>
+<div class="selector-field-row" data-highlight-field="title"><div class="selector-control"><div class="selector-label-row"><label for="visual-title-selector">Title selector</label><button type="button" class="field-help" data-help-for="visual-title-selector" aria-label="What’s this? Title selector" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><textarea id="visual-title-selector" rows="2" maxlength="1000" class="selector-code" placeholder="h2" spellcheck="false" autocomplete="off"></textarea></div><div class="selector-control"><div class="selector-label-row"><label for="visual-title-attr">Attribute</label><button type="button" class="field-help" data-help-for="visual-title-attr" aria-label="What’s this? Title attribute" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><input id="visual-title-attr" maxlength="2048" class="selector-code" placeholder="text" aria-label="Title attribute" spellcheck="false" autocomplete="off"></div></div>
+<div class="selector-field-row" data-highlight-field="link"><div class="selector-control"><div class="selector-label-row"><label for="visual-link-selector">Link selector</label><button type="button" class="field-help" data-help-for="visual-link-selector" aria-label="What’s this? Link selector" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><textarea id="visual-link-selector" rows="2" maxlength="1000" class="selector-code" placeholder="a" spellcheck="false" autocomplete="off"></textarea></div><div class="selector-control"><div class="selector-label-row"><label for="visual-link-attr">Attribute</label><button type="button" class="field-help" data-help-for="visual-link-attr" aria-label="What’s this? Link attribute" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><input id="visual-link-attr" maxlength="2048" class="selector-code" placeholder="href" aria-label="Link attribute" spellcheck="false" autocomplete="off"></div></div>
+<div class="selector-field-row" data-highlight-field="content"><div class="selector-control"><div class="selector-label-row"><label for="visual-content-selector">Description selector</label><button type="button" class="field-help" data-help-for="visual-content-selector" aria-label="What’s this? Description selector" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><textarea id="visual-content-selector" rows="2" maxlength="1000" class="selector-code" placeholder=".summary" spellcheck="false" autocomplete="off"></textarea></div><div class="selector-control"><div class="selector-label-row"><label for="visual-content-attr">Attribute</label><button type="button" class="field-help" data-help-for="visual-content-attr" aria-label="What’s this? Description attribute" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><input id="visual-content-attr" maxlength="2048" class="selector-code" placeholder="HTML" aria-label="Description attribute" spellcheck="false" autocomplete="off"></div></div>
+<div class="selector-field-row" data-highlight-field="image"><div class="selector-control"><div class="selector-label-row"><label for="visual-image-selector">Image selector</label><button type="button" class="field-help" data-help-for="visual-image-selector" aria-label="What’s this? Image selector" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><textarea id="visual-image-selector" rows="2" maxlength="1000" class="selector-code" placeholder="img (auto if empty)" spellcheck="false" autocomplete="off"></textarea></div><div class="selector-control"><div class="selector-label-row"><label for="visual-image-attr">Attribute</label><button type="button" class="field-help" data-help-for="visual-image-attr" aria-label="What’s this? Image attribute" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><input id="visual-image-attr" maxlength="2048" class="selector-code" placeholder="auto" aria-label="Image attribute" spellcheck="false" autocomplete="off"></div></div>
+<div class="selector-field-row" data-highlight-field="date"><div class="selector-control"><div class="selector-label-row"><label for="visual-date-selector">Date selector</label><button type="button" class="field-help" data-help-for="visual-date-selector" aria-label="What’s this? Date selector" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><textarea id="visual-date-selector" rows="2" maxlength="1000" class="selector-code" placeholder="time or .date" spellcheck="false" autocomplete="off"></textarea></div><div class="selector-control"><div class="selector-label-row"><label for="visual-date-attr">Attribute</label><button type="button" class="field-help" data-help-for="visual-date-attr" aria-label="What’s this? Date attribute" aria-expanded="false" aria-controls="selector-field-tip" title="What’s this?">?</button></div><input id="visual-date-attr" maxlength="2048" class="selector-code" placeholder="auto" aria-label="Date attribute" spellcheck="false" autocomplete="off"></div></div>
+</section>
+<div id="selector-field-tip" class="field-help-panel" role="note" aria-labelledby="selector-tip-title" hidden><div class="field-help-heading"><strong id="selector-tip-title"></strong><button id="selector-tip-close" type="button" class="quiet" aria-label="Close field help">×</button></div><div id="selector-tip-content"></div></div>
+<details class="selector-recipe-summary"><summary>Recipe summary</summary><pre id="selector-mapping" aria-live="polite"></pre></details>
+</aside>
+<section class="selector-preview" aria-label="Source page preview">
+<div class="selector-preview-heading"><div><h3>Page preview</h3><p id="selector-source"></p></div><p id="selector-matches" role="status" aria-live="polite">Load a page to see matching elements.</p></div>
+<div id="selector-frame-host"></div>
+<p class="hint selector-preview-note">A simplified view of the page, with image placeholders. Preview items in the feed editor to check the extracted content.</p>
+</section>
+</div>
+</dialog>
+<dialog id="recipe-import" aria-labelledby="import-title">
+<div class="editor-heading"><h2 id="import-title">Import feed recipes</h2><button id="import-close" class="quiet" type="button">Close</button></div>
+<p>Choose a recipe JSON file from RSS Workshop. Review the recipes, then add them as new paused feeds. Recipes already in your library will be added again.</p>
+<label for="import-file">Recipe file<input id="import-file" type="file" accept=".json,application/json" aria-describedby="import-file-help"></label>
+<p id="import-file-help" class="hint">Up to 1,000 recipes in a file of 2 MiB or less. Exported recipes include selectors and refresh settings; saved items and private feed links stay on their original server.</p>
+<p id="import-status" role="status" aria-live="polite"></p>
+<ol id="import-preview" hidden aria-label="Recipes to import"></ol>
+<div class="actions"><button id="import-confirm" type="button" disabled hidden>Import paused feeds</button></div>
+</dialog>
+<footer>RSS Workshop <span>Website feed builder · {{.Version}}</span></footer>
+</body></html>

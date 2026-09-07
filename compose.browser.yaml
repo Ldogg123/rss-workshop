@@ -1,0 +1,19 @@
+# Compatibility override: compose.yaml already includes Chromium by default.
+# This file also explicitly selects Chromium after compose.static.yaml.
+services:
+  rss-workshop:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+      target: app
+    environment:
+      CHROMIUM_PATH: /usr/bin/chromium
+      BROWSER_SLOTS: ${BROWSER_SLOTS:-2}
+    shm_size: 256mb
+    tmpfs: !override
+      - /tmp:size=256m,mode=1777
+    security_opt: !override
+      - no-new-privileges:true
+      - seccomp=./deploy/chromium-seccomp.json
+    pids_limit: 256
+    mem_limit: 2g

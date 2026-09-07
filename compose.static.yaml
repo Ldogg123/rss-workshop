@@ -1,0 +1,19 @@
+# Optional lightweight runtime without local Chromium.
+# docker compose -f compose.yaml -f compose.static.yaml up -d --build --wait
+services:
+  rss-workshop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: !reset null
+    environment:
+      # Also overrides CHROMIUM_PATH if a browser image is selected explicitly.
+      CHROMIUM_PATH: ""
+      BROWSER_SLOTS: ""
+    tmpfs: !override
+      - /tmp:size=32m,mode=1777
+    security_opt: !override
+      - no-new-privileges:true
+    shm_size: !reset null
+    pids_limit: !reset null
+    mem_limit: !reset null

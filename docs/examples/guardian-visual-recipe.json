@@ -1,0 +1,40 @@
+{
+  "format": "rss-workshop.recipes",
+  "version": 1,
+  "feeds": [
+    {
+      "title": "Guardian visual example",
+      "url": "https://www.theguardian.com/international",
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ""
+        },
+        "date": {
+          "attr": "",
+          "selector": ""
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "",
+          "selector": ""
+        },
+        "items": "li.dcr-1i6ti96:has(h3)",
+        "link": {
+          "attr": "href",
+          "selector": "a"
+        },
+        "mode": "static",
+        "settle_ms": 500,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": "h3"
+        },
+        "type": "css",
+        "wait_selector": ""
+      },
+      "interval": 900
+    }
+  ]
+}

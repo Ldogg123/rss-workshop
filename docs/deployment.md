@@ -1,0 +1,135 @@
+# Deployment and configuration
+
+Run one RSS Workshop process per database. The default Compose installation includes sandboxed Chromium and SQLite on local disk; an explicit `DATABASE_URL` selects PostgreSQL. Docker deployments require Docker Engine and Compose 2.24.4 or newer. The app runs as UID/GID 65532 with a read-only root filesystem; a configurable host directory supplies persistent storage at `/data`.
+
+## Docker Compose
+
+For a new installation, create a private `.env` file from [.env.example](../.env.example), set `ADMIN_PASSWORD` or `ADMIN_PASSWORD_HASH`, then prepare storage and start the app with Chromium:
+
+```sh
+git clone https://github.com/Ldogg123/rss-workshop.git
+cd rss-workshop
+cp .env.example .env
+chmod 600 .env
+# Edit .env before starting.
+sudo install -d -m 700 -o 65532 -g 65532 ./data
+docker compose up -d --build --wait
+```
+
+Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop`, container `rss-workshop-rss-workshop-1`, and image `rss-workshop:local`.
+
+`RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the `install` command. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
+
+Keep the same host directory on later runs. If upgrading from an existing SQLite named-volume deployment, follow [storage migration and recovery](operations.md#move-an-existing-sqlite-volume-to-a-host-directory) before recreating the app. Changing a mount to an empty directory starts a separate, empty SQLite library; it does not copy the old database. Keep the original data until migration is verified. PostgreSQL storage migration is covered in its [setup guide](postgresql.md#existing-postgresql-named-volumes).
+
+The default host directories are ignored by Git and Docker builds. Keep custom data directories outside the checkout, or explicitly exclude them from both Git and the Docker build context.
+
+Keep the default Chromium sandbox and resource settings. See [Chromium rendering](browser.md) and [FlareSolverr](flaresolverr.md) for their configuration and network boundaries. Existing commands that include `compose.browser.yaml` continue to select the browser runtime; the extra file is unnecessary for new default installations.
+
+## Lightweight static runtime
+
+If you only need static pages or an external FlareSolverr service, select the smaller image with the static override. It contains the Go application and CA certificates, with no shell or local browser:
+
+```sh
+docker compose -f compose.yaml -f compose.static.yaml up -d --build --wait
+```
+
+Include `compose.static.yaml` for subsequent operations on that deployment. Data paths and database selection work the same way in both runtimes.
+
+## Gluetun VPN
+
+The optional [Gluetun override](../compose.gluetun.yaml) connects RSS Workshop to an existing Gluetun container. Follow the [Gluetun setup guide](gluetun.md) to publish the UI port on Gluetun, choose an unused internal port, and configure access to PostgreSQL or FlareSolverr. It works with both runtimes; an HTTP proxy environment variable does not route the app's guarded fetcher.
+
+## Database selection
+
+With `DATABASE_URL` blank or unset, the app uses `DATA_DIR/rss.db`. A `postgres://` or `postgresql://` URI selects an existing PostgreSQL database. See [PostgreSQL setup](postgresql.md) for credentials, TLS, and the optional `compose.postgres.yaml` server. The PostgreSQL override works with the static, browser, and registry-image deployments.
+
+Changing the selected database does not copy recipes, articles, or reader tokens. A fresh database starts empty; the old SQLite file or PostgreSQL database remains separate. Keep one app process per database and use the matching [backup procedure](operations.md#backup-and-restore).
+
+## Registry images
+
+Prebuilt images have not been published yet; use the source-build instructions above. After the first image release, set `RSS_IMAGE` in `.env` to an available tag or immutable digest under `ghcr.io/ldogg123/rss-workshop`. Tags include a runtime suffix; this is a format example, not an available release:
+
+```dotenv
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.4.0-browser
+```
+
+Apply `compose.image.yaml` last to use that image without building locally:
+
+```sh
+docker compose -f compose.yaml -f compose.image.yaml pull rss-workshop
+docker compose -f compose.yaml -f compose.image.yaml up -d --no-build --wait
+```
+
+The commands above use a `-browser` image with the default browser settings. For a `-static` image, include `-f compose.static.yaml` before `-f compose.image.yaml` in both commands. Use the same files and order for later operations. The image override preserves the host data mount. Prefer immutable digests and keep the previous digest for rollback; [release preparation](releases.md) describes the published variants.
+
+## Public URL and HTTPS
+
+The default binding is `127.0.0.1:8080:8080`, with `PUBLIC_BASE_URL=http://localhost:8080`. For remote access, put the app behind a TLS reverse proxy and set the exact public origin, such as `https://rss.example.net`. Path-prefix hosting is unsupported. Feed URLs and origin checks use this configured address; forwarded headers do not replace it.
+
+A host-installed Caddy proxy can use:
+
+```caddyfile
+rss.example.net {
+    reverse_proxy 127.0.0.1:8080 {
+        transport http {
+            response_header_timeout 150s
+        }
+    }
+}
+```
+
+Supply your hostname and DNS/TLS configuration. The [Caddy reverse proxy directive](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) forwards to the host's loopback port; a containerized proxy needs a shared network instead. Preserve the browser's `Origin` header, avoid caching management/API responses, and allow at least 150 seconds for the maximum FlareSolverr timeout and cleanup.
+
+For direct LAN access, deliberately bind the app to a LAN address and set `PUBLIC_BASE_URL` to the same origin. Use HTTPS across untrusted networks. HTTPS enables secure session cookies. Redact or disable proxy access logs for `/feeds/`, whose paths contain bearer tokens.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | required unless hash supplied | Unique admin password, 12–72 bytes |
+| `ADMIN_PASSWORD_HASH` | empty | bcrypt hash; takes precedence over the password |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | Stable public origin without a path |
+| `LISTEN_ADDR` | `:8080` | Native bind address |
+| `DATA_DIR` | `./data`, `/data` in Docker | Local SQLite directory |
+| `RSS_DATA_DIR` | `./data` | Compose host directory mounted at `/data`; precreate with UID/GID 65532 ownership |
+| `DATABASE_URL` | empty | PostgreSQL connection URI; blank selects SQLite |
+| `POSTGRES_PASSWORD` | required for PostgreSQL override | Bootstrap password for the optional dedicated server |
+| `POSTGRES_DATA_DIR` | `./postgres-data` | Compose host directory for the optional PostgreSQL server; precreate before startup |
+| `STATIC_WORKERS` | `16` | 1–64 shared refresh/preview slots |
+| `FETCH_TIMEOUT` | `30s` | 1s–2m static/local Chromium deadline |
+| `CHROMIUM_PATH` | empty | Native browser executable; browser image sets `/usr/bin/chromium` |
+| `BROWSER_SLOTS` | `2` | 1–8 local browser jobs |
+| `FLARESOLVERR_URL` | empty | Trusted service base URL or `/v1` endpoint |
+| `FLARESOLVERR_TIMEOUT` | `60s` | 5s–2m solver deadline, independent of `FETCH_TIMEOUT` |
+| `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |
+| `MAX_ITEMS` | `500` | 1–10,000 retained items per feed |
+| `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
+| `RSS_IMAGE` | required for image override | Runtime image tag or digest |
+| `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
+| `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
+
+Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters inside connection-URI passwords. Recreate the container after environment changes; restarting the process invalidates login sessions.
+
+Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chromium proxy check destinations before dialing; environment HTTP proxies are ignored. FlareSolverr has a separate remote network boundary, and its private service endpoint does not require a source allowlist exception.
+
+## Run from source
+
+Use the Go version specified in [go.mod](../go.mod) and Make; tests also require Python 3.9+ and a C compiler. `make build` produces `bin/rss-workshop`. Export the environment variables above and run the binary under a non-root service account with a writable local data directory. Native execution does not load `.env` automatically. See [contributing](../CONTRIBUTING.md) for build and test commands.
+
+For a local SQLite instance in Bash:
+
+```bash
+read -r -s -p 'Admin password: ' ADMIN_PASSWORD
+printf '\n'
+export ADMIN_PASSWORD
+export PUBLIC_BASE_URL=http://localhost:8080
+export LISTEN_ADDR=127.0.0.1:8080
+export DATA_DIR=./data
+export DATABASE_URL=
+make run
+```
+
+Use another port and data directory if an instance is already running. For an unattended native deployment, supply these variables through your service manager and keep the same persistent data directory across restarts.
+
+Check readiness, sign in through the final URL, and preview a source before connecting readers. Follow [operations](operations.md) for health checks, verified backups, restores, and upgrades.

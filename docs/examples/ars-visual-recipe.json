@@ -1,0 +1,40 @@
+{
+  "format": "rss-workshop.recipes",
+  "version": 1,
+  "feeds": [
+    {
+      "title": "Ars visual example",
+      "url": "https://arstechnica.com/",
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ""
+        },
+        "date": {
+          "attr": "",
+          "selector": ""
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "",
+          "selector": ""
+        },
+        "items": "article.relative:has(h2)",
+        "link": {
+          "attr": "href",
+          "selector": "a.text-gray-700"
+        },
+        "mode": "static",
+        "settle_ms": 500,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": "h2"
+        },
+        "type": "css",
+        "wait_selector": ""
+      },
+      "interval": 900
+    }
+  ]
+}

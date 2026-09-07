@@ -1,0 +1,45 @@
+name: rss-workshop
+
+services:
+  rss-workshop:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+      target: app
+    image: rss-workshop:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      DATA_DIR: /data
+      DATABASE_URL: ${DATABASE_URL:-}
+      STATIC_WORKERS: ${STATIC_WORKERS:-16}
+      FETCH_TIMEOUT: ${FETCH_TIMEOUT:-30s}
+      CHROMIUM_PATH: /usr/bin/chromium
+      BROWSER_SLOTS: ${BROWSER_SLOTS:-2}
+      FLARESOLVERR_URL: ${FLARESOLVERR_URL:-}
+      FLARESOLVERR_TIMEOUT: ${FLARESOLVERR_TIMEOUT:-60s}
+      FLARESOLVERR_SLOTS: ${FLARESOLVERR_SLOTS:-1}
+      MAX_ITEMS: ${MAX_ITEMS:-500}
+      ALLOW_CIDRS: ${ALLOW_CIDRS:-}
+    volumes:
+      - type: bind
+        source: ${RSS_DATA_DIR:-./data}
+        target: /data
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    shm_size: 256mb
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/chromium-seccomp.json
+    pids_limit: 256
+    mem_limit: 2g
+    stop_grace_period: 20s

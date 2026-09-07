@@ -1,0 +1,8 @@
+# Join an existing, running Gluetun container. Publish the app port on Gluetun.
+# See docs/gluetun.md before enabling, especially for PostgreSQL/FlareSolverr.
+services:
+  rss-workshop:
+    network_mode: "container:${GLUETUN_CONTAINER:?Set GLUETUN_CONTAINER to your running Gluetun container name}"
+    ports: !reset []
+    environment:
+      LISTEN_ADDR: ":${GLUETUN_APP_PORT:-8080}"

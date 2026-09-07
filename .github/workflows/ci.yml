@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go and native workflow (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Verify downloaded modules
+        run: go mod verify
+      - name: Validate workflow syntax
+        if: matrix.arch == 'amd64'
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/*.yml
+      - name: Check reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      - name: Check format, race tests, vet, static binary, and native workflow
+        env:
+          VERSION: ci
+          COMMIT: ${{ github.sha }}
+        run: make check
+
+  postgres:
+    name: PostgreSQL persistence and native workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: rss_workshop_test
+          POSTGRES_USER: rss_workshop_test
+          POSTGRES_PASSWORD: disposable-ci-fixture-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U rss_workshop_test -d rss_workshop_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      RSS_TEST_POSTGRES_URL: postgres://rss_workshop_test:disposable-ci-fixture-only@127.0.0.1:5432/rss_workshop_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Exercise PostgreSQL startup, persistence, scheduler, web and native workflows
+        run: make postgres-test postgres-smoke
+
+  containers:
+    name: Containers and sandboxed browser (${{ matrix.arch }})
+    needs: [go, postgres]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build static runtime
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: rss-workshop:ci-static
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+            SOURCE_URL=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=static-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=static-${{ matrix.arch }}
+      - name: Build browser runtime
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.browser
+          target: app
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: rss-workshop:ci-browser
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+            SOURCE_URL=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=browser-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=browser-${{ matrix.arch }}
+      - name: Build native race-enabled browser tests
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.browser
+          target: browser-tests
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: rss-workshop:ci-browser-tests
+          cache-from: |
+            type=gha,scope=browser-${{ matrix.arch }}
+            type=gha,scope=browser-tests-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=browser-tests-${{ matrix.arch }}
+      - name: Test Chromium sandbox, rendering, and visual editor
+        run: |
+          mkdir -p artifacts/browser
+          chmod 0777 artifacts/browser
+          docker run --rm --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --security-opt seccomp=./deploy/chromium-seccomp.json \
+            --tmpfs /tmp:size=256m,mode=1777 --shm-size=256m \
+            --pids-limit 256 --memory 2g \
+            --mount type=bind,src="$PWD/artifacts/browser",dst=/artifacts \
+            -e RSS_SITE_ARTIFACTS=/artifacts rss-workshop:ci-browser-tests
+      - name: Test static Compose opt-out and restart persistence
+        env:
+          RSS_SMOKE_COMPOSE: '1'
+          RSS_SMOKE_IMAGE: rss-workshop:ci-static
+        run: python3 scripts/smoke.py
+      - name: Test default browser Compose deployment and restart persistence
+        env:
+          RSS_SMOKE_COMPOSE: '1'
+          RSS_SMOKE_BROWSER: '1'
+          RSS_SMOKE_IMAGE: rss-workshop:ci-browser
+        run: python3 scripts/smoke.py
+      - name: Test host-directory and legacy named-volume backup and restore
+        if: matrix.arch == 'amd64'
+        env:
+          RSS_BACKUP_DOCKER_TEST: '1'
+          RSS_BACKUP_TEST_IMAGE: rss-workshop:ci-static
+        run: sudo env RSS_BACKUP_DOCKER_TEST="$RSS_BACKUP_DOCKER_TEST" RSS_BACKUP_TEST_IMAGE="$RSS_BACKUP_TEST_IMAGE" python3 scripts/backup_test.py
+      - name: Test PostgreSQL Compose deployment, reconnection, dump and restore
+        if: matrix.arch == 'amd64'
+        env:
+          RSS_SMOKE_COMPOSE: '1'
+          RSS_SMOKE_POSTGRES: '1'
+          RSS_SMOKE_IMAGE: rss-workshop:ci-static
+        run: python3 scripts/smoke.py
+      - name: Retain fixture browser screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-fixtures-${{ matrix.arch }}
+          path: artifacts/browser/
+          if-no-files-found: ignore
+          retention-days: 7

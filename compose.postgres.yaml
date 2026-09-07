@@ -1,0 +1,31 @@
+# Optional dedicated PostgreSQL server. Set both secrets in .env first.
+# DATABASE_URL must explicitly select this server; it is not assembled from a
+# raw password, whose reserved characters would need URI percent-encoding.
+services:
+  rss-workshop:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the postgres service URI}
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rss_workshop
+      POSTGRES_USER: rss_workshop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD}
+    volumes:
+      # PostgreSQL 18 stores PGDATA below /var/lib/postgresql/18/docker.
+      - type: bind
+        source: ${POSTGRES_DATA_DIR:-./postgres-data}
+        target: /var/lib/postgresql
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "rss_workshop", "-d", "rss_workshop"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    stop_grace_period: 1m

@@ -1,0 +1,58 @@
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS chromium
+ARG CHROMIUM_VERSION=152.0.7977.82-1~deb13u1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium=${CHROMIUM_VERSION} ca-certificates fonts-liberation \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data && chown 65532:65532 /data
+RUN groupadd --gid 65532 rss && useradd --uid 65532 --gid rss --no-create-home --home-dir /tmp --shell /usr/sbin/nologin rss
+ENV HOME=/tmp CHROMIUM_PATH=/usr/bin/chromium DATA_DIR=/data LISTEN_ADDR=:8080
+USER 65532:65532
+WORKDIR /data
+
+FROM --platform=$BUILDPLATFORM golang:1.27.1 AS source
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+FROM source AS build
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -buildvcs=false \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+    -o /out/rss-workshop ./cmd/server
+
+# Race-enabled browser tests run on native builders. The production app does
+# not depend on this stage and does not compile or ship either test binary.
+FROM source AS test-build
+ARG TARGETOS
+ARG TARGETARCH
+RUN test "${TARGETOS}/${TARGETARCH}" = "$(go env GOOS)/$(go env GOARCH)" \
+    && CGO_ENABLED=1 go test -race -c -o /out/browser.test ./internal/browser \
+    && CGO_ENABLED=1 go test -race -c -o /out/web.test ./internal/web
+
+FROM chromium AS browser-tests
+COPY --from=test-build /out/browser.test /browser.test
+COPY --from=test-build /out/web.test /web.test
+ENV RSS_BROWSER_TEST=1
+ENTRYPOINT ["/bin/sh", "-c", "/browser.test -test.v && /web.test -test.run TestBrowserUI -test.v"]
+
+FROM chromium AS app
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG SOURCE_URL=https://github.com/Ldogg123/rss-workshop
+LABEL org.opencontainers.image.title="RSS Workshop with Chromium" \
+      org.opencontainers.image.description="Self-hosted website-to-RSS and Atom feeds with sandboxed Chromium rendering" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.licenses="MIT"
+COPY --from=build /out/rss-workshop /rss-workshop
+COPY --from=build /src/LICENSE /licenses/RSS-Workshop-LICENSE
+COPY --from=build /src/docs/licenses /licenses
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD ["/rss-workshop", "-healthcheck"]
+ENTRYPOINT ["/rss-workshop"]
