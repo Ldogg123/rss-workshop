@@ -39,6 +39,7 @@ That password is only for local development. The native process reads exported e
 | `internal/browser` | Bounded Chromium pool and network proxy |
 | `internal/flaresolverr` | Optional external FlareSolverr client |
 | `internal/extract` | CSS/XPath extraction, content sanitization, URLs and dates |
+| `internal/diagnostics` | Bounded, redacted refresh and preview traces |
 | `internal/scheduler` | Shared job limits, refresh scheduling, conditional requests and retries |
 | `internal/feed` | RSS and Atom serialization |
 | `internal/web` | Management/reader routes, visual selection, embedded templates and assets |
@@ -49,6 +50,7 @@ That password is only for local development. The native process reads exported e
 ## Behavior to preserve
 
 - Reader requests serialize saved items; they must never fetch or render the source. Failed or empty extraction preserves previously saved output. Publication dates and GUIDs remain stable across refreshes, including relative-date estimates.
+- Reading per-feed diagnostics must not fetch or queue a source. Keep the latest 50 refresh runs per feed; previews do not write history. Preserve legacy summaries, bounded/redacted traces, and plain-text expected/received field samples. Missing optional fields must not reject otherwise valid items.
 - Static mode must work in the minimal image without Chromium or FlareSolverr. Optional modes share extraction, sanitization and persistence. Keep FlareSolverr an explicit opt-in; its remote network boundary differs from the local guarded fetcher.
 - Plain `compose.yaml` downloads the published Chromium image with its sandbox and resource limits. `compose.static.yaml` selects the smaller published runtime and clears browser-only settings. With `RSS_IMAGE` blank, each runtime selects its own versioned image; an explicit tag or digest must match the chosen runtime. Container checks must exercise both defaults and custom image selection.
 - Operator Compose files contain no local build. Development explicitly adds `compose.build.yaml` for Chromium, or `compose.build.static.yaml` after `compose.static.yaml` for the static runtime. Preserve their local image names and build policy; see [deployment](docs/deployment.md#build-container-images-from-source). Native release archives support Linux amd64/arm64, include license notices, and use the host's CA store and optional Chromium; they do not load `.env` automatically.
@@ -60,6 +62,7 @@ That password is only for local development. The native process reads exported e
 - Keep SQLite as the default when `DATABASE_URL` is blank or unset. An explicit `postgres://` or `postgresql://` URL selects PostgreSQL; never silently migrate, merge, or replace data when switching. PostgreSQL connections require UTF-8 database/client encoding. Database credentials are trusted configuration, separate from source-fetching `ALLOW_CIDRS`.
 - Docker persistence uses precreated host bind directories: `RSS_DATA_DIR` at `/data` and optional `POSTGRES_DATA_DIR` at `/var/lib/postgresql`. Preserve `create_host_path: false`, the app's UID/GID 65532 permissions, and the fixed container `DATA_DIR=/data`. Existing named-volume installations require an explicit migration before changing mounts.
 - Run one application process per database for both backends. Schema changes need explicit transactional migrations and a backup/restore compatibility review; do not silently recreate existing data. Preserve storage behavior across both backends, including imports, recipe-version checks, scheduling, GUIDs, dates, retention, and reader output.
+- Schema 2 adds run diagnostics through a transactional schema-1 migration. Keep released-schema migration fixtures and backup support for schemas 1 and 2; previous app versions require a schema-1 backup for downgrade.
 
 ## Validation
 

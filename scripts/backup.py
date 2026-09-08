@@ -25,6 +25,7 @@ import uuid
 
 FORMAT = "rss-workshop.sqlite-backup"
 TABLES = ("feeds", "items", "runs")
+SCHEMA_VERSIONS = (1, 2)
 
 
 def docker(*args, **kwargs):
@@ -81,7 +82,7 @@ def mounts_overlap(first, second):
     return posixpath.commonpath(resolved) in resolved
 
 
-def database_info(path, immutable=False):
+def database_info(path, immutable=False, *, include_schema=False):
     if path.is_symlink() or not path.is_file():
         raise ValueError("rss.db must be a regular file")
     suffix = "?mode=ro" + ("&immutable=1" if immutable else "")
@@ -91,9 +92,11 @@ def database_info(path, immutable=False):
             raise ValueError("SQLite integrity check failed")
         if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise ValueError("SQLite foreign-key check failed")
-        if db.execute("SELECT version FROM schema_version").fetchall() != [(1,)]:
-            raise ValueError("unsupported database schema; this tool supports version 1")
-        return {table: db.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in TABLES}
+        versions = db.execute("SELECT version FROM schema_version").fetchmany(2)
+        if len(versions) != 1 or type(versions[0][0]) is not int or versions[0][0] not in SCHEMA_VERSIONS:
+            raise ValueError("unsupported database schema; this tool supports exactly one version row of 1 or 2")
+        counts = {table: db.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in TABLES}
+        return {"schema_version": versions[0][0], "counts": counts} if include_schema else counts
 
 
 def checksum(path):
@@ -104,7 +107,7 @@ def checksum(path):
     return digest.hexdigest()
 
 
-def snapshot_database(source, destination):
+def snapshot_database(source, destination, *, include_schema=False):
     """Consolidate the stopped copy's database and any WAL into one file."""
     database_info(source)
     with contextlib.closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as original:
@@ -112,7 +115,7 @@ def snapshot_database(source, destination):
             original.backup(backup)
             backup.execute("PRAGMA journal_mode=DELETE")
     destination.chmod(0o600)
-    return database_info(destination, immutable=True)
+    return database_info(destination, immutable=True, include_schema=include_schema)
 
 
 def verify_backup(directory):
@@ -122,14 +125,17 @@ def verify_backup(directory):
     manifest = json.loads(manifest_path.read_text())
     if not isinstance(manifest, dict) or manifest.get("format") != FORMAT or manifest.get("version") != 1:
         raise ValueError("unsupported backup format")
+    schema_version = manifest.get("schema_version")
+    if type(schema_version) is not int or schema_version not in SCHEMA_VERSIONS:
+        raise ValueError("unsupported backup database schema; this tool supports versions 1 and 2")
     if database.is_symlink() or not database.is_file():
         raise ValueError("rss.db must be a regular file")
     if any(os.path.lexists(str(database) + suffix) for suffix in ("-wal", "-shm", "-journal")):
         raise ValueError("backup must be a standalone database without SQLite sidecar files")
     if manifest.get("sha256") != checksum(database):
         raise ValueError("backup checksum does not match; the database may be incomplete or changed")
-    info = database_info(database, immutable=True)
-    if manifest.get("schema_version") != 1 or manifest.get("counts") != info:
+    info = database_info(database, immutable=True, include_schema=True)
+    if schema_version != info["schema_version"] or manifest.get("counts") != info["counts"]:
         raise ValueError("backup metadata does not match the database")
     return manifest
 
@@ -177,10 +183,10 @@ def backup_locked(container, output):
                 docker("start", identity)
                 print("Container restarted; validating the copied database…", flush=True)
         snapshot = Path(work) / "rss.db"
-        counts = snapshot_database(copied / "rss.db", snapshot)
-        manifest = {"format": FORMAT, "version": 1, "schema_version": 1,
+        info = snapshot_database(copied / "rss.db", snapshot, include_schema=True)
+        manifest = {"format": FORMAT, "version": 1, "schema_version": info["schema_version"],
                     "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "sha256": checksum(snapshot), "counts": counts}
+                    "sha256": checksum(snapshot), "counts": info["counts"]}
         if mount["Type"] == "volume":
             manifest["source_volume"] = mount["Name"]
         else:
@@ -346,7 +352,7 @@ def main():
             backup_container(args.container, Path(os.path.abspath(args.output)))
         elif args.command == "verify":
             result = verify_backup(args.backup.resolve())
-            print("Verified SQLite backup (schema 1): " + json.dumps(result["counts"]))
+            print(f"Verified SQLite backup (schema {result['schema_version']}): " + json.dumps(result["counts"]))
         elif args.directory is not None:
             if args.image is not None:
                 raise ValueError("--image is only used with --volume")

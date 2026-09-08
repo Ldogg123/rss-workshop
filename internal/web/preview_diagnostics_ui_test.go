@@ -40,7 +40,9 @@ func testPreviewDiagnostics(t *testing.T, tab context.Context) {
 		chromedp.Evaluate(`(()=>{
 	 const p=document.querySelector('#preview'),n=document.querySelector('#notice');
 	 return p.querySelector('h2').textContent==='0 items · 2 matches'&&
-	  [...p.querySelectorAll('.diagnostic')].every((d,i)=>d.textContent==='Match '+(i+1)+' skipped: empty title')&&
+	  !p.querySelector('.preview-diagnostics').open&&p.querySelector('.preview-diagnostics').textContent.includes('Matching failed')&&
+	  p.querySelector('.run-metrics').textContent.includes('XPath')&&
+	  [...p.querySelectorAll('.diagnostic')].every((d,i)=>d.textContent.startsWith('Match '+(i+1)+' skipped: empty title'))&&
 	  !p.querySelector('.preview-item')&&!n.hidden&&n.textContent.includes('no valid items')&&
 	  !document.querySelector('#workspace').hidden&&document.querySelector('#login-panel').hidden;
 	})()`, &correct))
@@ -67,7 +69,7 @@ func testPreviewDiagnostics(t *testing.T, tab context.Context) {
 		chromedp.Evaluate(`(()=>{
 	 const p=document.querySelector('#preview'),warnings=[...p.querySelectorAll('.diagnostic')];
 	 return p.querySelector('h2').textContent==='0 items · 2 matches'&&
-	  warnings.slice(0,2).every((d,i)=>d.textContent==='Match '+(i+1)+' skipped: missing or unsafe item URL')&&
+	  warnings.slice(0,2).every((d,i)=>d.textContent.startsWith('Match '+(i+1)+' skipped: missing or unsafe item URL'))&&
 	  warnings[2].textContent.startsWith('<img id="diagnostic-injection"')&&
 	  warnings.every(d=>d.childElementCount===0)&&!p.textContent.includes('empty title')&&
 	  !document.querySelector('#diagnostic-injection')&&!document.body.dataset.diagnosticAttack;
@@ -86,10 +88,41 @@ func testPreviewDiagnostics(t *testing.T, tab context.Context) {
 		chromedp.Evaluate(`(()=>{
 	 const p=document.querySelector('#preview'),n=document.querySelector('#notice');
 	 return p.querySelector('h2').textContent==='2 items · 2 matches'&&!p.querySelector('.diagnostic')&&
+	  !p.querySelector('.preview-diagnostics').open&&p.querySelector('.preview-diagnostics').textContent.includes('Extraction completed')&&
 	  !p.textContent.includes('Preview could not be completed')&&n.hidden&&n.textContent===''&&
 	  !document.querySelector('#workspace').hidden&&!document.body.dataset.diagnosticAttack;
 	})()`, &correct))
 	if status.Load() != 200 || !correct {
 		t.Fatalf("successful retry retained failed-preview diagnostics: status=%d correct=%v", status.Load(), correct)
 	}
+
+	// Optional Date fields keep otherwise valid stories while explaining the
+	// received value (or absence) in both the preview and its detailed trace.
+	must(chromedp.Evaluate(`(()=>{
+	 window.previewDateFields={selector:form.elements.date_selector.value,attr:form.elements.date_attr.value};
+	 form.elements.date_selector.value='h2';form.elements.date_attr.value='';
+	})()`, nil), chromedp.Click("#preview-button"),
+		chromedp.Poll(`!document.querySelector('#preview-button').disabled&&document.querySelectorAll('#preview > .diagnostic').length===2`, nil),
+		chromedp.Evaluate(`(()=>{
+	 const p=document.querySelector('#preview'),warnings=[...p.querySelectorAll(':scope > .diagnostic')];
+	 return p.querySelectorAll('.preview-item').length===2&&warnings[0].textContent.includes('Date expected a date or relative age but received "First story"')&&
+	  warnings[1].textContent.includes('received "Second story"')&&p.querySelector('.run-warning').textContent===warnings[0].textContent;
+	})()`, &correct))
+	if status.Load() != 200 || !correct {
+		t.Fatal("date mismatch did not show its expected and actual values without rejecting stories")
+	}
+	must(chromedp.SetValue(`#recipe-form [name="date_selector"]`, ".missing-date"), chromedp.Click("#preview-button"),
+		chromedp.Poll(`!document.querySelector('#preview-button').disabled&&document.querySelector('#preview > .diagnostic')?.textContent.includes('nothing (selector matched no nodes)')`, nil),
+		chromedp.Evaluate(`(()=>{
+	 const p=document.querySelector('#preview'),warnings=[...p.querySelectorAll(':scope > .diagnostic')];
+	 return p.querySelectorAll('.preview-item').length===2&&warnings.length===2&&warnings.every(w=>w.textContent.includes('Date expected')&&w.textContent.includes('received nothing (selector matched no nodes)'))&&
+	  p.querySelector('.run-warning').textContent===warnings[0].textContent;
+	})()`, &correct))
+	if status.Load() != 200 || !correct {
+		t.Fatal("missing Date selector did not show the received-nothing explanation")
+	}
+	must(chromedp.Evaluate(`(()=>{
+	 form.elements.date_selector.value=window.previewDateFields.selector;form.elements.date_attr.value=window.previewDateFields.attr;delete window.previewDateFields;
+	})()`, nil), chromedp.Click("#preview-button"),
+		chromedp.Poll(`!document.querySelector('#preview-button').disabled&&document.querySelectorAll('#preview .preview-item').length===2&&!document.querySelector('#preview > .diagnostic,#preview .run-warning')`, nil))
 }

@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+## v0.1.2 — 2026-09-08
+
 - Make Compose use published images by default, including the browser and static runtimes. Move local builds into explicit development overrides and simplify installation commands.
 - Show match counts and per-item rejection reasons when a feed preview fails, so missing titles and links can be diagnosed in the editor.
+- Add per-feed diagnostic history and detailed preview traces with fetch mode, HTTP status, timing, match counts, and rejection reasons. Include expected field values and short samples of unexpected text, including invalid dates and temporarily missing images.
+- Upgrade SQLite and PostgreSQL databases transactionally from schema 1 to 2 to retain diagnostics with the last 50 runs per feed. Keep legacy run summaries and support backups of both schemas; downgrading requires a pre-upgrade backup.
 
 ## v0.1.1 — 2026-09-08
 

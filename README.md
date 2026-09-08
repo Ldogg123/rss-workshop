@@ -55,6 +55,8 @@ This includes Chromium and stores PostgreSQL in `./postgres-data`. Both data pat
 
 Reader requests use saved items; they never fetch the source. Failed refreshes preserve the last successful output. Anyone with a feed link can read it; **Reset feed links** revokes its existing RSS and Atom URLs.
 
+For troubleshooting, **Preview items** explains missing or unexpected field values, and **Preview diagnostics** shows fetch and matching details. A saved feed's **Diagnostics** button opens its last 50 refresh results. See [diagnostics and retention](docs/operations.md#feed-diagnostics).
+
 ## Documentation
 
 - [Visual selectors](docs/visual-selector.md), [dates](docs/dates.md), and [RSS/Atom output](docs/atom.md)

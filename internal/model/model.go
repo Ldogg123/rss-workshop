@@ -56,7 +56,8 @@ type Item struct {
 	LastSeen           time.Time `json:"last_seen"`
 }
 type Preview struct {
-	Matches  int      `json:"matches"`
-	Items    []Item   `json:"items"`
-	Warnings []string `json:"warnings"`
+	Matches     int             `json:"matches"`
+	Items       []Item          `json:"items"`
+	Warnings    []string        `json:"warnings"`
+	Diagnostics *RunDiagnostics `json:"diagnostics,omitempty"`
 }

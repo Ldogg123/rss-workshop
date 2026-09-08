@@ -178,7 +178,7 @@ func TestPostgresConcurrentRecipeInvalidation(t *testing.T) {
 			refreshCtx, stopRefresh := context.WithCancel(ctx)
 			defer stopRefresh()
 			go func() {
-				done <- s.Complete(refreshCtx, f, []model.Item{{Key: "stale", Title: "Stale"}}, "stale-etag", "", 200, nil, 0)
+				done <- s.CompleteWithDiagnostics(refreshCtx, f, []model.Item{{Key: "stale", Title: "Stale"}}, "stale-etag", "", 200, nil, 0, testRunDiagnostics())
 			}()
 			// Wait for the actual version read to block on our row lock. This
 			// distinguishes FOR UPDATE from an unlocked, stale MVCC snapshot.

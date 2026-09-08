@@ -97,7 +97,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 	if err := tx.QueryRowContext(ctx, "SELECT count(*),COALESCE(min(version),0) FROM schema_version").Scan(&count, &version); err != nil {
 		return errors.New("cannot read PostgreSQL schema version")
 	}
-	if count > 1 || (count == 1 && version != 1) {
+	if count > 1 || (count == 1 && version != 1 && version != 2) {
 		return errors.New("unsupported PostgreSQL database schema version")
 	}
 	if count == 0 {
@@ -106,8 +106,12 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		if _, err := tx.ExecContext(ctx, postgresSchema); err != nil {
 			return errors.New("cannot initialize PostgreSQL tables; use an empty dedicated database with schema creation permission")
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(1)"); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(2)"); err != nil {
 			return errors.New("cannot record PostgreSQL schema version")
+		}
+	} else if version == 1 {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE runs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT ''; UPDATE schema_version SET version=2`); err != nil {
+			return errors.New("cannot migrate PostgreSQL database from schema version 1 to 2")
 		}
 	}
 	if err := tx.Commit(); err != nil {

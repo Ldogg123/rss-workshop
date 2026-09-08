@@ -14,6 +14,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+	"rss-workshop/internal/diagnostics"
 	"rss-workshop/internal/model"
 )
 
@@ -33,16 +34,21 @@ func Open(path string, maxItems int) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	for _, q := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000", schema} {
+	for _, q := range []string{"PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
 		if _, e = db.Exec(q); e != nil {
 			db.Close()
 			return nil, e
 		}
 	}
-	var version int
-	if e = db.QueryRow("SELECT version FROM schema_version").Scan(&version); e != nil || version != 1 {
+	if e = initializeSQLite(db); e != nil {
 		db.Close()
-		return nil, fmt.Errorf("unsupported database schema version")
+		return nil, e
+	}
+	// Check the version before changing persistent journal settings, so an
+	// unsupported database is left untouched by this older application.
+	if _, e = db.Exec("PRAGMA journal_mode=WAL"); e != nil {
+		db.Close()
+		return nil, e
 	}
 	return &Store{DB: db, MaxItems: maxItems}, nil
 }
@@ -173,6 +179,12 @@ func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error
 // PostgreSQL locks the feed row until commit so an edit or delete on another
 // pooled connection cannot invalidate that check halfway through the merge.
 func (s *Store) Complete(ctx context.Context, f model.Feed, items []model.Item, etag, modified string, status int, runErr error, retry time.Duration) (err error) {
+	return s.CompleteWithDiagnostics(ctx, f, items, etag, modified, status, runErr, retry, nil)
+}
+
+// CompleteWithDiagnostics records the bounded trace with the same transaction
+// as its run summary and saved items. Stale or deleted recipes leave no run.
+func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items []model.Item, etag, modified string, status int, runErr error, retry time.Duration, details *model.RunDiagnostics) (err error) {
 	defer s.cleanError(&err)
 	tx, e := s.DB.BeginTx(ctx, nil)
 	if e != nil {
@@ -195,12 +207,7 @@ func (s *Store) Complete(ctx context.Context, f model.Feed, items []model.Item, 
 	failures := 0
 	delay := time.Duration(f.Interval) * time.Second
 	if runErr != nil {
-		msg = readableText(runErr.Error())
-		if len(msg) > 1000 {
-			msg = msg[:1000]
-		}
-		// Truncation can split UTF-8; PostgreSQL text requires valid encoding.
-		msg = strings.ToValidUTF8(msg, "")
+		msg = diagnostics.SafeText(runErr.Error(), 1000)
 		failures = f.Failures + 1
 		delay = min(time.Duration(1<<min(failures, 10))*time.Minute, 24*time.Hour)
 		delay = max(delay, retry)
@@ -232,7 +239,7 @@ func (s *Store) Complete(ctx context.Context, f model.Feed, items []model.Item, 
 	if e != nil {
 		return e
 	}
-	if _, e = tx.ExecContext(ctx, s.bind("INSERT INTO runs(feed_id,ended,status,count,error) VALUES(?,?,?,?,?)"), f.ID, now.Unix(), status, len(items), msg); e != nil {
+	if _, e = tx.ExecContext(ctx, s.bind("INSERT INTO runs(feed_id,ended,status,count,error,diagnostics) VALUES(?,?,?,?,?,?)"), f.ID, now.Unix(), status, len(items), msg, encodeDiagnostics(details)); e != nil {
 		return e
 	}
 	if _, e = tx.ExecContext(ctx, s.bind("DELETE FROM runs WHERE feed_id=? AND id NOT IN (SELECT id FROM runs WHERE feed_id=? ORDER BY id DESC LIMIT 50)"), f.ID, f.ID); e != nil {

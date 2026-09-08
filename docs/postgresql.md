@@ -100,6 +100,8 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
+The dump includes saved refresh diagnostics. Current source upgrades schema 1 to 2 transactionally on startup; retain a pre-upgrade dump to roll back to v0.1.0 or v0.1.1, which cannot read schema 2. See [upgrade compatibility](operations.md#upgrades).
+
 For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 
 ```sh

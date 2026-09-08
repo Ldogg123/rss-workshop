@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RSS Workshop</title><meta name="description" content="Build and manage RSS feeds from websites."><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script><script src="/assets/portability.js" defer></script><script src="/assets/selector.js" defer></script><script src="/assets/selector-help.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RSS Workshop</title><meta name="description" content="Build and manage RSS feeds from websites."><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script><script src="/assets/diagnostics.js" defer></script><script src="/assets/portability.js" defer></script><script src="/assets/selector.js" defer></script><script src="/assets/selector-help.js" defer></script></head>
 <body>
 <header><a class="brand" href="/">◔ <span>RSS Workshop</span></a><span class="tag">SELF-HOSTED</span><div class="header-actions"><button id="theme-toggle" class="quiet" type="button">Dark mode</button><button id="logout" class="quiet" hidden>Sign out</button></div></header>
 <main>
@@ -39,6 +39,13 @@
 </section>
 </div></div>
 </main>
+<dialog id="feed-diagnostics" aria-labelledby="diagnostics-title" aria-describedby="diagnostics-feed">
+<div class="editor-heading"><h2 id="diagnostics-title">Feed diagnostics</h2><button id="diagnostics-close" class="quiet" type="button">Close</button></div>
+<p id="diagnostics-feed"></p>
+<div class="diagnostics-toolbar"><p class="hint">The latest 50 refresh runs. Reloading only reads this history.</p><button id="diagnostics-reload" class="secondary" type="button">Reload history</button></div>
+<p id="diagnostics-status" role="status" aria-live="polite"></p>
+<div id="diagnostics-runs" aria-label="Recent refresh runs" aria-busy="false"></div>
+</dialog>
 <dialog id="visual-selector" aria-labelledby="visual-title">
 <div class="selector-heading editor-heading"><div><h2 id="visual-title">Choose your feed elements</h2><p class="hint" id="selector-live-help">Click the page or edit a selector to see matching elements highlighted. Your changes stay in the feed editor.</p></div><button id="selector-close" class="secondary" type="button">Done</button></div>
 <div class="selector-layout">

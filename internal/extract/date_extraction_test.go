@@ -19,7 +19,7 @@ func TestDateExtractionPrecedenceAndEstimates(t *testing.T) {
 		{name: "empty text exact datetime", typ: "css", selector: "time", markup: `<time datetime="2026-09-06"></time>`, want: "2026-09-06T00:00:00Z"},
 		{name: "invalid datetime fallback", typ: "css", selector: "time", markup: `<time datetime="unknown">2 minutes ago</time>`, want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
 		{name: "explicit attribute wins", typ: "css", selector: "time", attr: "data-age", markup: `<time datetime="2026-09-06" data-age="2 minutes ago">1 month ago</time>`, want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
-		{name: "missing explicit attribute", typ: "css", selector: "time", attr: "data-age", markup: `<time datetime="2026-09-06">2 minutes ago</time>`},
+		{name: "missing explicit attribute", typ: "css", selector: "time", attr: "data-age", markup: `<time datetime="2026-09-06">2 minutes ago</time>`, warning: true},
 		{name: "custom date layout", typ: "css", selector: "time", markup: `<time>06/09/2026</time>`, layout: "02/01/2006", want: "2026-09-06T00:00:00Z"},
 		{name: "custom format prefers valid machine datetime", typ: "css", selector: "time", markup: `<time datetime="2026-09-05">06/09/2026</time>`, layout: "02/01/2006", want: "2026-09-05T00:00:00Z"},
 		{name: "relative after custom layout", typ: "css", selector: "time", markup: `<time>2 minutes ago</time>`, layout: "02/01/2006", want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
@@ -38,6 +38,7 @@ func TestDateExtractionPrecedenceAndEstimates(t *testing.T) {
 				r.Items = "//article"
 			}
 			r.Date = model.Field{Selector: tc.selector, Attr: tc.attr}
+			r.Content, r.Image = model.Field{}, model.Field{}
 			r.DateLayout = tc.layout
 			body := []byte(`<article><h2>Story</h2><a href="/story">Read</a>` + tc.markup + `</article>`)
 			p, err := RunAt(body, "https://example.com", r, reference)

@@ -18,7 +18,7 @@ func testEstimatedDatePreview(t *testing.T, tab context.Context) {
 	if err != nil || !correct {
 		t.Fatal("relative date preview labels missing", correct, err)
 	}
-	if err := chromedp.Run(tab, chromedp.ScrollIntoView("#preview .preview-item:last-child")); err != nil {
+	if err := chromedp.Run(tab, chromedp.ScrollIntoView("#preview .preview-item:last-of-type")); err != nil {
 		t.Fatal(err)
 	}
 	captureTrial(t, tab, "relative-dates-preview")

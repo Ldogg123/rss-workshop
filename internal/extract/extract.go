@@ -242,17 +242,19 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		if r.Type == "xpath" {
 			n = clone(n)
 		}
-		title, _ := field(n, r.Type, r.Title, "")
-		link, _ := field(n, r.Type, r.Link, "href")
-		link = URL(base, link)
+		title, titleNode := field(n, r.Type, r.Title, "")
+		rawLink, linkNode := field(n, r.Type, r.Link, "href")
+		link := URL(base, rawLink)
 		if title == "" {
-			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d skipped: empty title", i+1))
+			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d skipped: empty title; %s", i+1,
+				fieldMismatch("Title", "non-empty text", title, titleNode, r.Title, "")))
 			continue
 		}
 		key := link
 		if key == "" {
 			if r.Link.Selector != "" {
-				out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d skipped: missing or unsafe item URL", i+1))
+				out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d skipped: missing or unsafe item URL; %s", i+1,
+					fieldMismatch("Link", "an HTTP(S) URL", rawLink, linkNode, r.Link, "href")))
 				continue
 			}
 			key = fmt.Sprintf("title:%x", sha256.Sum256([]byte(title)))
@@ -262,14 +264,17 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		}
 		seen[key] = true
 		it := model.Item{Key: key, Title: title, URL: link}
-		_, cn := field(n, r.Type, r.Content, "")
+		rawContent, cn := field(n, r.Type, r.Content, "")
 		if cn != nil {
 			if r.Content.Attr != "" || isAttribute(cn) {
-				v, _ := field(n, r.Type, r.Content, "")
-				it.HTML = html.EscapeString(v)
+				it.HTML = html.EscapeString(rawContent)
 			} else {
 				it.HTML = content(cn, base)
 			}
+		}
+		if r.Content.Selector != "" && strings.TrimSpace(it.HTML) == "" {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: %s; content omitted", i+1,
+				fieldMismatch("Content", "text or safe HTML", rawContent, cn, r.Content, "")))
 		}
 		raw, im := field(n, r.Type, r.Image, "")
 		if im != nil {
@@ -282,6 +287,25 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			if ns := selectNodes(n, "css", "img"); len(ns) > 0 {
 				it.Image = imageURL(ns[0], base)
 			}
+		}
+		if r.Image.Selector != "" && it.Image == "" {
+			// Automatic image extraction reads URL-bearing attributes, not the
+			// selected element's text. Report the first supplied candidate.
+			imageField := r.Image
+			if im != nil && imageField.Attr == "" && !isAttribute(im) {
+				raw = ""
+				for _, k := range []string{"data-src", "data-lazy-src", "src", "data-srcset", "srcset"} {
+					if v := attr(im, k); strings.TrimSpace(v) != "" {
+						raw, imageField.Attr = v, k
+						break
+					}
+				}
+				if imageField.Attr == "" {
+					imageField.Attr = "src"
+				}
+			}
+			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: %s; image omitted", i+1,
+				fieldMismatch("Image", "an HTTP(S) image URL", raw, im, imageField, "")))
 		}
 		if it.Image != "" {
 			it.HTML = "<p><img src=\"" + html.EscapeString(it.Image) + "\" alt=\"\"></p>" + it.HTML
@@ -302,9 +326,14 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 					it.PublishedSource = strings.TrimSpace(raw)
 				}
 			}
-			if it.Published.IsZero() {
-				out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: date not recognized; using first-seen time", i+1))
+		}
+		if r.Date.Selector != "" && it.Published.IsZero() {
+			dateField := r.Date
+			if strings.TrimSpace(raw) == "" && dateField.Attr == "" && dateNode != nil && !isAttribute(dateNode) && attr(dateNode, "datetime") != "" {
+				raw, dateField.Attr = attr(dateNode, "datetime"), "datetime"
 			}
+			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: date not recognized; %s; using first-seen time", i+1,
+				fieldMismatch("Date", "a date or relative age", raw, dateNode, dateField, "")))
 		}
 		if len(it.Title) > 2048 || len(it.HTML) > 256<<10 || len(it.URL) > 8192 || len(it.Image) > 8192 {
 			return out, fmt.Errorf("extracted item exceeds size limits; narrow content selector")

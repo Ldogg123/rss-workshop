@@ -1,3 +1,6 @@
+-- Frozen version-1 fixture for migration compatibility tests.
+CREATE TABLE schema_version(singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), version INTEGER NOT NULL);
+INSERT INTO schema_version(version) VALUES(1);
 CREATE TABLE feeds (
  id TEXT COLLATE "C" PRIMARY KEY, rss_token TEXT NOT NULL UNIQUE,
  title TEXT COLLATE "C" NOT NULL, url TEXT NOT NULL, recipe TEXT NOT NULL,
@@ -19,7 +22,6 @@ CREATE TABLE items (
 CREATE TABLE runs (
  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  feed_id TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
- ended BIGINT NOT NULL, status INTEGER NOT NULL, count INTEGER NOT NULL, error TEXT NOT NULL,
- diagnostics TEXT NOT NULL DEFAULT ''
+ ended BIGINT NOT NULL, status INTEGER NOT NULL, count INTEGER NOT NULL, error TEXT NOT NULL
 );
 CREATE INDEX runs_feed_history ON runs(feed_id,id DESC);

@@ -7,12 +7,14 @@ function notice(text, success=false) { const n=$('#notice'); n.textContent=text;
 async function api(path, method='GET', data, signal) {
  const res=await fetch('/api'+path,{method,signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
  const raw=await res.text(); let out;try{out=JSON.parse(raw);}catch{out={error:raw.trim()};}
+ if(signal?.aborted)throw new DOMException('Request cancelled','AbortError');
  if(!res.ok){
   if(res.status===401&&path!='/login')showLogin();
   const error=new Error(typeof out?.error==='string'&&out.error?out.error:'Request failed');
   error.status=res.status;
   error.matches=Number.isSafeInteger(out?.matches)&&out.matches>=0?out.matches:null;
   error.warnings=Array.isArray(out?.warnings)?out.warnings.filter(warning=>typeof warning==='string'):[];
+  error.diagnostics=window.rssDiagnostics?.normalize(out?.diagnostics)||null;
   throw error;
  }return out;
 }
@@ -41,6 +43,7 @@ async function load(){
   const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',f.enabled?when(f.next_run):'Paused']]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
   if(f.error)card.append(node('p',f.error,'diagnostic'));
   const actions=node('div',undefined,'feed-actions');actions.append(action('Edit',()=>openEditor(f)),action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}`,'PUT',payload(f,!f.enabled));await load();}),action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'));card.append(actions);
+  const diagnostics=node('button','Diagnostics','quiet feed-diagnostics');diagnostics.type='button';diagnostics.onclick=()=>window.rssDiagnostics.open(f);diagnostics.dataset.feedId=f.id;actions.append(diagnostics);
   const exportLink=node('a','Export recipe','quiet button-link');exportLink.href='/api/recipes/export?id='+encodeURIComponent(f.id);exportLink.download='';actions.append(exportLink);
   const links=node('div',undefined,'feed-links');
   for(const [format,url] of [['RSS',f.rss_url],['Atom',f.atom_url]]){
@@ -49,6 +52,7 @@ async function load(){
   }
   links.append(action('Reset feed links',async()=>{if(!confirm('Reset both RSS and Atom links? Readers using either old link will need the new one.'))return;await api(`/feeds/${f.id}/rotate-token`,'POST',{});await load();}));card.append(links);list.append(card);
  }
+ window.dispatchEvent(new CustomEvent('rss-feeds-loaded',{detail:feeds.map(f=>f.id)}));
 }
 async function copyFeedURL(format,url){
  if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(url);notice(format+' URL copied.',true);return;}catch{}}
@@ -89,12 +93,14 @@ $('#preview-button').onclick=()=>{if(!form.reportValidity())return;busy($('#prev
    if(item.url){title.href=item.url;title.target='_blank';title.rel='noopener noreferrer';}card.append(title,previewDate(item));
    const content=node('div');content.innerHTML=item.html;for(const a of content.querySelectorAll('a')){a.target='_blank';a.rel='noopener noreferrer';}card.append(content);p.append(card);
   }
+  window.rssDiagnostics?.appendPreview(p,out.diagnostics);
  }catch(e){
   p.replaceChildren(node('p','Preview could not be completed. Check the message above.','hint'));
   if(e.status===422&&e.matches!==null){
    p.prepend(node('h2',`0 items · ${e.matches} matches`));
    for(const warning of e.warnings)p.append(node('p',warning,'diagnostic'));
   }
+  window.rssDiagnostics?.appendPreview(p,e.diagnostics);
   throw e;
  }
 });};

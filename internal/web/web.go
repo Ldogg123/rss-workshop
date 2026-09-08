@@ -15,6 +15,7 @@ import (
 
 	"rss-workshop/internal/auth"
 	"rss-workshop/internal/browser"
+	"rss-workshop/internal/diagnostics"
 	"rss-workshop/internal/extract"
 	"rss-workshop/internal/feed"
 	"rss-workshop/internal/fetch"
@@ -72,6 +73,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/feeds/{id}", a.protect(a.save))
 	mux.HandleFunc("DELETE /api/feeds/{id}", a.protect(a.remove))
 	mux.HandleFunc("POST /api/feeds/{id}/refresh", a.protect(a.refresh))
+	mux.HandleFunc("GET /api/feeds/{id}/runs", a.protect(a.runs))
 	mux.HandleFunc("POST /api/feeds/{id}/rotate-token", a.protect(a.rotateToken))
 	mux.HandleFunc("POST /api/preview", a.protect(a.preview))
 	mux.HandleFunc("GET /api/recipes/export", a.protect(a.exportRecipes))
@@ -279,7 +281,7 @@ func (a *App) preview(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(e, scheduler.ErrBusy) {
 			code = 503
 		}
-		reply(w, code, map[string]any{"error": e.Error(), "matches": p.Matches, "warnings": p.Warnings})
+		reply(w, code, map[string]any{"error": diagnostics.SafeText(e.Error(), 1000), "matches": p.Matches, "warnings": p.Warnings, "diagnostics": p.Diagnostics})
 		return
 	}
 	reply(w, 200, p)
