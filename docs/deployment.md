@@ -18,7 +18,7 @@ sudo chmod 700 ./data
 docker compose up -d --pull always --wait
 ```
 
-Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. It downloads `ghcr.io/ldogg123/rss-workshop:v0.2.0-browser`; no local build is required. Leave `RSS_IMAGE` blank to use that default, or [select a tag or digest](#registry-images). Keep the same Compose files and order for subsequent commands.
+Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. It downloads `ghcr.io/ldogg123/rss-workshop:latest`, the latest stable browser image; no local build is required. Leave `RSS_IMAGE` blank to use that default, or [select a tag or digest](#registry-images). Keep the same Compose files and order for subsequent commands.
 
 `RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the directory preparation commands. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
 
@@ -32,7 +32,7 @@ Keep the default Chromium sandbox and resource settings. See [Chromium rendering
 
 ## Lightweight static runtime
 
-If you only need static pages or an external FlareSolverr service, select the static override. With `RSS_IMAGE` blank, it downloads `ghcr.io/ldogg123/rss-workshop:v0.2.0-static` automatically. This image contains the Go application and CA certificates, with no shell or local browser:
+If you only need static pages or an external FlareSolverr service, select the static override. With `RSS_IMAGE` blank, it downloads `ghcr.io/ldogg123/rss-workshop:latest-static` automatically. This image contains the Go application and CA certificates, with no shell or local browser:
 
 ```sh
 docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait
@@ -52,7 +52,15 @@ Changing the selected database does not copy recipes, articles, or reader tokens
 
 ## Registry images
 
-The default Compose files use versioned registry images. To pin another published tag or immutable digest, set the optional `RSS_IMAGE` in `.env`. Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available versions. Tags include a runtime suffix; for example:
+The default Compose files follow stable releases. These moving tags point to the corresponding versioned images:
+
+| Tag | Runtime |
+| --- | --- |
+| `ghcr.io/ldogg123/rss-workshop:latest` | Browser default |
+| `ghcr.io/ldogg123/rss-workshop:latest-browser` | Explicit alias for the same browser image |
+| `ghcr.io/ldogg123/rss-workshop:latest-static` | Static default |
+
+To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. The published `v0.2.0-browser` and `v0.2.0-static` tags remain available; for example:
 
 ```dotenv
 RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.2.0-browser
@@ -63,6 +71,8 @@ Recreate the app with the same runtime and other overrides used by your installa
 ```sh
 docker compose up -d --pull always --wait
 ```
+
+Operator files set [`pull_policy: always`](https://docs.docker.com/reference/compose-file/services/#pull_policy), so Compose checks the registry when starting the app. A moving tag does not automatically replace a running container: run the command above to pull and recreate it when the image changes. `docker compose restart` alone keeps the existing image. See Docker's [`compose up` behavior](https://docs.docker.com/reference/cli/docker/compose/up/).
 
 An explicit image must match the runtime: use a browser image with the base file, or a static image with `-f compose.yaml -f compose.static.yaml`. Existing `.env` values remain in effect when updating the checkout. Prefer immutable digests and keep the previous digest and data backup for rollback; [release preparation](releases.md) describes the published variants.
 
@@ -82,7 +92,7 @@ This builds the Chromium runtime from `Dockerfile.browser` as `rss-workshop:loca
 docker compose -f compose.yaml -f compose.static.yaml -f compose.build.static.yaml up -d --build --wait
 ```
 
-This builds `Dockerfile` as `rss-workshop:local-static`. Both build overrides select local image names independently of `RSS_IMAGE` and set a build policy. Include any database or network overrides before the build override, and keep the same files for subsequent operations. Use a separate project, port, and data directory when testing alongside an existing installation.
+This builds `Dockerfile` as `rss-workshop:local-static`. Both build overrides select local image names independently of `RSS_IMAGE` and replace the operator pull policy with `pull_policy: build`. Include any database or network overrides before the build override, and keep the same files for subsequent operations. Use a separate project, port, and data directory when testing alongside an existing installation.
 
 ## Public URL and HTTPS
 
@@ -126,7 +136,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |
 | `MAX_ITEMS` | `500` | 1–10,000 retained items per feed |
 | `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
-| `RSS_IMAGE` | empty; runtime chooses its versioned browser/static image | Optional full image tag or digest; must match the selected runtime |
+| `RSS_IMAGE` | empty; `latest` browser or `latest-static` | Optional moving tag, version pin or digest; must match the selected runtime |
 | `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
 | `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
 
@@ -171,7 +181,7 @@ Open [localhost:8080](http://localhost:8080). SQLite is stored at `$DATA_DIR/rss
 
 Static fetching and visual selection work without Chromium. To render JavaScript pages, install Chromium separately and export `CHROMIUM_PATH` with its executable's absolute path before starting the app, for example `export CHROMIUM_PATH=/usr/bin/chromium`. The host must support Chromium's sandbox; run as non-root and follow [browser rendering](browser.md). [External FlareSolverr](flaresolverr.md) also works without local Chromium. To use an existing PostgreSQL server, set `DATABASE_URL` as described in [PostgreSQL setup](postgresql.md); changing the database does not migrate existing data.
 
-For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
+For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Direct upgrades from every released database schema are supported; see [upgrade compatibility](operations.md#upgrades). Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
 
 ## Run from source
 

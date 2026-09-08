@@ -1,0 +1,63 @@
+name: Update stable image tags
+
+# Reuse already verified, immutable release images; this workflow never builds.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing stable release to promote, for example v0.2.0'
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: promote-stable-images
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote verified stable images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate both runtimes and update only stable aliases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 scripts/promote-images.py --version "$VERSION" --execute --report "$RUNNER_TEMP/promotion.json"
+          python3 - "$RUNNER_TEMP/promotion.json" <<'PY'
+          import json, os, sys
+          report = json.load(open(sys.argv[1]))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write(f"Stable image promotion: **{report['status']}** for `{report['version']}`.\n\n")
+              if report['status'] == 'skipped':
+                  out.write(report['reason'] + '\n')
+              else:
+                  for alias, variant in [('latest', 'browser'), ('latest-browser', 'browser'), ('latest-static', 'static')]:
+                      out.write(f"`{alias}` → `{report['sources'][variant]['digest']}`\n\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stable-image-promotion
+          path: ${{ runner.temp }}/promotion.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30

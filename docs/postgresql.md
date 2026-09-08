@@ -4,7 +4,7 @@ SQLite remains the default. Set `DATABASE_URL` to an explicit `postgres://` or `
 
 Selecting another database does not migrate or merge data. A new database starts with an empty library; the existing SQLite file or PostgreSQL database is left separate. Recipe [export/import](recipe-portability.md) can move configurations as paused copies, but does not preserve articles or reader links.
 
-Run the commands below from the RSS Workshop checkout root. With `RSS_IMAGE` blank or unset, the default Compose installation pulls `ghcr.io/ldogg123/rss-workshop:v0.2.0-browser`, which includes Chromium. Prepare the app configuration before adding PostgreSQL:
+Run the commands below from the RSS Workshop checkout root. With `RSS_IMAGE` blank or unset, the default Compose installation pulls `ghcr.io/ldogg123/rss-workshop:latest`, which includes Chromium. Prepare the app configuration before adding PostgreSQL:
 
 ```sh
 if [ ! -e .env ]; then
@@ -78,7 +78,7 @@ Both variables are required by the override; there is no default password. `DATA
 docker compose -f compose.yaml -f compose.postgres.yaml up -d --pull always --wait
 ```
 
-For the lightweight runtime, add `-f compose.static.yaml` immediately after the base file. With `RSS_IMAGE` blank or unset, that override pulls `ghcr.io/ldogg123/rss-workshop:v0.2.0-static`. An explicit `RSS_IMAGE` must match the selected browser or static runtime. Use the same overrides for later operations. For a local source build, follow [build container images from source](deployment.md#build-container-images-from-source) and retain the PostgreSQL override.
+For the lightweight runtime, add `-f compose.static.yaml` immediately after the base file. With `RSS_IMAGE` blank or unset, that override pulls `ghcr.io/ldogg123/rss-workshop:latest-static`. An explicit `RSS_IMAGE` must match the selected browser or static runtime. Use the same overrides for later operations. For a local source build, follow [build container images from source](deployment.md#build-container-images-from-source) and retain the PostgreSQL override.
 
 The official image's `POSTGRES_USER=rss_workshop` creates the bootstrap administrator for this dedicated container. Use the non-superuser setup above on a shared server. Initialization variables apply only to an empty data directory: changing `POSTGRES_PASSWORD` in `.env` does not change an existing database password. Rotate it in PostgreSQL and update `DATABASE_URL` together.
 
@@ -132,10 +132,10 @@ docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres psql \
   -c 'SELECT count(*) AS saved_items FROM items;'
 ```
 
-After those commands succeed, change only the database name in `DATABASE_URL` to `rss_workshop_restored` and recreate the app:
+After those commands succeed, change the database name in `DATABASE_URL` to `rss_workshop_restored`. Keep `RSS_IMAGE` pinned to the saved compatible image digest during recovery, then recreate the app:
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml up -d --no-deps --no-build --wait rss-workshop
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --no-deps --no-build --pull never --wait rss-workshop
 docker compose -f compose.yaml -f compose.postgres.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 

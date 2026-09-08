@@ -69,10 +69,10 @@ Stop the current app using its normal Compose files, then edit the existing priv
 RSS_DATA_DIR=/srv/rss-workshop/data-restored
 ```
 
-Recreate the service using the same project, runtime, networking, and image options as before:
+Set `RSS_IMAGE` to the saved compatible image digest before recreating the service. Use the same project, runtime and networking options, and keep the already-local image during recovery:
 
 ```sh
-docker compose up -d --no-build --wait
+docker compose up -d --no-build --pull never --wait
 docker compose exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
@@ -102,7 +102,7 @@ sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-bind-mig
   --directory /srv/rss-workshop/data-from-volume
 ```
 
-The backup utility leaves that stopped app stopped. Set `RSS_DATA_DIR=/srv/rss-workshop/data-from-volume` in the existing `.env`, then recreate the app using the same Compose project and runtime options. Verify readiness, saved feeds, and RSS/Atom output. The original named volume remains unchanged; never remove it as part of this migration.
+The backup utility leaves that stopped app stopped. Pin `RSS_IMAGE` to the saved compatible image digest and use `--pull never` during this storage move. Set `RSS_DATA_DIR=/srv/rss-workshop/data-from-volume` in the existing `.env`, then recreate the app using the same Compose project and runtime options. Verify readiness, saved feeds, and RSS/Atom output. The original named volume remains unchanged; never remove it as part of this migration.
 
 For rollback to that original volume, stop the app and use the explicit named-volume override below, replacing its external volume name with the original name. A top-level volume declaration alone does **not** replace the new bind mount. To migrate PostgreSQL storage, use its [dump/restore procedure](postgresql.md#backup-and-restore) with a fresh `POSTGRES_DATA_DIR`; never copy a live PostgreSQL directory.
 
@@ -133,10 +133,10 @@ volumes:
     name: rss-workshop-restored
 ```
 
-Include any additional app mounts from your own configuration when replacing the mount list. Stop the current app, then add this storage override to your normal Compose files:
+Include any additional app mounts from your own configuration when replacing the mount list. Pin `RSS_IMAGE` to the saved compatible image digest, stop the current app, then add this storage override to your normal Compose files:
 
 ```sh
-docker compose -f compose.yaml -f compose.restore.yaml up -d --no-build --wait
+docker compose -f compose.yaml -f compose.restore.yaml up -d --no-build --pull never --wait
 docker compose -f compose.yaml -f compose.restore.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
@@ -146,18 +146,32 @@ For native installations, stop the process and copy the entire `DATA_DIR`, inclu
 
 ## Upgrades
 
-Back up the data and retain the current configuration and image digest. Update the checkout to the intended release, or set `RSS_IMAGE` in `.env` to its published tag or immutable digest, keeping the same browser/static variant. A nonempty `RSS_IMAGE` continues to override the checkout's default. Pull and recreate the app:
+Back up the database and retain the current configuration and image digest. With `RSS_IMAGE` blank, the current Compose files follow the latest stable release through `latest` (browser) or `latest-static`. Existing explicit `.env` values continue to take precedence: clear `RSS_IMAGE` to follow the default, or set a chosen versioned tag/digest to stay pinned. Older checkouts with versioned defaults can select `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:latest` explicitly, or `:latest-static` with their static runtime.
+
+Pull and recreate the app using the same Compose files, database and host directories:
 
 ```sh
 docker compose up -d --pull always --wait
 docker compose exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
-Include all overrides used by your deployment. For local source builds, use the matching [development build override](deployment.md#build-container-images-from-source) and `up -d --build --wait`. Check a saved feed afterward; see [deployment](deployment.md).
+Include all overrides used by your deployment. `latest` does not update a running container by itself, and `docker compose restart` does not switch its image. The update command checks the registry and recreates the app when its image changes. For local source builds, use the matching [development build override](deployment.md#build-container-images-from-source) and `up -d --build --wait`. Check a saved feed and its RSS/Atom output afterward.
 
-RSS Workshop v0.2.0 uses schema version 3 for both databases and automatically upgrades schema 1 or 2 in a transaction at startup. Schema 2 adds diagnostic storage; schema 3 prevents older binaries from silently ignoring stored filters. The migrations preserve existing feeds, items, and run history. Unsupported versions are rejected. The backup utility accepts schemas 1, 2, and 3 and restores their original version; it does not upgrade the backup.
+### Database compatibility
 
-Published v0.1.0 and v0.1.1 use schema 1; v0.1.2 uses schema 2. Before upgrading, keep a verified backup and the corresponding old image or executable. These versions cannot open a newer schema than they support. To downgrade, stop the app and restore the pre-upgrade backup into separate storage with the matching old app version. There is no in-place schema downgrade.
+Direct upgrades are supported from every released SQLite or PostgreSQL app schema. Intermediate app versions do not need to be installed:
+
+| Existing app release | Stored schema | Startup upgrade to the current app |
+| --- | --- | --- |
+| v0.1.0, v0.1.1 | 1 | 1 → 2 → 3 in one transaction |
+| v0.1.2 | 2 | 2 → 3 in one transaction |
+| v0.2.0 | 3 | Already current |
+
+Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
+
+Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1, 2 and 3, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
+
+For a downgrade, stop the app and restore its pre-upgrade backup into separate storage, then select the matching old image digest or executable. Older apps cannot open a newer schema than they support. Keep the original storage until recovery is verified; there is no in-place schema downgrade. Storage-layout changes, such as [moving an old named volume to a host directory](#move-an-existing-sqlite-volume-to-a-host-directory), are separate from schema upgrades.
 
 ## Scheduling and limits
 

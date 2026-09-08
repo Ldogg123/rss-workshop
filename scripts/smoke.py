@@ -142,7 +142,7 @@ def main():
             project = 'rss-smoke-' + secrets.token_hex(4)
             override = pathlib.Path(tmp) / 'override.yaml'
             image = os.environ.get('RSS_SMOKE_IMAGE', 'rss-workshop:browser-check' if browser_mode else 'rss-workshop:static-check')
-            override.write_text('services:\n  rss-workshop:\n    image: ' + image + '\n    ports: !override\n      - "127.0.0.1:' + str(port) + ':8080"\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n')
+            override.write_text('services:\n  rss-workshop:\n    image: ' + image + '\n    pull_policy: never\n    ports: !override\n      - "127.0.0.1:' + str(port) + ':8080"\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n')
             env_file = pathlib.Path(tmp) / 'compose.env'
             env_keys = ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_HASH', 'PUBLIC_BASE_URL', 'ALLOW_CIDRS', 'STATIC_WORKERS', 'FETCH_TIMEOUT', 'DATABASE_URL', 'RSS_DATA_DIR', 'POSTGRES_DATA_DIR']
             if postgres_mode:

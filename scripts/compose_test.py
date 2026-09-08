@@ -65,9 +65,10 @@ class ComposeConfigurationTests(unittest.TestCase):
         for service in config['services'].values():
             self.assertNotIn('build', service)
             self.assertNotEqual(service.get('pull_policy'), 'build')
-        variant = 'browser' if browser else 'static'
-        self.assertRegex(config['services']['rss-workshop']['image'],
-                         rf'^ghcr\.io/ldogg123/rss-workshop:v\d+\.\d+\.\d+-{variant}$')
+        app = config['services']['rss-workshop']
+        self.assertEqual(app['image'], 'ghcr.io/ldogg123/rss-workshop:' +
+                         ('latest' if browser else 'latest-static'))
+        self.assertEqual(app['pull_policy'], 'always')
 
     def assert_runtime(self, config, browser, postgres=False, gluetun=False):
         app = config['services']['rss-workshop']
@@ -144,11 +145,15 @@ class ComposeConfigurationTests(unittest.TestCase):
                 self.assert_runtime(config, True)
 
     def test_unset_and_blank_image_choose_the_same_published_default(self):
-        self.assertEqual(self.resolve(image=None)['services']['rss-workshop']['image'],
-                         self.resolve(image='')['services']['rss-workshop']['image'])
+        for overrides in ((), ('compose.static.yaml',)):
+            with self.subTest(overrides=overrides):
+                self.assertEqual(self.resolve(*overrides, image=None)['services']['rss-workshop']['image'],
+                                 self.resolve(*overrides, image='')['services']['rss-workshop']['image'])
 
     def test_explicit_image_tag_or_digest_is_preserved(self):
-        for image in ('example.invalid/rss-workshop:test-browser',
+        for image in ('ghcr.io/ldogg123/rss-workshop:latest-browser',
+                      'ghcr.io/ldogg123/rss-workshop:v0.2.0-browser',
+                      'example.invalid/rss-workshop:test-browser',
                       'example.invalid/rss-workshop@sha256:' + 'a' * 64):
             for overrides in ((), ('compose.static.yaml',), ('compose.browser.yaml',)):
                 with self.subTest(image=image, overrides=overrides):
@@ -156,7 +161,7 @@ class ComposeConfigurationTests(unittest.TestCase):
                     app = config['services']['rss-workshop']
                     self.assertEqual(app['image'], image)
                     self.assertNotIn('build', app)
-                    self.assertNotEqual(app.get('pull_policy'), 'build')
+                    self.assertEqual(app['pull_policy'], 'always')
 
     def test_only_explicit_development_overrides_enable_local_builds(self):
         for browser in (True, False):

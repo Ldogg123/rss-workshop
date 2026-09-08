@@ -49,6 +49,129 @@ func releasedStore(t *testing.T, version int) (*Store, func() (*Store, error)) {
 	return &Store{DB: db, MaxItems: 10, postgres: postgres}, open
 }
 
+// Keep every released schema in this matrix as new migrations are added. The
+// current opener must upgrade the entire chain without an intermediate binary.
+func TestEveryReleasedSchemaPreservesStoredRowsAcrossDirectUpgrade(t *testing.T) {
+	for _, original := range []int{1, 2, 3} {
+		t.Run(strconv.Itoa(original), func(t *testing.T) {
+			legacy, open := releasedStore(t, original)
+			ctx := t.Context()
+			tx, err := legacy.DB.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			// Use released SQL directly rather than current Save/Complete, which
+			// can normalize recipes, reset validators, and enforce retention.
+			recipe := `{ "mode":"static", "type":"xpath", "items":"//article", "title":{"selector":".//h2"} }`
+			if original == 3 {
+				// Previously accepted history may no longer match current filters.
+				// Merely opening a database must never apply historical pruning.
+				recipe = `{ "mode":"static", "type":"css", "items":"article", "filters":{"exclude":{"op":"contains_any","field":"title","keywords":["Saved"]}} }`
+			}
+			for _, enabled := range []bool{false, true} {
+				id := "preserved-" + strconv.FormatBool(enabled)
+				_, err = tx.ExecContext(ctx, legacy.bind(`INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), id, id+"-reader-token", "Existing feed Σ", "https://example.org/news", recipe, 777, enabled,
+					1400000600, 1400000300, 1400000000, "Previously saved failure", 3, legacy.opaque("etag\x00\xff"), legacy.opaque("modified\x00\xff"), 19)
+				if err != nil {
+					t.Fatal("cannot seed released feed state", err)
+				}
+				// Both histories deliberately exceed today's configured limits.
+				for i := 0; i < 12; i++ {
+					key := "key-" + strconv.Itoa(i)
+					_, err = tx.ExecContext(ctx, legacy.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,published,first_seen,last_seen)
+VALUES(?,?,?,?,?,?,?,?,?,?)`), id, legacy.opaque(key+"\x00\xff"), id+"-guid-"+strconv.Itoa(i), "Saved story σ "+strconv.Itoa(i),
+						"https://example.org/"+key, "<p>Stored <b>description</b> &amp; text</p>", "https://example.org/image.png", 1300000000+i, 1400000000+i, 1400000300+i)
+					if err != nil {
+						t.Fatal("cannot seed released item history", err)
+					}
+				}
+				for i := 0; i < 52; i++ {
+					_, err = tx.ExecContext(ctx, legacy.bind("INSERT INTO runs(feed_id,ended,status,count,error) VALUES(?,?,?,?,?)"), id, 1400000000+i, 503, i, "Original run summary")
+					if err != nil {
+						t.Fatal("cannot seed released run history", err)
+					}
+				}
+			}
+			if original >= 2 {
+				if _, err := tx.ExecContext(ctx, legacy.bind("UPDATE runs SET diagnostics=?"), `{ "version":1, "requested_mode":"static", "attempts":[{"mode":"static","outcome":"failed","stage":"fetch","status":503}] }`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			before := releasedRows(t, legacy.DB, original)
+			if err := legacy.DB.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				s, err := open()
+				if err != nil {
+					t.Fatal("direct upgrade or reopen failed", err)
+				}
+				var current int
+				if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&current); err != nil || current != 3 {
+					s.DB.Close()
+					t.Fatal("direct upgrade did not reach current schema", err)
+				}
+				after := releasedRows(t, s.DB, original)
+				for table, want := range before {
+					if !reflect.DeepEqual(after[table], want) {
+						s.DB.Close()
+						t.Fatalf("direct upgrade or reopen changed released %s values", table)
+					}
+				}
+				if err := s.DB.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func releasedRows(t *testing.T, db *sql.DB, version int) map[string][][]any {
+	t.Helper()
+	queries := map[string]string{
+		"feeds": "SELECT id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version FROM feeds ORDER BY id",
+		"items": "SELECT feed_id,key,guid,title,url,html,image,published,first_seen,last_seen FROM items ORDER BY feed_id,guid",
+		"runs":  "SELECT id,feed_id,ended,status,count,error FROM runs ORDER BY id",
+	}
+	if version >= 2 {
+		queries["runs"] = "SELECT id,feed_id,ended,status,count,error,diagnostics FROM runs ORDER BY id"
+	}
+	out := make(map[string][][]any, len(queries))
+	for table, query := range queries {
+		rows, err := db.QueryContext(t.Context(), query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			values, destinations := make([]any, len(columns)), make([]any, len(columns))
+			for i := range values {
+				destinations[i] = &values[i]
+			}
+			if err := rows.Scan(destinations...); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			out[table] = append(out[table], values)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		rows.Close()
+	}
+	return out
+}
+
 func TestSchemaOneMigrationPreservesLibraryAndRunSummaries(t *testing.T) {
 	ctx := t.Context()
 	legacy, open := legacyStore(t)

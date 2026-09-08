@@ -2,7 +2,8 @@
 # This file also explicitly selects Chromium after compose.static.yaml.
 services:
   rss-workshop:
-    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:v0.2.0-browser}
+    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:latest}
+    pull_policy: always
     environment:
       CHROMIUM_PATH: /usr/bin/chromium
       BROWSER_SLOTS: ${BROWSER_SLOTS:-2}

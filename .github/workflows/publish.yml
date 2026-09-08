@@ -33,6 +33,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       commit: ${{ steps.release.outputs.commit }}
       created: ${{ steps.release.outputs.created }}
+      stable: ${{ steps.release.outputs.stable }}
     steps:
       - name: Validate version and derive registry coordinates
         id: release
@@ -67,6 +68,9 @@ jobs:
           assets = {asset['name'] for asset in release.get('assets', []) if asset.get('size', 0) > 0}
           if release.get('draft') is not False or release.get('tag_name') != os.environ['RELEASE_VERSION']:
               sys.exit('Corresponding sources must be on the published GitHub release for this exact version.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              stable = release.get('prerelease') is False and '-' not in os.environ['RELEASE_VERSION']
+              output.write(f'stable={str(stable).lower()}\n')
           for arch in ('amd64', 'arm64'):
               prefix = f"debian-sources-{os.environ['RELEASE_VERSION']}-linux-{arch}.tar.gz"
               parts = sorted(name for name in assets if name.startswith(prefix + '.part-'))
@@ -315,3 +319,14 @@ jobs:
           docker buildx imagetools create --tag "$tag" --metadata-file "$RUNNER_TEMP/manifest.json" "$amd64" "$arm64"
           digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.descriptor"]["digest"])' "$RUNNER_TEMP/manifest.json")
           printf '%s\n' "$tag" "${IMAGE}@${digest}" >> "$GITHUB_STEP_SUMMARY"
+
+  stable:
+    name: Update stable image tags
+    needs: [metadata, manifests]
+    if: needs.metadata.outputs.stable == 'true'
+    uses: ./.github/workflows/promote-images.yml
+    with:
+      version: ${{ needs.metadata.outputs.version }}
+    permissions:
+      contents: read
+      packages: write

@@ -16,10 +16,10 @@ FLARESOLVERR_SLOTS=1
 
 `FLARESOLVERR_TIMEOUT` permits 5 seconds through 2 minutes and defaults to 60 seconds. It is independent of `FETCH_TIMEOUT`; jobs have an additional 10 seconds for transport and cleanup. `FLARESOLVERR_SLOTS` permits 1–4 concurrent requests and defaults to 1. These requests also occupy the app's existing shared refresh/preview slots. A low concurrency limit is useful because the browser work runs on the FlareSolverr machine.
 
-Recreate the app container after changing its environment:
+Recreate the app container after changing its environment, keeping the already-local image for this configuration change:
 
 ```sh
-docker compose up -d --no-build --wait
+docker compose up -d --no-build --pull never --wait
 ```
 
 Use the same Compose files as your original installation; add `sudo` if Docker access requires it. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `-f compose.yaml -f compose.static.yaml`. With `RSS_IMAGE` blank, that override selects the matching published static image. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.

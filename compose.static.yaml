@@ -3,7 +3,8 @@
 # Leave RSS_IMAGE blank for this default, or select a matching -static tag/digest.
 services:
   rss-workshop:
-    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:v0.2.0-static}
+    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:latest-static}
+    pull_policy: always
     environment:
       # Also overrides CHROMIUM_PATH if a browser image is selected explicitly.
       CHROMIUM_PATH: ""

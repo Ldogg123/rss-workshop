@@ -2,7 +2,8 @@ name: rss-workshop
 
 services:
   rss-workshop:
-    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:v0.2.0-browser}
+    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:latest}
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"

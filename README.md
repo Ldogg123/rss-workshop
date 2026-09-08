@@ -24,9 +24,19 @@ sudo chmod 700 ./data
 docker compose up -d --pull always --wait
 ```
 
-Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`. Compose downloads the published browser image automatically.
+Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`. Compose downloads `ghcr.io/ldogg123/rss-workshop:latest`, the latest stable browser image.
 
 For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for versions, [image selection](docs/deployment.md#registry-images) to pin a tag or digest, and [local builds](docs/deployment.md#build-container-images-from-source) for development. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
+
+## Updates
+
+After making a [verified backup](docs/operations.md#backup-and-restore), run:
+
+```sh
+docker compose up -d --pull always --wait
+```
+
+Use the same Compose overrides as your installation. The default follows stable releases; `latest` does not replace an already-running container automatically. Keep `RSS_IMAGE` blank to follow the default, or select a [version/digest pin](docs/deployment.md#registry-images). All released database schemas can upgrade directly to the current schema; see [upgrade compatibility and rollback](docs/operations.md#upgrades).
 
 ## Run without Docker
 

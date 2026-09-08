@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Publish stable container aliases: `latest` and `latest-browser` include Chromium; `latest-static` selects the lightweight runtime. Compose follows these aliases and checks for updates when recreating the service, with version and digest pins still available.
+- Preserve direct upgrades from every released SQLite/PostgreSQL schema with frozen schema fixtures and tests that compare all saved feed, item, and run data across upgrade and reopening. Retain every released migration as future schemas are added.
+
 ## v0.2.0 — 2026-09-08
 
 - Add optional title, description, and link filters with nested All/Any include/exclude rules, case-insensitive literal phrases, and bulk lists of up to 500 keywords. Previews show included/filtered counts and excluded examples; intentionally empty filtered results succeed without browser fallback.

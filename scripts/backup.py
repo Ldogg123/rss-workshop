@@ -127,7 +127,7 @@ def verify_backup(directory):
         raise ValueError("unsupported backup format")
     schema_version = manifest.get("schema_version")
     if type(schema_version) is not int or schema_version not in SCHEMA_VERSIONS:
-        raise ValueError("unsupported backup database schema; this tool supports versions 1 and 2")
+        raise ValueError("unsupported backup database schema; this tool supports versions 1, 2 and 3")
     if database.is_symlink() or not database.is_file():
         raise ValueError("rss.db must be a regular file")
     if any(os.path.lexists(str(database) + suffix) for suffix in ("-wal", "-shm", "-journal")):
