@@ -50,8 +50,8 @@ That password is only for local development. The native process reads exported e
 
 - Reader requests serialize saved items; they must never fetch or render the source. Failed or empty extraction preserves previously saved output. Publication dates and GUIDs remain stable across refreshes, including relative-date estimates.
 - Static mode must work in the minimal image without Chromium or FlareSolverr. Optional modes share extraction, sanitization and persistence. Keep FlareSolverr an explicit opt-in; its remote network boundary differs from the local guarded fetcher.
-- Plain `compose.yaml` includes Chromium with its sandbox and resource limits. `compose.static.yaml` explicitly selects the smaller runtime and clears browser-only settings; apply it before `compose.image.yaml` when using a `-static` image. `compose.browser.yaml` remains a compatibility override. Container smoke checks must exercise the default browser setup and the explicit static setup.
-- The operator quickstart uses `compose.image.yaml` last and the published `RSS_IMAGE` from `.env`. The base Compose file retains its local build for development. Native release archives support Linux amd64/arm64, include license notices, and use the host's CA store and optional Chromium; they do not load `.env` automatically.
+- Plain `compose.yaml` downloads the published Chromium image with its sandbox and resource limits. `compose.static.yaml` selects the smaller published runtime and clears browser-only settings. With `RSS_IMAGE` blank, each runtime selects its own versioned image; an explicit tag or digest must match the chosen runtime. Container checks must exercise both defaults and custom image selection.
+- Operator Compose files contain no local build. Development explicitly adds `compose.build.yaml` for Chromium, or `compose.build.static.yaml` after `compose.static.yaml` for the static runtime. Preserve their local image names and build policy; see [deployment](docs/deployment.md#build-container-images-from-source). Native release archives support Linux amd64/arm64, include license notices, and use the host's CA store and optional Chromium; they do not load `.env` automatically.
 - Keep concurrency, response sizes, item counts, timeouts and cancellation bounded. Recipe edits must invalidate stale in-flight results and conditional-fetch validators.
 - Preserve destination validation through redirects and exact-IP dialing. Do not bypass it with environment proxies, broad private-network exceptions, or a disabled Chromium sandbox. Local test fixtures use explicit, narrowly scoped network exceptions.
 - Management mutations require authentication, Origin validation and CSRF protection. Keep the visual page preview isolated and sanitized. Preserve dark mode, field help, and live CSS/XPath highlighting when changing the editor.
@@ -68,7 +68,7 @@ Use focused tests while editing, then run `make check` for Go or application cha
 | Change | Additional checks |
 | --- | --- |
 | Visual editor, embedded UI or Chromium integration | `make browser-test` (sandboxed Chromium and UI fixture tests) |
-| Dockerfiles, Compose, executable paths or deployment wiring | `make docker-smoke` (both images, including restart persistence) |
+| Dockerfiles, Compose, executable paths or deployment wiring | `make compose-test` (merged configuration) and `make docker-smoke` (both images, including restart persistence) |
 | Both of the above | `make check-containers` |
 | Backup/restore tooling | `make backup-test` and the opt-in Docker roundtrip below |
 | Storage, database configuration or scheduler persistence | `make postgres-test` with a disposable `RSS_TEST_POSTGRES_URL`, plus `make docker-postgres-smoke` |

@@ -1,7 +1,8 @@
-# Apply last, after compose.yaml and any static/PostgreSQL/Gluetun overrides.
-# Example image tag; see docs/releases.md for available versions:
-# RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser docker compose -f compose.yaml -f compose.image.yaml up -d
+# Compatibility override for existing installations with an explicit RSS_IMAGE.
+# Published images are now the default; new installations do not need this file.
+# Apply last to remove an explicit local build and select the chosen tag/digest.
 services:
   rss-workshop:
     build: !reset null
+    pull_policy: !reset null
     image: ${RSS_IMAGE:?Set RSS_IMAGE to a tagged image or digest}

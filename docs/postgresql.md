@@ -4,7 +4,7 @@ SQLite remains the default. Set `DATABASE_URL` to an explicit `postgres://` or `
 
 Selecting another database does not migrate or merge data. A new database starts with an empty library; the existing SQLite file or PostgreSQL database is left separate. Recipe [export/import](recipe-portability.md) can move configurations as paused copies, but does not preserve articles or reader links.
 
-Run the commands below from the RSS Workshop checkout root. The default Compose installation pulls the published Chromium image selected by `RSS_IMAGE` in `.env`. Prepare the app configuration before adding PostgreSQL:
+Run the commands below from the RSS Workshop checkout root. With `RSS_IMAGE` blank or unset, the default Compose installation pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`, which includes Chromium. Prepare the app configuration before adding PostgreSQL:
 
 ```sh
 if [ ! -e .env ]; then
@@ -37,10 +37,10 @@ Replace the host, database, and password with your values. Percent-encode reserv
 
 Use verified TLS for a remote server. If it uses a private certificate authority, mount its CA certificate read-only into the app and add the appropriate `sslrootcert` path to the URI. Database access uses ordinary administrator-configured networking; `ALLOW_CIDRS` governs scraped source pages and does not authorize database connections. Check the server's access rules and firewall separately.
 
-Start or recreate the app with the image override last. Do not include the PostgreSQL override when connecting to an existing server:
+Start or recreate the app. Do not include the PostgreSQL override when connecting to an existing server:
 
 ```sh
-docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose up -d --pull always --wait
 ```
 
 ## New PostgreSQL container
@@ -73,10 +73,10 @@ DATABASE_URL='postgres://rss_workshop:YOUR_GENERATED_HEX_PASSWORD@postgres:5432/
 Both variables are required by the override; there is no default password. `DATABASE_URL` is explicit so arbitrary passwords are not accidentally inserted into an invalid URI. `sslmode=disable` here is for this database's private Docker network, rather than a remote database connection.
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --pull always --wait
 ```
 
-This includes Chromium with the default `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`. For the lightweight runtime, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` in `.env` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`; see [deployment](deployment.md).
+For the lightweight runtime, add `-f compose.static.yaml` immediately after the base file. With `RSS_IMAGE` blank or unset, that override pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-static`. An explicit `RSS_IMAGE` must match the selected browser or static runtime. Use the same overrides for later operations. For a local source build, follow [build container images from source](deployment.md#build-container-images-from-source) and retain the PostgreSQL override.
 
 The official image's `POSTGRES_USER=rss_workshop` creates the bootstrap administrator for this dedicated container. Use the non-superuser setup above on a shared server. Initialization variables apply only to an empty data directory: changing `POSTGRES_PASSWORD` in `.env` does not change an existing database password. Rotate it in PostgreSQL and update `DATABASE_URL` together.
 
@@ -89,7 +89,7 @@ Changing `POSTGRES_DATA_DIR` does not copy an existing server's data. First stop
 Start only the database with the new bind mount, keeping the app stopped:
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml up -d --no-deps --wait postgres
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --no-deps --wait postgres
 ```
 
 Follow the restore procedure below to restore into a new database and verify the saved records before starting the app with that database selected. Keep the original named volume and configuration for rollback. Do not copy PostgreSQL's database files while it is running. For an existing SQLite volume, use the separate [SQLite storage migration](operations.md#move-an-existing-sqlite-volume-to-a-host-directory).
@@ -98,16 +98,16 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
-For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static, image, or VPN overrides used by your deployment:
+For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 
 ```sh
 mkdir -p backups
 chmod 700 backups
 umask 077
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml exec -T postgres pg_dump \
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres pg_dump \
   -U rss_workshop -d rss_workshop --format=custom --no-owner --no-privileges \
   > backups/postgres-before-upgrade.dump
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml exec -T postgres pg_restore \
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres pg_restore \
   --list < backups/postgres-before-upgrade.dump > /dev/null
 ```
 
@@ -116,12 +116,12 @@ Choose a new filename for every backup and check command exit status. Listing th
 Restore into a new, unused database while keeping the original:
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml exec -T postgres createdb \
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres createdb \
   -U rss_workshop -O rss_workshop -T template0 rss_workshop_restored
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml exec -T postgres pg_restore \
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres pg_restore \
   -U rss_workshop -d rss_workshop_restored --exit-on-error --single-transaction \
   --no-owner --no-privileges < backups/postgres-before-upgrade.dump
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml exec -T postgres psql \
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres psql \
   -U rss_workshop -d rss_workshop_restored -v ON_ERROR_STOP=1 \
   -c 'SELECT version FROM schema_version;' \
   -c 'SELECT count(*) AS saved_feeds FROM feeds;' \
@@ -131,8 +131,8 @@ docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml ex
 After those commands succeed, change only the database name in `DATABASE_URL` to `rss_workshop_restored` and recreate the app:
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml up -d --no-deps --no-build --wait rss-workshop
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --no-deps --no-build --wait rss-workshop
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
 Sign in and verify the feed library and sample RSS/Atom output before discarding any old backup or database. Reverting the URI to the original database provides rollback while it remains available. Restored reader tokens and schedules come from the backup.

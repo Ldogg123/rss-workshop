@@ -15,12 +15,12 @@ cp .env.example .env
 chmod 600 .env
 # Set ADMIN_PASSWORD in .env to your chosen admin password.
 sudo install -d -m 700 -o 65532 -g 65532 ./data
-docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose up -d --pull always --wait
 ```
 
-Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`. `RSS_IMAGE` selects the published browser image, so startup downloads it without compiling. Use the same Compose files for subsequent commands.
+Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`. Compose downloads the published browser image automatically.
 
-For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for versions and [registry deployment](docs/deployment.md#registry-images) for image selection or building locally. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
+For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for versions, [image selection](docs/deployment.md#registry-images) to pin a tag or digest, and [local builds](docs/deployment.md#build-container-images-from-source) for development. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
 
 ## Run without Docker
 
@@ -39,7 +39,7 @@ DATABASE_URL='postgres://rss_workshop:YOUR_GENERATED_HEX_PASSWORD@postgres:5432/
 
 ```sh
 sudo install -d -m 755 ./postgres-data
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --pull always --wait
 ```
 
 This includes Chromium and stores PostgreSQL in `./postgres-data`. Both data paths can be changed in `.env`. Switching databases does not migrate existing data; see [PostgreSQL setup](docs/postgresql.md) for existing servers and migration.

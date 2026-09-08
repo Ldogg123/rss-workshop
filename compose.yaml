@@ -2,11 +2,7 @@ name: rss-workshop
 
 services:
   rss-workshop:
-    build:
-      context: .
-      dockerfile: Dockerfile.browser
-      target: app
-    image: rss-workshop:local
+    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:v0.1.1-browser}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"

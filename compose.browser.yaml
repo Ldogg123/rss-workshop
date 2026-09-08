@@ -2,10 +2,7 @@
 # This file also explicitly selects Chromium after compose.static.yaml.
 services:
   rss-workshop:
-    build:
-      context: .
-      dockerfile: Dockerfile.browser
-      target: app
+    image: ${RSS_IMAGE:-ghcr.io/ldogg123/rss-workshop:v0.1.1-browser}
     environment:
       CHROMIUM_PATH: /usr/bin/chromium
       BROWSER_SLOTS: ${BROWSER_SLOTS:-2}

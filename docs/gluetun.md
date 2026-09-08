@@ -38,11 +38,11 @@ The [override](../compose.gluetun.yaml) uses `network_mode: container:NAME` and 
 
 ```sh
 docker inspect --format '{{.State.Health.Status}}' gluetun
-docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml up -d --pull always --wait
-docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
+docker compose -f compose.yaml -f compose.gluetun.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.gluetun.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
-This pulls the published browser image selected by `RSS_IMAGE` in `.env`, defaulting to `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`. For static-only operation, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`.
+With `RSS_IMAGE` blank or unset, this pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`. For static-only operation, add `-f compose.static.yaml` immediately after the base file; it defaults to `ghcr.io/ldogg123/rss-workshop:v0.1.1-static`. An explicit `RSS_IMAGE` must match the selected browser or static runtime. Use the same overrides for later operations. For a local source build, follow [build container images from source](deployment.md#build-container-images-from-source) and retain the Gluetun override.
 
 Do not add `ports`, `networks`, or custom `dns` settings to RSS Workshop when it shares another container's network; configure networking on Gluetun instead. Docker documents the [restrictions of container network mode](https://docs.docker.com/engine/network/#container-networks).
 
@@ -68,7 +68,7 @@ networks:
 Replace the network name with the one Gluetun actually uses, configure `POSTGRES_PASSWORD` and `DATABASE_URL`, and prepare the `POSTGRES_DATA_DIR` host directory from the [PostgreSQL guide](postgresql.md), then include every override:
 
 ```sh
-docker compose -f compose.yaml -f compose.postgres.yaml -f compose.gluetun.yaml -f compose.local.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.gluetun.yaml -f compose.local.yaml up -d --pull always --wait
 ```
 
 For static-only operation, pair the `-static` image with `-f compose.static.yaml` after the base file. Keep PostgreSQL's host data mount and health check. Its port does not need to be published on the host or VPN. Gluetun 3.41 and newer supports resolving peers on its Docker network by service name; consult its [inter-container networking guide](https://github.com/qdm12/gluetun-wiki/blob/main/setup/inter-containers-networking.md) for your version.
@@ -88,7 +88,7 @@ Keep Gluetun's firewall enabled. Its [firewall design](https://github.com/qdm12/
 After Gluetun is **recreated or replaced**, recreate RSS Workshop as well so it joins the current container's network namespace:
 
 ```sh
-docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml up -d --no-deps --no-build --force-recreate --wait rss-workshop
+docker compose -f compose.yaml -f compose.gluetun.yaml up -d --no-deps --no-build --force-recreate --wait rss-workshop
 ```
 
 Include all the extra overrides used at startup. Do the same for other apps that share Gluetun, following their own deployment instructions. Do not switch RSS Workshop to ordinary bridge networking as a VPN recovery step.

@@ -6,21 +6,20 @@ The default Docker deployment includes Chromium for JavaScript rendering. It reu
 
 ```sh
 # Configure .env and prepare the host data directory first; see deployment.
-# RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser
-docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose up -d --pull always --wait
 ```
 
-This pulls the published browser image selected by `RSS_IMAGE` in `.env`. See [deployment](deployment.md) for credentials and public URLs. Use `sudo docker` if your account requires it.
+This pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser` when `RSS_IMAGE` is blank or unset. An explicit `RSS_IMAGE` must select a browser image for this setup. See [deployment](deployment.md) for credentials and public URLs. Use `sudo docker` if your account requires it.
 
-For a local source build, omit `compose.image.yaml` and run `docker compose up -d --build --wait`. The [browser Dockerfile](../Dockerfile.browser) pins the Debian base digest and Chromium package version; maintainers should review those pins for security updates before rebuilding. `CHROMIUM_VERSION` is a build argument for upgrades. Existing commands that include `compose.browser.yaml` remain compatible; the extra override is no longer required.
+For a local source build, use the explicit [container build overrides](deployment.md#build-container-images-from-source). The [browser Dockerfile](../Dockerfile.browser) pins the Debian base digest and Chromium package version; maintainers should review those pins for security updates before rebuilding. `CHROMIUM_VERSION` is a build argument for upgrades.
 
-For a smaller runtime without local Chromium, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` in `.env` and use the [static override](../compose.static.yaml) before the image override:
+For a smaller runtime without local Chromium, use the [static override](../compose.static.yaml):
 
 ```sh
-docker compose -f compose.yaml -f compose.static.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait
 ```
 
-This keeps the same host data directory and supports static HTTP fetching and external FlareSolverr. It clears Chromium configuration and replaces the browser's sandbox and resource settings with the static runtime's settings. Keep the `-static` image paired with this override on later runs. Saved Chromium recipes need the browser runtime to refresh successfully.
+With `RSS_IMAGE` blank or unset, this pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-static`. If you set `RSS_IMAGE` explicitly, select a static image and keep this override on later runs. This keeps the same host data directory and supports static HTTP fetching and external FlareSolverr. It clears Chromium configuration and replaces the browser's sandbox and resource settings with the static runtime's settings. Saved Chromium recipes need the browser runtime to refresh successfully.
 
 For native installations, set `CHROMIUM_PATH` to an installed Chromium executable and run the app as a non-root user on a host that supports its sandbox. Docker deployments do not require host Chromium or Node.
 

@@ -13,7 +13,7 @@ The source repository is [Ldogg123/rss-workshop](https://github.com/Ldogg123/rss
 
 Both variants support the configured external FlareSolverr service. The browser variant additionally supports local Chromium and Auto rendering. The publishing workflow builds Linux `amd64` and `arm64` manifests for both tags. The lowercased GitHub repository determines the GHCR namespace: `Ldogg123/rss-workshop` publishes under `ghcr.io/ldogg123/rss-workshop`.
 
-Tags include the full version and variant. There is no implicit `latest` tag. Record the digest shown by the publishing job and prefer that digest for a repeatable deployment. The [Compose image override](../compose.image.yaml) accepts a tagged image or digest through `RSS_IMAGE`. The base Compose setup includes Chromium; use `compose.yaml` followed by `compose.image.yaml` for a browser image. For a static image, insert [compose.static.yaml](../compose.static.yaml) before the image override.
+Tags include the full version and variant. There is no implicit `latest` tag. Record the digest shown by the publishing job and prefer that digest for a repeatable deployment. Compose defaults to the published browser image; [compose.static.yaml](../compose.static.yaml) selects the published static image. The optional `RSS_IMAGE` accepts a tag or digest matching the selected runtime; see [image selection](deployment.md#registry-images).
 
 The Dockerfiles support cross-compiling the Go app on the builder's native CPU. The publishing workflow uses native amd64 and arm64 runners for the whole image, checks each locally built image, and combines its verified platform digests into a multi-platform manifest. Race-enabled browser test images also require native builders. This follows Docker's [multi-platform build guidance](https://docs.docker.com/build/building/multi-platform/).
 
@@ -41,7 +41,7 @@ Publishing source is separate from publishing container images. A source push do
 3. Enable GitHub Actions and private vulnerability reporting, as described in [SECURITY.md](../SECURITY.md). The ordinary CI workflow needs read-only repository access; registry write permissions are confined to the separate manual publishing workflow.
 4. Let hosted CI finish on both `amd64` and `arm64`, including the container/browser jobs and PostgreSQL checks. Local validation does not establish that the hosted runners passed. Resolve failures before advertising a tested release.
 
-The public source can then be built using the README's Docker instructions. Publish image tags only after completing the corresponding-source preparation, release/tag review, and manual GHCR steps below.
+The public source can then be built using the [local container build instructions](deployment.md#build-container-images-from-source). Publish image tags only after completing the corresponding-source preparation, release/tag review, and manual GHCR steps below.
 
 ## Validation
 
@@ -50,7 +50,7 @@ The public source can then be built using the README's Docker instructions. Publ
 1. Module verification, reachable Go vulnerability checking, formatting, the full race suite, `go vet`, backup and release-source verification tests, a CGo-free build, and the native fixture workflow.
 2. Static and browser runtime builds, plus the dedicated browser test target.
 3. Real Chromium tests with the deployed seccomp profile, non-root user, read-only filesystem, dropped capabilities, and memory/process limits. These check Chromium's sandbox, network policy, recovery, and the visual editor.
-4. Default browser Compose and explicit static opt-out smoke tests covering health, extraction, RSS/Atom output, recipe portability, and persistence through restart.
+4. Compose configuration checks for published defaults, image selection, and local build overrides, plus browser/static smoke tests covering health, extraction, RSS/Atom output, recipe portability, and persistence through restart.
 5. Isolated host-directory and legacy named-volume backup/restore checks on the amd64 runner.
 6. On amd64, PostgreSQL persistence and native workflow checks against a disposable server, plus an isolated PostgreSQL Compose workflow covering outage recovery and logical backup/restore.
 
@@ -63,6 +63,7 @@ Equivalent local commands, from the repository root:
 ```sh
 make check
 go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
+make compose-test
 make check-containers
 ```
 

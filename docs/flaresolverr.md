@@ -22,7 +22,7 @@ Recreate the app container after changing its environment:
 docker compose up -d --no-build --wait
 ```
 
-Use the same Compose files as your original installation; add `sudo` if Docker access requires it. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `compose.static.yaml`. For a prebuilt `-static` image, include that override before `compose.image.yaml`. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.
+Use the same Compose files as your original installation; add `sudo` if Docker access requires it. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `-f compose.yaml -f compose.static.yaml`. With `RSS_IMAGE` blank, that override selects the matching published static image. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.
 
 ## Using it
 

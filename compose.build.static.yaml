@@ -1,0 +1,10 @@
+# Development only: build the static image from this checkout.
+# docker compose -f compose.yaml -f compose.static.yaml -f compose.build.static.yaml up -d --build --wait
+# Apply after compose.static.yaml and any database/network overrides.
+services:
+  rss-workshop:
+    image: rss-workshop:local-static
+    pull_policy: build
+    build: !override
+      context: .
+      dockerfile: Dockerfile

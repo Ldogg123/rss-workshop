@@ -12,7 +12,7 @@ BROWSER_TEST_IMAGE ?= rss-workshop:browser-tests
 
 BUILD_ARGS = --build-arg VERSION="$(VERSION)" --build-arg COMMIT="$(COMMIT)" --build-arg BUILD_DATE="$(BUILD_DATE)" --build-arg SOURCE_URL="$(SOURCE_URL)"
 
-.PHONY: build test race vet fmt-check backup-test release-test smoke-test check smoke postgres-test postgres-smoke run docker-static docker-browser docker-browser-tests browser-test docker-smoke docker-postgres-smoke check-containers
+.PHONY: build test race vet fmt-check backup-test release-test smoke-test compose-test check smoke postgres-test postgres-smoke run docker-static docker-browser docker-browser-tests browser-test docker-smoke docker-postgres-smoke check-containers
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)" -o bin/rss-workshop ./cmd/server
 test:
@@ -27,6 +27,8 @@ backup-test:
 	$(PYTHON) scripts/backup_test.py
 smoke-test:
 	$(PYTHON) scripts/smoke_test.py
+compose-test:
+	DOCKER='$(DOCKER)' $(PYTHON) scripts/compose_test.py
 release-test:
 	$(PYTHON) scripts/collect_debian_sources_test.py
 	$(PYTHON) scripts/release_sources_test.py
@@ -55,7 +57,7 @@ browser-test: docker-browser-tests
 		--tmpfs /tmp:size=256m,mode=1777 --shm-size=256m --pids-limit 256 --memory 2g \
 		--mount type=bind,src="$(CURDIR)/artifacts/browser",dst=/artifacts \
 		-e RSS_SITE_ARTIFACTS=/artifacts $(BROWSER_TEST_IMAGE)
-docker-smoke: docker-static docker-browser
+docker-smoke: compose-test docker-static docker-browser
 	DOCKER='$(DOCKER)' RSS_SMOKE_COMPOSE=1 RSS_SMOKE_IMAGE=$(STATIC_IMAGE) $(PYTHON) scripts/smoke.py
 	DOCKER='$(DOCKER)' RSS_SMOKE_COMPOSE=1 RSS_SMOKE_BROWSER=1 RSS_SMOKE_IMAGE=$(BROWSER_IMAGE) $(PYTHON) scripts/smoke.py
 docker-postgres-smoke: docker-static

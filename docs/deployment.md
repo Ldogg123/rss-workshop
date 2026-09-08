@@ -13,10 +13,10 @@ cp .env.example .env
 chmod 600 .env
 # Edit .env before starting.
 sudo install -d -m 700 -o 65532 -g 65532 ./data
-docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose up -d --pull always --wait
 ```
 
-Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. The example `.env` sets `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`; `compose.image.yaml` removes the local build and selects that published image. Keep the same Compose files and order for subsequent commands.
+Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. It downloads `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`; no local build is required. Leave `RSS_IMAGE` blank to use that default, or [select a tag or digest](#registry-images). Keep the same Compose files and order for subsequent commands.
 
 `RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the `install` command. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
 
@@ -24,17 +24,17 @@ Keep the same host directory on later runs. If upgrading from an existing SQLite
 
 The default host directories are ignored by Git and Docker builds. Keep custom data directories outside the checkout, or explicitly exclude them from both Git and the Docker build context.
 
-Keep the default Chromium sandbox and resource settings. See [Chromium rendering](browser.md) and [FlareSolverr](flaresolverr.md) for their configuration and network boundaries. Existing commands that include `compose.browser.yaml` continue to select the browser runtime; the extra file is unnecessary for new default installations.
+Keep the default Chromium sandbox and resource settings. See [Chromium rendering](browser.md) and [FlareSolverr](flaresolverr.md) for their configuration and network boundaries.
 
 ## Lightweight static runtime
 
-If you only need static pages or an external FlareSolverr service, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` in `.env` and select the static override. This image contains the Go application and CA certificates, with no shell or local browser:
+If you only need static pages or an external FlareSolverr service, select the static override. With `RSS_IMAGE` blank, it downloads `ghcr.io/ldogg123/rss-workshop:v0.1.1-static` automatically. This image contains the Go application and CA certificates, with no shell or local browser:
 
 ```sh
-docker compose -f compose.yaml -f compose.static.yaml -f compose.image.yaml up -d --pull always --wait
+docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait
 ```
 
-Include both overrides in that order for subsequent operations on that deployment. Data paths and database selection work the same way in both runtimes.
+Keep the static override for subsequent operations. If `RSS_IMAGE` already has an explicit value, change it to a matching static image or clear it to use the default. Data paths and database selection work the same way in both runtimes.
 
 ## Gluetun VPN
 
@@ -42,28 +42,43 @@ The optional [Gluetun override](../compose.gluetun.yaml) connects RSS Workshop t
 
 ## Database selection
 
-With `DATABASE_URL` blank or unset, the app uses `DATA_DIR/rss.db`. A `postgres://` or `postgresql://` URI selects an existing PostgreSQL database. See [PostgreSQL setup](postgresql.md) for credentials, TLS, and the optional `compose.postgres.yaml` server. The PostgreSQL override works with the static, browser, and registry-image deployments.
+With `DATABASE_URL` blank or unset, the app uses `DATA_DIR/rss.db`. A `postgres://` or `postgresql://` URI selects an existing PostgreSQL database. See [PostgreSQL setup](postgresql.md) for credentials, TLS, and the optional `compose.postgres.yaml` server. The PostgreSQL override works with both runtimes.
 
 Changing the selected database does not copy recipes, articles, or reader tokens. A fresh database starts empty; the old SQLite file or PostgreSQL database remains separate. Keep one app process per database and use the matching [backup procedure](operations.md#backup-and-restore).
 
 ## Registry images
 
-Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available prebuilt images. Set `RSS_IMAGE` in `.env` to a published tag or immutable digest under `ghcr.io/ldogg123/rss-workshop`. Tags include a runtime suffix; for example:
+The default Compose files use versioned registry images. To pin another published tag or immutable digest, set the optional `RSS_IMAGE` in `.env`. Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available versions. Tags include a runtime suffix; for example:
 
 ```dotenv
 RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser
 ```
 
-Apply `compose.image.yaml` last to use that image without building locally:
+Recreate the app with the same runtime and other overrides used by your installation:
 
 ```sh
-docker compose -f compose.yaml -f compose.image.yaml pull rss-workshop
-docker compose -f compose.yaml -f compose.image.yaml up -d --no-build --wait
+docker compose up -d --pull always --wait
 ```
 
-The commands above use a `-browser` image with the default browser settings. For a `-static` image, include `-f compose.static.yaml` before `-f compose.image.yaml` in both commands. Use the same files and order for later operations. The image override preserves the host data mount. Prefer immutable digests and keep the previous digest for rollback; [release preparation](releases.md) describes the published variants.
+An explicit image must match the runtime: use a browser image with the base file, or a static image with `-f compose.yaml -f compose.static.yaml`. Existing `.env` values remain in effect when updating the checkout. Prefer immutable digests and keep the previous digest and data backup for rollback; [release preparation](releases.md) describes the published variants.
 
-To build your local checkout instead, omit `compose.image.yaml` and use `docker compose up -d --build --wait`. Include any database, static, or network overrides you use. The base file's local build produces `rss-workshop:local`; setting `RSS_IMAGE` alone does not select the registry image without the image override.
+For compatibility, existing commands may retain `compose.browser.yaml` or a final `compose.image.yaml`. The browser override selects the browser runtime; the image override requires an explicit `RSS_IMAGE` and removes any build configuration. Neither is needed for new installations.
+
+## Build container images from source
+
+To run changes from your local checkout, prepare `.env` and host storage as above, then add the development build override:
+
+```sh
+docker compose -f compose.yaml -f compose.build.yaml up -d --build --wait
+```
+
+This builds the Chromium runtime from `Dockerfile.browser` as `rss-workshop:local`. For the lightweight runtime, use its matching runtime and build overrides:
+
+```sh
+docker compose -f compose.yaml -f compose.static.yaml -f compose.build.static.yaml up -d --build --wait
+```
+
+This builds `Dockerfile` as `rss-workshop:local-static`. Both build overrides select local image names independently of `RSS_IMAGE` and set a build policy. Include any database or network overrides before the build override, and keep the same files for subsequent operations. Use a separate project, port, and data directory when testing alongside an existing installation.
 
 ## Public URL and HTTPS
 
@@ -107,7 +122,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |
 | `MAX_ITEMS` | `500` | 1–10,000 retained items per feed |
 | `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
-| `RSS_IMAGE` | `v0.1.1-browser` image in example `.env` | Full runtime image tag or digest; required by `compose.image.yaml` |
+| `RSS_IMAGE` | empty; runtime chooses its versioned browser/static image | Optional full image tag or digest; must match the selected runtime |
 | `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
 | `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
 

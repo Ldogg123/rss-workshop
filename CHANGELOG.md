@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Make Compose use published images by default, including the browser and static runtimes. Move local builds into explicit development overrides and simplify installation commands.
+
 ## v0.1.1 — 2026-09-08
 
 - Remove the admin password length policy. Short passwords and long or Unicode passphrases work through `ADMIN_PASSWORD`; existing externally generated bcrypt hashes remain supported.

@@ -1,0 +1,11 @@
+# Development only: build the browser image from this checkout.
+# docker compose -f compose.yaml -f compose.build.yaml up -d --build --wait
+# Apply after runtime/database/network overrides. See docs/deployment.md.
+services:
+  rss-workshop:
+    image: rss-workshop:local
+    pull_policy: build
+    build: !override
+      context: .
+      dockerfile: Dockerfile.browser
+      target: app
