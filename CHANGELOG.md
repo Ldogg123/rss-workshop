@@ -1,11 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 — 2026-09-08
 
 - Add optional title, description, and link filters with nested All/Any include/exclude rules, case-insensitive literal phrases, and bulk lists of up to 500 keywords. Previews show included/filtered counts and excluded examples; intentionally empty filtered results succeed without browser fallback.
 - Make applying filters to saved history an explicit editor option. Preserve existing stories by default and keep filtering settings in recipe exports/imports.
 - Advance both databases to schema 3 so older app versions cannot silently ignore stored filters. Preserve diagnostics and support backups of schemas 1, 2, and 3.
 - Add screenshots of the dashboard, visual editor, and filtering controls to the README.
+- Run CI once per pull-request update, skip documentation-only changes, and cancel superseded automatic runs while keeping release validation separate.
+
 ## v0.1.2 — 2026-09-08
 
 - Make Compose use published images by default, including the browser and static runtimes. Move local builds into explicit development overrides and simplify installation commands.

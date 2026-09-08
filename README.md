@@ -6,7 +6,7 @@ The default Docker installation includes Chromium for JavaScript pages, SQLite, 
 
 ![RSS Workshop dashboard in dark mode](docs/screenshots/dashboard.png)
 
-Story filtering is being prepared for v0.2. The published v0.1.2 images include diagnostics; use a [source build](docs/deployment.md#build-container-images-from-source) to try the unreleased filters.
+Story filtering is included in [v0.2.0](https://github.com/Ldogg123/rss-workshop/releases/tag/v0.2.0), with nested include/exclude rules and bulk lists of up to 500 keywords. See [how filtering works](docs/filtering.md).
 
 ## Quickstart
 

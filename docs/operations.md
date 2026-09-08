@@ -113,7 +113,7 @@ Named-volume restore remains available for existing deployments and accepts back
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image ghcr.io/ldogg123/rss-workshop:v0.1.2-browser
+  --image ghcr.io/ldogg123/rss-workshop:v0.2.0-browser
 ```
 
 This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; schema-1, schema-2, and schema-3 backups remain usable with the current utility. Select an app version that supports the restored database schema.
@@ -155,7 +155,7 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 
 Include all overrides used by your deployment. For local source builds, use the matching [development build override](deployment.md#build-container-images-from-source) and `up -d --build --wait`. Check a saved feed afterward; see [deployment](deployment.md).
 
-The current source uses schema version 3 for both databases and automatically upgrades schema 1 or 2 in a transaction at startup. Schema 2 adds diagnostic storage; schema 3 prevents older binaries from silently ignoring stored filters. The migrations preserve existing feeds, items, and run history. Unsupported versions are rejected. The backup utility accepts schemas 1, 2, and 3 and restores their original version; it does not upgrade the backup.
+RSS Workshop v0.2.0 uses schema version 3 for both databases and automatically upgrades schema 1 or 2 in a transaction at startup. Schema 2 adds diagnostic storage; schema 3 prevents older binaries from silently ignoring stored filters. The migrations preserve existing feeds, items, and run history. Unsupported versions are rejected. The backup utility accepts schemas 1, 2, and 3 and restores their original version; it does not upgrade the backup.
 
 Published v0.1.0 and v0.1.1 use schema 1; v0.1.2 uses schema 2. Before upgrading, keep a verified backup and the corresponding old image or executable. These versions cannot open a newer schema than they support. To downgrade, stop the app and restore the pre-upgrade backup into separate storage with the matching old app version. There is no in-place schema downgrade.
 

@@ -9,7 +9,7 @@ The default Docker deployment includes Chromium for JavaScript rendering. It reu
 docker compose up -d --pull always --wait
 ```
 
-This pulls `ghcr.io/ldogg123/rss-workshop:v0.1.2-browser` when `RSS_IMAGE` is blank or unset. An explicit `RSS_IMAGE` must select a browser image for this setup. See [deployment](deployment.md) for credentials and public URLs. Use `sudo docker` if your account requires it.
+This pulls `ghcr.io/ldogg123/rss-workshop:v0.2.0-browser` when `RSS_IMAGE` is blank or unset. An explicit `RSS_IMAGE` must select a browser image for this setup. See [deployment](deployment.md) for credentials and public URLs. Use `sudo docker` if your account requires it.
 
 For a local source build, use the explicit [container build overrides](deployment.md#build-container-images-from-source). The [browser Dockerfile](../Dockerfile.browser) pins the Debian base digest and Chromium package version; maintainers should review those pins for security updates before rebuilding. `CHROMIUM_VERSION` is a build argument for upgrades.
 
@@ -19,7 +19,7 @@ For a smaller runtime without local Chromium, use the [static override](../compo
 docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait
 ```
 
-With `RSS_IMAGE` blank or unset, this pulls `ghcr.io/ldogg123/rss-workshop:v0.1.2-static`. If you set `RSS_IMAGE` explicitly, select a static image and keep this override on later runs. This keeps the same host data directory and supports static HTTP fetching and external FlareSolverr. It clears Chromium configuration and replaces the browser's sandbox and resource settings with the static runtime's settings. Saved Chromium recipes need the browser runtime to refresh successfully.
+With `RSS_IMAGE` blank or unset, this pulls `ghcr.io/ldogg123/rss-workshop:v0.2.0-static`. If you set `RSS_IMAGE` explicitly, select a static image and keep this override on later runs. This keeps the same host data directory and supports static HTTP fetching and external FlareSolverr. It clears Chromium configuration and replaces the browser's sandbox and resource settings with the static runtime's settings. Saved Chromium recipes need the browser runtime to refresh successfully.
 
 For native installations, set `CHROMIUM_PATH` to an installed Chromium executable and run the app as a non-root user on a host that supports its sandbox. Docker deployments do not require host Chromium or Node.
 
