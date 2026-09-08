@@ -103,6 +103,9 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	if e = chromedp.Run(tab, chromedp.Evaluate(`document.querySelectorAll('#preview .preview-item').length`, &count)); e != nil || count != 2 {
 		t.Fatal("UI preview mismatch", count, e)
 	}
+	if card == "article.card" {
+		testPreviewDiagnostics(t, tab)
+	}
 	testVisualSelector(t, tab, card, f)
 	if card == "article.card" {
 		testEstimatedDatePreview(t, tab)

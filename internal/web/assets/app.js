@@ -7,7 +7,14 @@ function notice(text, success=false) { const n=$('#notice'); n.textContent=text;
 async function api(path, method='GET', data, signal) {
  const res=await fetch('/api'+path,{method,signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
  const raw=await res.text(); let out;try{out=JSON.parse(raw);}catch{out={error:raw.trim()};}
- if(!res.ok){if(res.status===401&&path!='/login')showLogin();throw new Error(out.error||'Request failed');}return out;
+ if(!res.ok){
+  if(res.status===401&&path!='/login')showLogin();
+  const error=new Error(typeof out?.error==='string'&&out.error?out.error:'Request failed');
+  error.status=res.status;
+  error.matches=Number.isSafeInteger(out?.matches)&&out.matches>=0?out.matches:null;
+  error.warnings=Array.isArray(out?.warnings)?out.warnings.filter(warning=>typeof warning==='string'):[];
+  throw error;
+ }return out;
 }
 function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 function action(label,fn,cls='quiet'){const b=node('button',label,cls);b.type='button';b.onclick=()=>busy(b,fn);return b;}
@@ -82,6 +89,13 @@ $('#preview-button').onclick=()=>{if(!form.reportValidity())return;busy($('#prev
    if(item.url){title.href=item.url;title.target='_blank';title.rel='noopener noreferrer';}card.append(title,previewDate(item));
    const content=node('div');content.innerHTML=item.html;for(const a of content.querySelectorAll('a')){a.target='_blank';a.rel='noopener noreferrer';}card.append(content);p.append(card);
   }
- }catch(e){p.replaceChildren(node('p','Preview could not be completed. Check the message above.','hint'));throw e;}
+ }catch(e){
+  p.replaceChildren(node('p','Preview could not be completed. Check the message above.','hint'));
+  if(e.status===422&&e.matches!==null){
+   p.prepend(node('h2',`0 items · ${e.matches} matches`));
+   for(const warning of e.warnings)p.append(node('p',warning,'diagnostic'));
+  }
+  throw e;
+ }
 });};
 (async()=>{try{const s=await api('/session');csrf=s.csrf;await showApp();}catch(e){showLogin();}})();

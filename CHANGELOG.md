@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Make Compose use published images by default, including the browser and static runtimes. Move local builds into explicit development overrides and simplify installation commands.
+- Show match counts and per-item rejection reasons when a feed preview fails, so missing titles and links can be diagnosed in the editor.
 
 ## v0.1.1 — 2026-09-08
 

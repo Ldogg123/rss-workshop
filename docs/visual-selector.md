@@ -34,6 +34,8 @@ Selectors can also be entered directly. For a typical article card:
 
 Use `.` for the card itself. Enter CSS attributes in the separate attribute field, rather than writing `a@href`. XPath may select attributes directly, such as `.//a/@href`. A configured link selector must return a safe URL or that card is skipped. Leaving the link selector empty uses a title-based identity, so a later title change creates a new item.
 
+A preview can match cards but reject every item. Its diagnostics show whether each match has an empty title or a missing/unsafe link. Keep the Title attribute blank to read text. If the repeated item is an `<a>` element, use `.` for Link with attribute `href`; if it contains the anchor, use `a` in CSS or `.//a` in XPath. A link outside the selected item requires choosing a larger repeated container. Missing dates, descriptions, or images do not cause items to be skipped.
+
 Automatic image detection tries `data-src`, `data-lazy-src`, usable `src`, then the last usable candidate in `data-srcset` or `srcset`. It does not evaluate viewport widths. An explicit attribute overrides detection; an empty image selector uses the card's first descendant image. Links and images become absolute using the effective page URL and a valid `<base>` URL. Extracted content is sanitized.
 
 The item preview and RSS/Atom readers load images directly from their source. Hotlink protection, expired URLs, and HTTPS mixed-content restrictions can prevent display. See [publication dates](dates.md) for exact timestamps, relative dates, and custom formats.
