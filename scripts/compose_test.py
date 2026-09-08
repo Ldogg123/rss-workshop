@@ -78,7 +78,8 @@ class ComposeConfigurationTests(unittest.TestCase):
         mount = next(volume for volume in app['volumes'] if volume['target'] == '/data')
         self.assertEqual(mount['type'], 'bind')
         self.assertEqual(mount['source'], str(self.directory / 'sqlite'))
-        self.assertIs(mount['bind']['create_host_path'], False)
+        # Some Compose versions omit false-valued fields from resolved JSON.
+        self.assertIs(mount['bind'].get('create_host_path', False), False)
         self.assertNotIn('volumes', config)
         seccomp = [value for value in app['security_opt'] if value.startswith('seccomp=')]
         if browser:
@@ -117,7 +118,7 @@ class ComposeConfigurationTests(unittest.TestCase):
                          if volume['target'] == '/var/lib/postgresql')
             self.assertEqual(mount['type'], 'bind')
             self.assertEqual(mount['source'], str(self.directory / 'postgres'))
-            self.assertIs(mount['bind']['create_host_path'], False)
+            self.assertIs(mount['bind'].get('create_host_path', False), False)
         else:
             self.assertEqual(app['environment']['DATABASE_URL'], '')
             self.assertNotIn('postgres', config['services'])

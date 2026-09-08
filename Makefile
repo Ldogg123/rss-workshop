@@ -28,6 +28,7 @@ backup-test:
 smoke-test:
 	$(PYTHON) scripts/smoke_test.py
 compose-test:
+	$(DOCKER) compose version
 	DOCKER='$(DOCKER)' $(PYTHON) scripts/compose_test.py
 release-test:
 	$(PYTHON) scripts/collect_debian_sources_test.py
