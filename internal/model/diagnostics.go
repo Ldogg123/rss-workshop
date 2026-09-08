@@ -23,6 +23,8 @@ type FetchAttempt struct {
 	DurationMS      int64    `json:"duration_ms"`
 	Bytes           int      `json:"bytes"`
 	Matches         *int     `json:"matches,omitempty"`
+	Valid           *int     `json:"valid,omitempty"`
+	Filtered        int      `json:"filtered"`
 	Items           *int     `json:"items,omitempty"`
 	Error           string   `json:"error,omitempty"`
 	Warnings        []string `json:"warnings"`

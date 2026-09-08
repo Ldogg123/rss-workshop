@@ -1,8 +1,12 @@
 # RSS Workshop
 
-Turn website pages into persistent RSS and Atom feeds. Choose repeating elements visually, refine CSS or XPath selectors with live highlights, and let scheduled refreshes collect new stories.
+Turn website pages into persistent RSS and Atom feeds. Choose repeating elements visually, refine CSS or XPath selectors with live highlights, filter stories by your interests, and let scheduled refreshes collect new matches.
 
 The default Docker installation includes Chromium for JavaScript pages, SQLite, a single-admin interface, and dark mode. Data stays in local folders on your host.
+
+![RSS Workshop dashboard in dark mode](docs/screenshots/dashboard.png)
+
+Story filtering is being prepared for v0.2. The published v0.1.2 images include diagnostics; use a [source build](docs/deployment.md#build-container-images-from-source) to try the unreleased filters.
 
 ## Quickstart
 
@@ -50,16 +54,31 @@ This includes Chromium and stores PostgreSQL in `./postgres-data`. Both data pat
 
 1. Choose **New feed** and enter a name and page URL.
 2. Choose **Choose elements visually**. Select a repeating card, then its title, link, description, image, and date. Edit CSS or XPath beside the live preview to fine-tune the matches.
-3. Choose **Preview items**, check the results, and save.
+3. Optionally add **Story filters** for titles, descriptions, and links. Choose **Preview items**, check the included and excluded results, and save.
 4. Copy the RSS or Atom URL into your reader.
 
 Reader requests use saved items; they never fetch the source. Failed refreshes preserve the last successful output. Anyone with a feed link can read it; **Reset feed links** revokes its existing RSS and Atom URLs.
 
 For troubleshooting, **Preview items** explains missing or unexpected field values, and **Preview diagnostics** shows fetch and matching details. A saved feed's **Diagnostics** button opens its last 50 refresh results. See [diagnostics and retention](docs/operations.md#feed-diagnostics).
 
+<details>
+<summary>See the visual editor and story filters</summary>
+
+Choose elements visually and refine CSS/XPath beside the highlighted source page:
+
+![Visual selector editor with live matching highlights](docs/screenshots/visual-selector.png)
+
+Combine include/exclude groups and paste long keyword lists:
+
+![Story filter editor with a 100-phrase condition and optional history cleanup](docs/screenshots/filters.png)
+
+Screenshots use sample feeds.
+
+</details>
+
 ## Documentation
 
-- [Visual selectors](docs/visual-selector.md), [dates](docs/dates.md), and [RSS/Atom output](docs/atom.md)
+- [Visual selectors](docs/visual-selector.md), [story filters](docs/filtering.md), [dates](docs/dates.md), and [RSS/Atom output](docs/atom.md)
 - [Browser rendering](docs/browser.md), [FlareSolverr](docs/flaresolverr.md), and [Gluetun VPN](docs/gluetun.md)
 - [Recipe import/export](docs/recipe-portability.md) and [example recipes](docs/examples/all-visual-recipes.json)
 - [Backups, restores, and upgrades](docs/operations.md)

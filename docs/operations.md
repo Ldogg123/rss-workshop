@@ -16,7 +16,7 @@ These examples use the default published browser image, or the matching image se
 
 ### Feed diagnostics
 
-Choose **Diagnostics** on a saved feed to see its latest refresh results, newest first. Expand a run for the requested fetch mode, recipe version, source HTTP status, duration, response size, matched elements, valid items, and field warnings. Auto records both static and Chromium attempts when it falls back, so the initial matching failure remains visible. A failed request without an HTTP response shows no recorded status; a `304` means the source reported no changes and saved items were kept.
+Choose **Diagnostics** on a saved feed to see its latest refresh results, newest first. Expand a run for the requested fetch mode, recipe version, source HTTP status, duration, response size, matched elements, valid stories, included/filtered counts, and field warnings. Auto records both static and Chromium attempts when it falls back, so the initial matching failure remains visible. A failed request without an HTTP response shows no recorded status; a `304` means the source reported no changes and saved items were kept.
 
 **Reload history** only rereads the database. To fetch the source again, use the feed's **Refresh** action. The authenticated history API is `GET /api/feeds/{id}/runs`. Older run records still show their summary; detailed traces are available for refreshes performed after upgrading.
 
@@ -47,7 +47,7 @@ Confirm the actual container name with your deployment's Compose `ps` command an
 
 Backup briefly stops the selected app, copies `/data` using [Docker's stopped-container copy support](https://docs.docker.com/reference/cli/docker/container/cp/), and restarts it before validating the copy. Readers and the UI are unavailable during the copy; restarting ends login sessions. A previously stopped container remains stopped. Do not start or recreate the app during this operation. After an error or interruption, check readiness; the utility attempts to restart an originally running app even if copying fails.
 
-The copied database and WAL are consolidated with the [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup). The output contains a standalone `rss.db` and `manifest.json`. Verification checks SHA-256, SQLite integrity, foreign keys, schema version 1 or 2, and feed/item/run counts. Files use mode 0600 and the backup directory uses 0700.
+The copied database and WAL are consolidated with the [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup). The output contains a standalone `rss.db` and `manifest.json`. Verification checks SHA-256, SQLite integrity, foreign keys, schema version 1, 2, or 3, and feed/item/run counts. Files use mode 0600 and the backup directory uses 0700.
 
 Store an off-host copy in protected backup storage. Backups contain private URLs, content, and working reader tokens. Keep `.env`, Compose configuration, and the selected image digest separately. Allow space for the stopped copy, consolidated snapshot, and output; set the host's `TMPDIR` if needed. Checksums detect corruption, not replacement of both the database and manifest.
 
@@ -116,7 +116,7 @@ sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade 
   --image ghcr.io/ldogg123/rss-workshop:v0.1.2-browser
 ```
 
-This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; both schema-1 and schema-2 backups remain usable with the current utility. Select an app version that supports the restored database schema.
+This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; schema-1, schema-2, and schema-3 backups remain usable with the current utility. Select an app version that supports the restored database schema.
 
 Create an ignored local `compose.restore.yaml` to explicitly replace the app's `/data` bind mount. For rollback, use the preserved original volume's actual name instead of `rss-workshop-restored`:
 
@@ -155,9 +155,9 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 
 Include all overrides used by your deployment. For local source builds, use the matching [development build override](deployment.md#build-container-images-from-source) and `up -d --build --wait`. Check a saved feed afterward; see [deployment](deployment.md).
 
-The current source uses schema version 2 for both databases and automatically upgrades schema 1 in a transaction at startup. The migration adds diagnostic storage while preserving existing feeds, items, and run summaries. Unsupported versions are rejected. The backup utility accepts both schemas and restores their original version; it does not upgrade the backup.
+The current source uses schema version 3 for both databases and automatically upgrades schema 1 or 2 in a transaction at startup. Schema 2 adds diagnostic storage; schema 3 prevents older binaries from silently ignoring stored filters. The migrations preserve existing feeds, items, and run history. Unsupported versions are rejected. The backup utility accepts schemas 1, 2, and 3 and restores their original version; it does not upgrade the backup.
 
-Published v0.1.0 and v0.1.1 use schema 1. Before upgrading from either, keep a verified backup and the corresponding old image or executable. Those versions cannot open an upgraded schema-2 database. To downgrade, stop the app and restore the pre-upgrade backup into separate storage with the matching old app version. There is no in-place schema downgrade.
+Published v0.1.0 and v0.1.1 use schema 1; v0.1.2 uses schema 2. Before upgrading, keep a verified backup and the corresponding old image or executable. These versions cannot open a newer schema than they support. To downgrade, stop the app and restore the pre-upgrade backup into separate storage with the matching old app version. There is no in-place schema downgrade.
 
 ## Scheduling and limits
 

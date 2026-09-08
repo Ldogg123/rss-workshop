@@ -123,25 +123,7 @@ func (s *Store) List(ctx context.Context) (_ []model.Feed, err error) {
 	return out, rows.Err()
 }
 func (s *Store) Save(ctx context.Context, f model.Feed) (_ string, err error) {
-	defer s.cleanError(&err)
-	r, e := json.Marshal(f.Recipe)
-	if e != nil {
-		return "", e
-	}
-	if f.ID == "" {
-		f.ID = ID()
-		_, e = s.DB.ExecContext(ctx, s.bind(`INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES(?,?,?,?,?,?,?,?)`), f.ID, ID(), readableText(f.Title), readableText(f.URL), string(r), f.Interval, f.Enabled, time.Now().Unix())
-		return f.ID, e
-	}
-	res, e := s.DB.ExecContext(ctx, s.bind(`UPDATE feeds SET title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), readableText(f.Title), readableText(f.URL), string(r), f.Interval, f.Enabled, time.Now().Unix(), f.ID)
-	if e != nil {
-		return "", e
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return "", sql.ErrNoRows
-	}
-	return f.ID, nil
+	return s.SaveWithOptions(ctx, f, SaveOptions{})
 }
 func (s *Store) Delete(ctx context.Context, id string) (err error) {
 	defer s.cleanError(&err)

@@ -15,6 +15,8 @@ import (
 	"github.com/antchfx/xpath"
 	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/net/html"
+	"rss-workshop/internal/diagnostics"
+	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
 )
 
@@ -42,6 +44,14 @@ func ValidateRender(r model.Recipe) error {
 }
 
 func Validate(r model.Recipe) error {
+	if err := validateSelectors(r); err != nil {
+		return err
+	}
+	_, err := filter.Compile(r.Filters)
+	return err
+}
+
+func validateSelectors(r model.Recipe) error {
 	if err := ValidateRender(r); err != nil {
 		return err
 	}
@@ -211,7 +221,11 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 	if observedAt.IsZero() || observedAt.UTC().Year() < 1 || observedAt.UTC().Year() > 9999 {
 		return out, fmt.Errorf("invalid page observation time")
 	}
-	if e := Validate(r); e != nil {
+	if e := validateSelectors(r); e != nil {
+		return out, e
+	}
+	matcher, e := filter.Compile(r.Filters)
+	if e != nil {
 		return out, e
 	}
 	base, e := url.Parse(effective)
@@ -342,9 +356,23 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		if totalBytes > 8<<20 {
 			return out, fmt.Errorf("extracted output exceeds 8 MiB limit")
 		}
+		out.Valid++
+		decision := matcher.Evaluate(it)
+		if !decision.Matched {
+			out.Filtered++
+			if len(out.FilterExamples) < 20 {
+				title := strings.Join(strings.Fields(diagnostics.SafeText(it.Title, 512)), " ")
+				runes := []rune(title)
+				if len(runes) > 120 {
+					title = string(runes[:119]) + "…"
+				}
+				out.FilterExamples = append(out.FilterExamples, model.FilterExample{Title: title, Reason: diagnostics.SafeText(decision.Reason, 512)})
+			}
+			continue
+		}
 		out.Items = append(out.Items, it)
 	}
-	if len(out.Items) == 0 {
+	if out.Valid == 0 {
 		return out, fmt.Errorf("%w: selector produced zero valid items (%d matches); saved history is retained", ErrNoItems, out.Matches)
 	}
 	return out, nil

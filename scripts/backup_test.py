@@ -21,20 +21,11 @@ import backup
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def fixture_database(path, *, legacy=False):
+def fixture_database(path, *, schema_version=3):
     db = sqlite3.connect(path)
-    db.executescript((ROOT / "internal/store/schema.sql").read_text())
-    if legacy:
-        # Preserve the pre-diagnostics runs table, including the absence of the
-        # version-2 history index, instead of only relabeling a current schema.
-        db.executescript("""
-            DROP TABLE runs;
-            CREATE TABLE runs (
-                id INTEGER PRIMARY KEY, feed_id TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
-                ended INTEGER NOT NULL, status INTEGER NOT NULL, count INTEGER NOT NULL, error TEXT NOT NULL
-            );
-            UPDATE schema_version SET version=1;
-        """)
+    schema = (ROOT / "internal/store/schema.sql" if schema_version == 3 else
+              ROOT / f"internal/store/testdata/schema_v{schema_version}.sql")
+    db.executescript(schema.read_text())
     recipe = json.dumps({"mode": "static", "type": "css", "items": "article", "title": {"selector": "h2"}})
     db.execute("INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES(?,?,?,?,?,60,0,0)",
                ("fixture-feed", "fixture-token", "Backup fixture", "https://example.org/", recipe))
@@ -66,7 +57,7 @@ class BackupTests(unittest.TestCase):
             docker.assert_not_called()
         self.assertFalse((root / "restored").exists())
 
-    def test_schema_two_backup_retains_wal_diagnostics_through_restore(self):
+    def test_current_backup_retains_wal_diagnostics_through_restore(self):
         diagnostics = json.dumps({"mode": "static", "selected_items": 1, "saved_items": 1,
                                   "warnings": ["fixture diagnostic"]})
         with tempfile.TemporaryDirectory() as work:
@@ -74,7 +65,7 @@ class BackupTests(unittest.TestCase):
             source = root / "source"
             source.mkdir()
             with contextlib.closing(fixture_database(source / "rss.db")) as db:
-                self.assertEqual(db.execute("SELECT version FROM schema_version").fetchall(), [(2,)])
+                self.assertEqual(db.execute("SELECT version FROM schema_version").fetchall(), [(3,)])
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA wal_autocheckpoint=0")
                 db.execute("UPDATE runs SET diagnostics=?", (diagnostics,))
@@ -92,7 +83,7 @@ class BackupTests(unittest.TestCase):
                     manifest = backup.backup_locked("fixture-container", root / "backup")
                     self.assertEqual(docker.call_count, 1)
             self.assertEqual(manifest["version"], 1)
-            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(manifest["schema_version"], 3)
             self.assertEqual(manifest["counts"], {"feeds": 1, "items": 1, "runs": 1})
             self.assertEqual(backup.verify_backup(root / "backup"), manifest)
             self.assertFalse((root / "backup/rss.db-wal").exists())
@@ -100,7 +91,7 @@ class BackupTests(unittest.TestCase):
                 backup.restore_directory(root / "backup", root / "restored")
             self.assertEqual(backup.checksum(root / "restored/rss.db"), manifest["sha256"])
             with contextlib.closing(sqlite3.connect(root / "restored/rss.db")) as restored:
-                self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(2,)])
+                self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(3,)])
                 self.assertEqual(restored.execute("SELECT diagnostics FROM runs").fetchall(), [(diagnostics,)])
                 self.assertEqual(restored.execute("SELECT name FROM sqlite_master WHERE type='index' "
                                                   "AND name='runs_feed_history'").fetchall(), [("runs_feed_history",)])
@@ -108,7 +99,7 @@ class BackupTests(unittest.TestCase):
     def test_schema_one_backup_verifies_and_restores_without_migration(self):
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)
-            fixture_database(root / "source.db", legacy=True).close()
+            fixture_database(root / "source.db", schema_version=1).close()
             make_backup(root / "source.db", root / "backup")
             manifest = backup.verify_backup(root / "backup")
             self.assertEqual((manifest["version"], manifest["schema_version"]), (1, 1))
@@ -121,20 +112,37 @@ class BackupTests(unittest.TestCase):
                 self.assertEqual(restored.execute("SELECT feed_id,ended,status,count,error FROM runs").fetchall(),
                                  [("fixture-feed", 126, 200, 1, "")])
 
+    def test_schema_two_backup_restores_diagnostics_without_migration(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            diagnostic = json.dumps({"mode": "static", "outcome": "success"})
+            with contextlib.closing(fixture_database(root / "source.db", schema_version=2)) as db:
+                db.execute("UPDATE runs SET diagnostics=?", (diagnostic,))
+                db.commit()
+            make_backup(root / "source.db", root / "backup")
+            manifest = backup.verify_backup(root / "backup")
+            self.assertEqual((manifest["version"], manifest["schema_version"]), (1, 2))
+            with mock.patch.object(backup.os, "geteuid", return_value=0), mock.patch.object(backup.os, "fchown"):
+                backup.restore_directory(root / "backup", root / "restored")
+            with contextlib.closing(sqlite3.connect(root / "restored/rss.db")) as restored:
+                self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(2,)])
+                self.assertEqual(restored.execute("SELECT diagnostics FROM runs").fetchall(), [(diagnostic,)])
+                self.assertEqual(backup.database_info(root / "restored/rss.db"), manifest["counts"])
+
     def test_manifest_schema_must_match_database_before_restore(self):
-        for legacy in (False, True):
-            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as work:
+        for version in (1, 2, 3):
+            with self.subTest(schema_version=version), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
-                fixture_database(root / "source.db", legacy=legacy).close()
+                fixture_database(root / "source.db", schema_version=version).close()
                 make_backup(root / "source.db", root / "backup")
                 path = root / "backup/manifest.json"
                 manifest = json.loads(path.read_text())
-                manifest["schema_version"] = 2 if legacy else 1
+                manifest["schema_version"] = 2 if version == 1 else 1
                 path.write_text(json.dumps(manifest))
                 self.assert_backup_rejected_before_restore(root, "metadata does not match")
 
     def test_unsupported_manifest_schema_rejected_before_restore(self):
-        for version in (3, 0, None, True, "2", 2.0):
+        for version in (4, 0, None, True, "3", 3.0):
             with self.subTest(schema_version=version), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
                 fixture_database(root / "source.db").close()
@@ -151,7 +159,7 @@ class BackupTests(unittest.TestCase):
             fixture_database(root / "source.db").close()
             make_backup(root / "source.db", root / "backup")
             with contextlib.closing(sqlite3.connect(root / "backup/rss.db")) as db:
-                db.execute("UPDATE schema_version SET version=3")
+                db.execute("UPDATE schema_version SET version=4")
                 db.commit()
             path = root / "backup/manifest.json"
             manifest = json.loads(path.read_text())
@@ -161,7 +169,7 @@ class BackupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported database schema"):
                 backup.snapshot_database(root / "backup/rss.db", root / "future-snapshot.db")
             self.assertFalse((root / "future-snapshot.db").exists())
-            manifest["schema_version"] = 3
+            manifest["schema_version"] = 4
             path.write_text(json.dumps(manifest))
             self.assert_backup_rejected_before_restore(root, "unsupported backup database schema")
 

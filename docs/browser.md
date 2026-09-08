@@ -9,7 +9,7 @@ The default Docker deployment includes Chromium for JavaScript rendering. It reu
 docker compose up -d --pull always --wait
 ```
 
-This pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser` when `RSS_IMAGE` is blank or unset. An explicit `RSS_IMAGE` must select a browser image for this setup. See [deployment](deployment.md) for credentials and public URLs. Use `sudo docker` if your account requires it.
+This pulls `ghcr.io/ldogg123/rss-workshop:v0.1.2-browser` when `RSS_IMAGE` is blank or unset. An explicit `RSS_IMAGE` must select a browser image for this setup. See [deployment](deployment.md) for credentials and public URLs. Use `sudo docker` if your account requires it.
 
 For a local source build, use the explicit [container build overrides](deployment.md#build-container-images-from-source). The [browser Dockerfile](../Dockerfile.browser) pins the Debian base digest and Chromium package version; maintainers should review those pins for security updates before rebuilding. `CHROMIUM_VERSION` is a build argument for upgrades.
 
@@ -19,7 +19,7 @@ For a smaller runtime without local Chromium, use the [static override](../compo
 docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait
 ```
 
-With `RSS_IMAGE` blank or unset, this pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-static`. If you set `RSS_IMAGE` explicitly, select a static image and keep this override on later runs. This keeps the same host data directory and supports static HTTP fetching and external FlareSolverr. It clears Chromium configuration and replaces the browser's sandbox and resource settings with the static runtime's settings. Saved Chromium recipes need the browser runtime to refresh successfully.
+With `RSS_IMAGE` blank or unset, this pulls `ghcr.io/ldogg123/rss-workshop:v0.1.2-static`. If you set `RSS_IMAGE` explicitly, select a static image and keep this override on later runs. This keeps the same host data directory and supports static HTTP fetching and external FlareSolverr. It clears Chromium configuration and replaces the browser's sandbox and resource settings with the static runtime's settings. Saved Chromium recipes need the browser runtime to refresh successfully.
 
 For native installations, set `CHROMIUM_PATH` to an installed Chromium executable and run the app as a non-root user on a host that supports its sandbox. Docker deployments do not require host Chromium or Node.
 
@@ -33,6 +33,8 @@ For native installations, set `CHROMIUM_PATH` to an installed Chromium executabl
 - **Extra render wait:** an optional 0–5000 ms settling delay after local Chromium navigation/readiness. Prefer a specific readiness selector for pages that load asynchronously. This delay does not apply to FlareSolverr.
 
 Changing fetch settings invalidates source validators and in-flight results. Browser-derived results do not retain static HTTP validators, so Auto cannot mistake a source 304 for proof that rendered content is unchanged.
+
+[Story filters](filtering.md) apply after extraction in every fetch mode. If valid stories exist but your rules exclude them all, Auto succeeds with zero included stories and does not render again.
 
 ## Bounds and recovery
 
@@ -68,3 +70,15 @@ CHROMIUM_PATH=/usr/bin/chromium RSS_VISUAL_SITES=1 go test -run '^TestVisualSite
 ```
 
 Set `RSS_SITE_FILTER=BBC` to limit the run to one site, or `RSS_SITE_ARTIFACTS=artifacts/browser` to save screenshots in an existing directory. These checks contact public sites and use disposable databases. The required checks use deterministic fixtures and do not depend on third-party sites.
+
+### Documentation screenshots
+
+The README images come from `TestBrowserUIDocumentation`, which uses fictional stories, example.com URLs, and a disposable database. With native Chromium installed, capture fresh images as a non-root user:
+
+```sh
+mkdir -p artifacts/browser
+CHROMIUM_PATH=/usr/bin/chromium RSS_UI_DOCS=1 RSS_SITE_ARTIFACTS="$PWD/artifacts/browser" \
+  go test -run '^TestBrowserUIDocumentation$' -v ./internal/web
+```
+
+The three `docs-*.png` files are written to the artifact directory. Inspect them before copying the dashboard, visual-selector, and filters images into `docs/screenshots/`. Keep operator data, credentials, and reader links out of documentation captures. The fixture also verifies that its 100-phrase example includes two of its three stories.

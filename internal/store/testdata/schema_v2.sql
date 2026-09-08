@@ -1,5 +1,6 @@
+-- Frozen version-2 fixture for migration compatibility tests.
 CREATE TABLE schema_version(version INTEGER NOT NULL);
-INSERT INTO schema_version VALUES(3);
+INSERT INTO schema_version VALUES(2);
 CREATE TABLE feeds (
  id TEXT PRIMARY KEY, rss_token TEXT NOT NULL UNIQUE, title TEXT NOT NULL, url TEXT NOT NULL, recipe TEXT NOT NULL,
  interval INTEGER NOT NULL, enabled INTEGER NOT NULL, next_run INTEGER NOT NULL,

@@ -62,6 +62,7 @@ func testPreviewDiagnostics(t *testing.T, tab context.Context) {
 	  if(args[0]!=='/api/preview'||response.status!==422)return response;
 	  const body=await response.json();
 	  body.warnings.push('<img id="diagnostic-injection" src=x onerror="document.body.dataset.diagnosticAttack=1">',{html:'ignored'});
+	  body.valid=2;body.filtered=2;
 	  return new Response(JSON.stringify(body),{status:response.status,headers:{'Content-Type':'application/json'}});
 	 };
 	})()`, nil), chromedp.Click("#preview-button"),
@@ -72,6 +73,7 @@ func testPreviewDiagnostics(t *testing.T, tab context.Context) {
 	  warnings.slice(0,2).every((d,i)=>d.textContent.startsWith('Match '+(i+1)+' skipped: missing or unsafe item URL'))&&
 	  warnings[2].textContent.startsWith('<img id="diagnostic-injection"')&&
 	  warnings.every(d=>d.childElementCount===0)&&!p.textContent.includes('empty title')&&
+	  !p.querySelector('.filter-empty-result')&&p.querySelector('.filter-preview-counts').textContent==='Processed before the error: 2 valid · 2 filtered out'&&
 	  !document.querySelector('#diagnostic-injection')&&!document.body.dataset.diagnosticAttack;
 	})()`, &correct))
 	if status.Load() != 422 || !correct {

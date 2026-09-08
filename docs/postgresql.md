@@ -4,7 +4,7 @@ SQLite remains the default. Set `DATABASE_URL` to an explicit `postgres://` or `
 
 Selecting another database does not migrate or merge data. A new database starts with an empty library; the existing SQLite file or PostgreSQL database is left separate. Recipe [export/import](recipe-portability.md) can move configurations as paused copies, but does not preserve articles or reader links.
 
-Run the commands below from the RSS Workshop checkout root. With `RSS_IMAGE` blank or unset, the default Compose installation pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`, which includes Chromium. Prepare the app configuration before adding PostgreSQL:
+Run the commands below from the RSS Workshop checkout root. With `RSS_IMAGE` blank or unset, the default Compose installation pulls `ghcr.io/ldogg123/rss-workshop:v0.1.2-browser`, which includes Chromium. Prepare the app configuration before adding PostgreSQL:
 
 ```sh
 if [ ! -e .env ]; then
@@ -78,7 +78,7 @@ Both variables are required by the override; there is no default password. `DATA
 docker compose -f compose.yaml -f compose.postgres.yaml up -d --pull always --wait
 ```
 
-For the lightweight runtime, add `-f compose.static.yaml` immediately after the base file. With `RSS_IMAGE` blank or unset, that override pulls `ghcr.io/ldogg123/rss-workshop:v0.1.1-static`. An explicit `RSS_IMAGE` must match the selected browser or static runtime. Use the same overrides for later operations. For a local source build, follow [build container images from source](deployment.md#build-container-images-from-source) and retain the PostgreSQL override.
+For the lightweight runtime, add `-f compose.static.yaml` immediately after the base file. With `RSS_IMAGE` blank or unset, that override pulls `ghcr.io/ldogg123/rss-workshop:v0.1.2-static`. An explicit `RSS_IMAGE` must match the selected browser or static runtime. Use the same overrides for later operations. For a local source build, follow [build container images from source](deployment.md#build-container-images-from-source) and retain the PostgreSQL override.
 
 The official image's `POSTGRES_USER=rss_workshop` creates the bootstrap administrator for this dedicated container. Use the non-superuser setup above on a shared server. Initialization variables apply only to an empty data directory: changing `POSTGRES_PASSWORD` in `.env` does not change an existing database password. Rotate it in PostgreSQL and update `DATABASE_URL` together.
 
@@ -100,7 +100,7 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
-The dump includes saved refresh diagnostics. Current source upgrades schema 1 to 2 transactionally on startup; retain a pre-upgrade dump to roll back to v0.1.0 or v0.1.1, which cannot read schema 2. See [upgrade compatibility](operations.md#upgrades).
+The dump includes saved refresh diagnostics. Current source upgrades schema 1 or 2 to schema 3 transactionally on startup; retain a pre-upgrade dump to roll back to v0.1.x, which cannot read schema 3. See [upgrade compatibility](operations.md#upgrades).
 
 For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 

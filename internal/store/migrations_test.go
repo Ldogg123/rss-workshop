@@ -12,18 +12,22 @@ import (
 	"rss-workshop/internal/testutil"
 )
 
-// The fixtures are the released version-1 table definitions, rather than the
-// current schema with migration-specific substitutions applied to it.
+// The fixtures contain released table definitions, not a relabeled current schema.
 func legacyStore(t *testing.T) (*Store, func() (*Store, error)) {
+	t.Helper()
+	return releasedStore(t, 1)
+}
+
+func releasedStore(t *testing.T, version int) (*Store, func() (*Store, error)) {
 	t.Helper()
 	var db *sql.DB
 	var open func() (*Store, error)
 	var err error
 	postgres := false
-	fixture := "schema_v1.sql"
+	fixture := "schema_v" + strconv.Itoa(version) + ".sql"
 	if raw := testutil.PostgresURL(t); raw != "" {
 		postgres = true
-		fixture = "postgres_schema_v1.sql"
+		fixture = "postgres_" + fixture
 		db, err = sql.Open("pgx", raw)
 		open = func() (*Store, error) { return OpenPostgres(t.Context(), raw, 10) }
 	} else {
@@ -78,7 +82,7 @@ func TestSchemaOneMigrationPreservesLibraryAndRunSummaries(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Close() })
 	var version int
-	if err = s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 2 {
+	if err = s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 3 {
 		t.Fatal("migration did not advance schema version", err)
 	}
 	afterFeed, err := s.Get(ctx, id)
@@ -143,8 +147,87 @@ CREATE TRIGGER prevent_version_update BEFORE UPDATE ON schema_version FOR EACH R
 	}
 }
 
+func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
+	ctx := t.Context()
+	legacy, open := releasedStore(t, 2)
+	f := savedRunFeed(t, legacy)
+	if err := legacy.CompleteWithDiagnostics(ctx, f, []model.Item{{Key: "saved", Title: "Saved story"}}, "validator", "modified", 200, nil, 0, testRunDiagnostics()); err != nil {
+		t.Fatal(err)
+	}
+	beforeFeed, err := legacy.Get(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeItems, err := legacy.Items(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := legacy.Runs(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.DB.Close()
+	s, err := open()
+	if err != nil {
+		t.Fatal("version-2 migration failed", err)
+	}
+	defer s.DB.Close()
+	var version int
+	if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 3 {
+		t.Fatal("schema 2 did not migrate to 3", err)
+	}
+	afterFeed, err := s.Get(ctx, f.ID)
+	if err != nil || !reflect.DeepEqual(afterFeed, beforeFeed) {
+		t.Fatal("migration changed feed state", err)
+	}
+	afterItems, err := s.Items(ctx, f.ID)
+	if err != nil || !reflect.DeepEqual(afterItems, beforeItems) {
+		t.Fatal("migration changed saved history", err)
+	}
+	afterRuns, err := s.Runs(ctx, f.ID)
+	if err != nil || !reflect.DeepEqual(afterRuns, beforeRuns) {
+		t.Fatal("migration changed diagnostics", err)
+	}
+}
+
+func TestSchemaThreeMigrationFailureRollsBackEntireUpgrade(t *testing.T) {
+	for _, original := range []int{1, 2} {
+		t.Run(strconv.Itoa(original), func(t *testing.T) {
+			legacy, open := releasedStore(t, original)
+			query := `CREATE TRIGGER prevent_version_three BEFORE UPDATE ON schema_version WHEN NEW.version=3 BEGIN SELECT RAISE(ABORT, 'fixture blocks final migration'); END`
+			if legacy.postgres {
+				query = `CREATE FUNCTION prevent_version_three() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.version=3 THEN RAISE EXCEPTION 'fixture blocks final migration'; END IF; RETURN NEW; END $$;
+CREATE TRIGGER prevent_version_three BEFORE UPDATE ON schema_version FOR EACH ROW EXECUTE FUNCTION prevent_version_three()`
+			}
+			if _, err := legacy.DB.ExecContext(t.Context(), query); err != nil {
+				t.Fatal(err)
+			}
+			if s, err := open(); s != nil || err == nil {
+				t.Fatal("blocked final migration was accepted")
+			}
+			var version int
+			if err := legacy.DB.QueryRowContext(t.Context(), "SELECT version FROM schema_version").Scan(&version); err != nil || version != original {
+				t.Fatal("failed final migration left a partial version upgrade", err)
+			}
+			rows, err := legacy.DB.QueryContext(t.Context(), "SELECT diagnostics FROM runs LIMIT 0")
+			if rows != nil {
+				rows.Close()
+			}
+			if (err == nil) != (original == 2) {
+				t.Fatal("failed final migration changed original diagnostic columns")
+			}
+			if !legacy.postgres {
+				var indexes int
+				if err := legacy.DB.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name='runs_feed_history'").Scan(&indexes); err != nil || indexes != original-1 {
+					t.Fatal("failed final migration changed original history index", err)
+				}
+			}
+		})
+	}
+}
+
 func TestUnsupportedSchemaDoesNotMigrateOrChangeJournal(t *testing.T) {
-	for _, version := range []int{0, 3, 99} {
+	for _, version := range []int{0, 4, 99} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			legacy, open := legacyStore(t)
 			if _, err := legacy.DB.ExecContext(t.Context(), legacy.bind("UPDATE schema_version SET version=?"), version); err != nil {

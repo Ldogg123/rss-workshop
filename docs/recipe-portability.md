@@ -4,7 +4,7 @@ Use **Export recipes** in the library header to download your feed setups. Each 
 
 Imports create new copies with fresh RSS/Atom links. They start paused; resume them individually when ready. Importing a file again creates another set of copies. Existing feeds are not matched, merged, or replaced. Validation is repeated when the import is submitted, and the database transaction adds the complete set or none of it. Neither reviewing nor importing a recipe fetches its source.
 
-Exports contain titles, source URLs, refresh intervals (seconds), and complete extraction/rendering settings. They exclude private RSS/Atom links, internal IDs, authentication settings, saved articles, and refresh history. A recipe export therefore helps move or reuse configurations; use the [database backup procedure](operations.md#backup-and-restore) to preserve items and existing reader URLs.
+Exports contain titles, source URLs, refresh intervals (seconds), complete extraction/rendering settings, and optional [story filters](filtering.md). They exclude private RSS/Atom links, internal IDs, authentication settings, saved articles, refresh history, and the one-time option to remove nonmatching saved stories. A recipe export therefore helps move or reuse configurations; use the [database backup procedure](operations.md#backup-and-restore) to preserve items and existing reader URLs.
 
 Files support at most 1,000 recipes and 2 MiB. Each feed configuration must also fit the editor's 64 KiB save limit. Larger libraries can use individual exports. Empty libraries have no export button. Unknown formats, unsupported versions, unknown fields, and invalid recipes are rejected with an explanation. Chromium recipes can be imported into a static deployment as paused configurations; rendering still requires the browser deployment when they are resumed.
 
@@ -32,6 +32,8 @@ Files support at most 1,000 recipes and 2 MiB. Each feed configuration must also
 ```
 
 Optional recipe fields use the same defaults as the editor. Future incompatible changes require a new version; this server explicitly accepts version 1.
+
+Filters are optional recipe settings in this same format. Older RSS Workshop versions reject files containing `recipe.filters`; filter-free version-1 files remain compatible. Empty or invalid rule groups are rejected when reviewing and submitting an import. Imported filtered feeds still start paused and do not change existing history.
 
 The [example recipes](examples/all-visual-recipes.json) can be selected directly in the import dialog. Individual files in [examples](examples/) use the same versioned format. Site layouts can change, so preview each recipe before resuming it.
 

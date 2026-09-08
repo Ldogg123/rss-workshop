@@ -207,8 +207,9 @@ func (s *Scheduler) extract(ctx context.Context, f model.Feed, preview bool) (r 
 		if e == nil && r.Status != 304 {
 			entry.Stage = "extract"
 			p, e = extract.Run(r.Body, r.URL, f.Recipe)
-			matches, items := p.Matches, len(p.Items)
-			entry.Matches, entry.Items = &matches, &items
+			matches, valid, items := p.Matches, p.Valid, len(p.Items)
+			entry.Matches, entry.Valid, entry.Items = &matches, &valid, &items
+			entry.Filtered = p.Filtered
 			entry.Warnings = p.Warnings
 		}
 		if e != nil {

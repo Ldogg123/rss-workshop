@@ -209,10 +209,12 @@ func validate(f model.Feed) error {
 	}
 	// Archives have a larger total limit, but each configuration must still fit
 	// the editor's save request so an imported paused feed can be resumed.
-	// Include the longer enabled:false spelling, regardless of current state.
+	// Include the longer false spelling for enabled and the optional one-time
+	// history action, so a boundary-sized imported recipe remains editable.
 	payload := struct {
 		portableFeed
-		Enabled bool `json:"enabled"`
+		Enabled               bool `json:"enabled"`
+		ApplyFiltersToHistory bool `json:"apply_filters_to_history"`
 	}{portableFeed: portableFeed{Title: f.Title, URL: f.URL, Interval: f.Interval, Recipe: f.Recipe}}
 	data, err := json.Marshal(payload)
 	if err != nil || len(data) > maxRequestBytes {
@@ -221,20 +223,26 @@ func validate(f model.Feed) error {
 	return extract.Validate(f.Recipe)
 }
 func (a *App) save(w http.ResponseWriter, r *http.Request) {
-	var f model.Feed
-	if e := decode(w, r, &f); e != nil {
+	var in struct {
+		model.Feed
+		ApplyFiltersToHistory bool `json:"apply_filters_to_history"`
+	}
+	if e := decode(w, r, &in); e != nil {
 		failure(w, 400, e)
 		return
 	}
+	f := in.Feed
 	f.ID = r.PathValue("id")
 	if e := validate(f); e != nil {
 		failure(w, 400, e)
 		return
 	}
-	id, e := a.Store.Save(r.Context(), f)
+	id, e := a.Store.SaveWithOptions(r.Context(), f, store.SaveOptions{ApplyFiltersToHistory: in.ApplyFiltersToHistory})
 	if e != nil {
 		if errors.Is(e, sql.ErrNoRows) {
 			http.NotFound(w, r)
+		} else if in.ApplyFiltersToHistory && errors.Is(e, context.DeadlineExceeded) {
+			failure(w, 503, errors.New("applying filters to saved history timed out; try narrowing the rules or leave the history option unchecked"))
 		} else {
 			http.Error(w, "could not save feed", 500)
 		}
@@ -281,7 +289,7 @@ func (a *App) preview(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(e, scheduler.ErrBusy) {
 			code = 503
 		}
-		reply(w, code, map[string]any{"error": diagnostics.SafeText(e.Error(), 1000), "matches": p.Matches, "warnings": p.Warnings, "diagnostics": p.Diagnostics})
+		reply(w, code, map[string]any{"error": diagnostics.SafeText(e.Error(), 1000), "matches": p.Matches, "valid": p.Valid, "filtered": p.Filtered, "filter_examples": p.FilterExamples, "warnings": p.Warnings, "diagnostics": p.Diagnostics})
 		return
 	}
 	reply(w, 200, p)

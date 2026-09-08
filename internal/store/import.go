@@ -5,21 +5,25 @@ import (
 	"encoding/json"
 	"time"
 
+	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
 )
 
 // Import creates an entire set of new, paused feeds in one transaction. Only
 // recipe configuration is copied; identities, links and run state are fresh.
 func (s *Store) Import(ctx context.Context, feeds []model.Feed) (_ []string, err error) {
-	defer s.cleanError(&err)
 	recipes := make([][]byte, len(feeds))
 	for i, f := range feeds {
+		if _, err := filter.Compile(f.Recipe.Filters); err != nil {
+			return nil, err
+		}
 		var err error
 		recipes[i], err = json.Marshal(f.Recipe)
 		if err != nil {
 			return nil, err
 		}
 	}
+	defer s.cleanError(&err)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
