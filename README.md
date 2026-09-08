@@ -4,6 +4,20 @@ RSS Workshop is a self-hosted RSS and Atom feed generator for websites that donâ
 
 The default Docker installation includes Chromium for JavaScript pages, SQLite, a single-admin interface, and dark mode. Data stays in local folders on your host.
 
+## Why RSS Workshop?
+
+RSS Workshop is designed for people looking for a self-hosted alternative to hosted RSS generators and tools such as Feedless, RSS.app, FetchRSS, and similar website-to-RSS services.
+
+- Fully self-hosted
+- MIT licensed
+- Visual selector editor
+- CSS and XPath support
+- JavaScript rendering with Chromium
+- RSS and Atom output
+- Story include/exclude filters
+- SQLite or PostgreSQL
+- Docker or standalone Linux binary
+
 ![RSS Workshop dashboard in dark mode](docs/screenshots/dashboard.png)
 
 Story filtering is included in [v0.2.0](https://github.com/Ldogg123/rss-workshop/releases/tag/v0.2.0), with nested include/exclude rules and bulk lists of up to 500 keywords. See [how filtering works](docs/filtering.md).
