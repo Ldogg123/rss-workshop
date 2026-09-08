@@ -6,6 +6,35 @@ import (
 	"time"
 )
 
+func TestAdminPasswordConfig(t *testing.T) {
+	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL"} {
+		t.Setenv(key, "")
+	}
+	for _, tc := range []struct {
+		name, password string
+	}{
+		{"short", "x"},
+		{"unicode", "雪"},
+		{"long", strings.Repeat("long-passphrase-", 20)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ADMIN_PASSWORD", tc.password)
+			c, err := Load()
+			if err != nil || c.Password != tc.password {
+				t.Fatal("configured password was rejected or altered")
+			}
+		})
+	}
+	t.Setenv("ADMIN_PASSWORD", "")
+	if _, err := Load(); err == nil || err.Error() != "set ADMIN_PASSWORD or ADMIN_PASSWORD_HASH" {
+		t.Fatal("missing credentials must require configuration without imposing a length policy")
+	}
+	t.Setenv("ADMIN_PASSWORD_HASH", "configured-hash-validated-by-auth")
+	if _, err := Load(); err != nil {
+		t.Fatal("hash-only configuration rejected")
+	}
+}
+
 func TestFlareSolverrConfig(t *testing.T) {
 	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL"} {
 		t.Setenv(key, "")

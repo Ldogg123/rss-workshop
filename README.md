@@ -13,7 +13,7 @@ git clone https://github.com/Ldogg123/rss-workshop.git
 cd rss-workshop
 cp .env.example .env
 chmod 600 .env
-# Set ADMIN_PASSWORD in .env to a unique password of 12–72 bytes.
+# Set ADMIN_PASSWORD in .env to your chosen admin password.
 sudo install -d -m 700 -o 65532 -g 65532 ./data
 docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
 ```

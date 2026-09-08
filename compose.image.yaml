@@ -1,6 +1,6 @@
 # Apply last, after compose.yaml and any static/PostgreSQL/Gluetun overrides.
 # Example image tag; see docs/releases.md for available versions:
-# RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser docker compose -f compose.yaml -f compose.image.yaml up -d
+# RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser docker compose -f compose.yaml -f compose.image.yaml up -d
 services:
   rss-workshop:
     build: !reset null

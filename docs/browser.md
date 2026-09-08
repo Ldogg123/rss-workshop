@@ -6,7 +6,7 @@ The default Docker deployment includes Chromium for JavaScript rendering. It reu
 
 ```sh
 # Configure .env and prepare the host data directory first; see deployment.
-# RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser
+# RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser
 docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
@@ -14,7 +14,7 @@ This pulls the published browser image selected by `RSS_IMAGE` in `.env`. See [d
 
 For a local source build, omit `compose.image.yaml` and run `docker compose up -d --build --wait`. The [browser Dockerfile](../Dockerfile.browser) pins the Debian base digest and Chromium package version; maintainers should review those pins for security updates before rebuilding. `CHROMIUM_VERSION` is a build argument for upgrades. Existing commands that include `compose.browser.yaml` remain compatible; the extra override is no longer required.
 
-For a smaller runtime without local Chromium, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-static` in `.env` and use the [static override](../compose.static.yaml) before the image override:
+For a smaller runtime without local Chromium, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` in `.env` and use the [static override](../compose.static.yaml) before the image override:
 
 ```sh
 docker compose -f compose.yaml -f compose.static.yaml -f compose.image.yaml up -d --pull always --wait

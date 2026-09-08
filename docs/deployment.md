@@ -16,7 +16,7 @@ sudo install -d -m 700 -o 65532 -g 65532 ./data
 docker compose -f compose.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
-Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. The example `.env` sets `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser`; `compose.image.yaml` removes the local build and selects that published image. Keep the same Compose files and order for subsequent commands.
+Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. The example `.env` sets `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`; `compose.image.yaml` removes the local build and selects that published image. Keep the same Compose files and order for subsequent commands.
 
 `RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the `install` command. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
 
@@ -28,7 +28,7 @@ Keep the default Chromium sandbox and resource settings. See [Chromium rendering
 
 ## Lightweight static runtime
 
-If you only need static pages or an external FlareSolverr service, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-static` in `.env` and select the static override. This image contains the Go application and CA certificates, with no shell or local browser:
+If you only need static pages or an external FlareSolverr service, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` in `.env` and select the static override. This image contains the Go application and CA certificates, with no shell or local browser:
 
 ```sh
 docker compose -f compose.yaml -f compose.static.yaml -f compose.image.yaml up -d --pull always --wait
@@ -51,7 +51,7 @@ Changing the selected database does not copy recipes, articles, or reader tokens
 Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available prebuilt images. Set `RSS_IMAGE` in `.env` to a published tag or immutable digest under `ghcr.io/ldogg123/rss-workshop`. Tags include a runtime suffix; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser
 ```
 
 Apply `compose.image.yaml` last to use that image without building locally:
@@ -89,8 +89,8 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | required unless hash supplied | Unique admin password, 12–72 bytes |
-| `ADMIN_PASSWORD_HASH` | empty | bcrypt hash; takes precedence over the password |
+| `ADMIN_PASSWORD` | required unless hash supplied | Your chosen admin password; no enforced length policy |
+| `ADMIN_PASSWORD_HASH` | empty | Standard bcrypt hash; takes precedence and retains bcrypt's input limit. Use `ADMIN_PASSWORD` for long passphrases. |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | Stable public origin without a path |
 | `LISTEN_ADDR` | `:8080` | Native bind address |
 | `DATA_DIR` | `./data`, `/data` in Docker | Local SQLite directory |
@@ -107,7 +107,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |
 | `MAX_ITEMS` | `500` | 1–10,000 retained items per feed |
 | `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
-| `RSS_IMAGE` | `v0.1.0-browser` image in example `.env` | Full runtime image tag or digest; required by `compose.image.yaml` |
+| `RSS_IMAGE` | `v0.1.1-browser` image in example `.env` | Full runtime image tag or digest; required by `compose.image.yaml` |
 | `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
 | `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
 
@@ -119,14 +119,14 @@ Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chro
 
 Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For example, download and verify `v0.1.0` for Linux x86-64 in an empty directory:
+For example, download and verify `v0.1.1` for Linux x86-64 in an empty directory:
 
 ```sh
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.0/rss-workshop-v0.1.0-linux-amd64.tar.gz
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.0/rss-workshop-v0.1.0-linux-amd64.tar.gz.sha256
-sha256sum -c rss-workshop-v0.1.0-linux-amd64.tar.gz.sha256
-tar -xzf rss-workshop-v0.1.0-linux-amd64.tar.gz
-cd rss-workshop-v0.1.0-linux-amd64
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.1/rss-workshop-v0.1.1-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.1/rss-workshop-v0.1.1-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v0.1.1-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v0.1.1-linux-amd64.tar.gz
+cd rss-workshop-v0.1.1-linux-amd64
 ./rss-workshop -version
 ```
 
@@ -134,7 +134,7 @@ Use `arm64` in both filenames for ARM. Only extract after the checksum succeeds.
 
 ### Configure and run
 
-Run as your normal user or a dedicated non-root service account. Native execution reads environment variables and **does not load `.env` automatically**. For a local SQLite instance in Bash, choose a unique admin password of 12–72 bytes:
+Run as your normal user or a dedicated non-root service account. Native execution reads environment variables and **does not load `.env` automatically**. For a local SQLite instance in Bash, choose an admin password:
 
 ```bash
 read -r -s -p 'Admin password: ' ADMIN_PASSWORD

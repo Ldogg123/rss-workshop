@@ -36,8 +36,8 @@ func Load() (Config, error) {
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return c, fmt.Errorf("PUBLIC_BASE_URL must be an http(s) origin without a path")
 	}
-	if c.PasswordHash == "" && len(c.Password) < 12 {
-		return c, fmt.Errorf("set ADMIN_PASSWORD (at least 12 characters) or ADMIN_PASSWORD_HASH")
+	if c.PasswordHash == "" && c.Password == "" {
+		return c, fmt.Errorf("set ADMIN_PASSWORD or ADMIN_PASSWORD_HASH")
 	}
 	for _, v := range []struct {
 		name          string

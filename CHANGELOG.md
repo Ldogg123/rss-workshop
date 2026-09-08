@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.1 — 2026-09-08
+
+- Remove the admin password length policy. Short passwords and long or Unicode passphrases work through `ADMIN_PASSWORD`; existing externally generated bcrypt hashes remain supported.
+- Default the documented Docker installation to published images, and provide native Linux executable downloads with checksums and setup instructions.
+
 ## v0.1.0 — 2026-09-07
 
 - Self-hosted RSS and Atom feeds with a single-admin web interface, scheduled refreshes, SQLite persistence, stable item identities/dates, and revocable reader links.

@@ -103,7 +103,7 @@ Named-volume restore remains available for existing deployments and accepts back
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image ghcr.io/ldogg123/rss-workshop:v0.1.0-browser
+  --image ghcr.io/ldogg123/rss-workshop:v0.1.1-browser
 ```
 
 This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. The backup format is unchanged, so earlier version-1 backups remain usable.

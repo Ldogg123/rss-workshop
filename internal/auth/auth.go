@@ -1,13 +1,18 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha512"
 	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"net/http"
-	"rss-workshop/internal/store"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
+	"rss-workshop/internal/store"
 )
 
 type Session struct {
@@ -17,6 +22,7 @@ type Session struct {
 }
 type Auth struct {
 	hash     []byte
+	pepper   []byte // nil for an externally supplied standard bcrypt hash
 	secure   bool
 	mu       sync.Mutex
 	sessions map[string]Session
@@ -26,21 +32,40 @@ type Auth struct {
 }
 
 func New(password, hash string, secure bool) (*Auth, error) {
-	var h []byte
+	a := &Auth{secure: secure, sessions: map[string]Session{}, hashing: make(chan struct{}, 1)}
 	var e error
 	if hash != "" {
-		h = []byte(hash)
-		if _, e = bcrypt.Cost(h); e != nil {
+		a.hash = []byte(hash)
+		if _, e = bcrypt.Cost(a.hash); e != nil {
 			return nil, fmt.Errorf("invalid ADMIN_PASSWORD_HASH")
 		}
 	} else {
-		h, e = bcrypt.GenerateFromPassword([]byte(password), 12)
+		// OWASP's bcrypt prehash construction avoids bcrypt's 72-byte input
+		// limit while checking the entire password. Hash and pepper live only
+		// in this Auth instance and are recreated from configuration at startup.
+		// https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pre-hashing-passwords-with-bcrypt
+		a.pepper = make([]byte, 32)
+		if _, e = rand.Read(a.pepper); e != nil {
+			return nil, fmt.Errorf("could not initialize password hashing")
+		}
+		a.hash, e = bcrypt.GenerateFromPassword(a.passwordInput(password), 12)
 		if e != nil {
 			return nil, e
 		}
 	}
-	return &Auth{hash: h, secure: secure, sessions: map[string]Session{}, hashing: make(chan struct{}, 1)}, nil
+	return a, nil
 }
+
+func (a *Auth) passwordInput(password string) []byte {
+	if a.pepper == nil {
+		return []byte(password)
+	}
+	mac := hmac.New(sha512.New384, a.pepper)
+	_, _ = mac.Write([]byte(password))
+	// SHA-384's 48 bytes encode to 64 printable bytes, below bcrypt's limit.
+	return []byte(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+}
+
 func (a *Auth) Login(password string) (Session, error) {
 	a.mu.Lock()
 	now := time.Now()
@@ -60,7 +85,12 @@ func (a *Auth) Login(password string) (Session, error) {
 	default:
 		return Session{}, fmt.Errorf("login busy; try again shortly")
 	}
-	if bcrypt.CompareHashAndPassword(a.hash, []byte(password)) != nil {
+	// Standard externally supplied bcrypt hashes cannot authenticate suffixes
+	// beyond 72 bytes. Reject such candidates instead of accepting a prefix.
+	if a.pepper == nil && len(password) > 72 {
+		return Session{}, fmt.Errorf("incorrect password")
+	}
+	if bcrypt.CompareHashAndPassword(a.hash, a.passwordInput(password)) != nil {
 		return Session{}, fmt.Errorf("incorrect password")
 	}
 	s := Session{Token: store.ID(), CSRF: store.ID(), Expires: now.Add(12 * time.Hour)}

@@ -11,7 +11,7 @@ if [ ! -e .env ]; then
   cp .env.example .env
 fi
 chmod 600 .env
-# Edit .env: set ADMIN_PASSWORD to a unique password of 12–72 bytes.
+# Edit .env: set ADMIN_PASSWORD to your chosen admin password.
 sudo install -d -m 700 -o 65532 -g 65532 ./data
 ```
 
@@ -76,7 +76,7 @@ Both variables are required by the override; there is no default password. `DATA
 docker compose -f compose.yaml -f compose.postgres.yaml -f compose.image.yaml up -d --pull always --wait
 ```
 
-This includes Chromium with the default `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-browser`. For the lightweight runtime, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-static` in `.env` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`; see [deployment](deployment.md).
+This includes Chromium with the default `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`. For the lightweight runtime, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` in `.env` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`; see [deployment](deployment.md).
 
 The official image's `POSTGRES_USER=rss_workshop` creates the bootstrap administrator for this dedicated container. Use the non-superuser setup above on a shared server. Initialization variables apply only to an empty data directory: changing `POSTGRES_PASSWORD` in `.env` does not change an existing database password. Rotate it in PostgreSQL and update `DATABASE_URL` together.
 

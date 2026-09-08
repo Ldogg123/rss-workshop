@@ -42,7 +42,7 @@ docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml up 
 docker compose -f compose.yaml -f compose.gluetun.yaml -f compose.image.yaml exec -T rss-workshop /rss-workshop -healthcheck
 ```
 
-This pulls the published browser image selected by `RSS_IMAGE` in `.env`, defaulting to `ghcr.io/ldogg123/rss-workshop:v0.1.0-browser`. For static-only operation, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.0-static` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`.
+This pulls the published browser image selected by `RSS_IMAGE` in `.env`, defaulting to `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`. For static-only operation, set `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.1-static` and add `-f compose.static.yaml` immediately after the base file. Keep `compose.image.yaml` last and use the same overrides for later operations. For a local source build, omit the image override and replace `--pull always` with `--build`.
 
 Do not add `ports`, `networks`, or custom `dns` settings to RSS Workshop when it shares another container's network; configure networking on Gluetun instead. Docker documents the [restrictions of container network mode](https://docs.docker.com/engine/network/#container-networks).
 
