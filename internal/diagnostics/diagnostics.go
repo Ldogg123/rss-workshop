@@ -94,7 +94,9 @@ func Sanitize(value *model.RunDiagnostics) *model.RunDiagnostics {
 		attempt.DurationMS = min(max(attempt.DurationMS, 0), 3600000)
 		attempt.Bytes = min(max(attempt.Bytes, 0), 8<<20)
 		attempt.Matches = count(attempt.Matches, 1000000)
+		attempt.Valid = count(attempt.Valid, 1000)
 		attempt.Items = count(attempt.Items, 1000)
+		attempt.Filtered = min(max(attempt.Filtered, 0), 1000)
 		attempt.Error = SafeText(attempt.Error, 1000)
 		warnings := make([]string, 0, min(len(attempt.Warnings), MaxWarnings))
 		for _, warning := range attempt.Warnings[:min(len(attempt.Warnings), MaxWarnings)] {

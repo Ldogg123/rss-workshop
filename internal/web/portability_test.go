@@ -362,11 +362,12 @@ func TestImportedRecipeFitsEditRequestLimit(t *testing.T) {
 		}
 	}
 
-	// Match the configuration payload used by the UI's Resume action. Keep
-	// false while finding the boundary: true needs one fewer JSON byte.
+	// Match the longest edit payload, including the optional history action.
+	// Keep both flags false: each true spelling needs one fewer JSON byte.
 	edit := struct {
 		portableFeed
-		Enabled bool `json:"enabled"`
+		Enabled               bool `json:"enabled"`
+		ApplyFiltersToHistory bool `json:"apply_filters_to_history"`
 	}{portableFeed: portableExamples()[0]}
 	edit.Recipe.DateLayout = ""
 	data, err := json.Marshal(edit)
@@ -390,6 +391,7 @@ func TestImportedRecipeFitsEditRequestLimit(t *testing.T) {
 		t.Fatalf("boundary import response = %s, %v", w.Body.String(), err)
 	}
 	edit.Enabled = true
+	edit.ApplyFiltersToHistory = true
 	data, err = json.Marshal(edit)
 	if err != nil {
 		t.Fatal(err)

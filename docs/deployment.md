@@ -18,7 +18,7 @@ sudo chmod 700 ./data
 docker compose up -d --pull always --wait
 ```
 
-Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. It downloads `ghcr.io/ldogg123/rss-workshop:v0.1.2-browser`; no local build is required. Leave `RSS_IMAGE` blank to use that default, or [select a tag or digest](#registry-images). Keep the same Compose files and order for subsequent commands.
+Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. It downloads `ghcr.io/ldogg123/rss-workshop:v0.2.0-browser`; no local build is required. Leave `RSS_IMAGE` blank to use that default, or [select a tag or digest](#registry-images). Keep the same Compose files and order for subsequent commands.
 
 `RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the directory preparation commands. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
 
@@ -32,7 +32,7 @@ Keep the default Chromium sandbox and resource settings. See [Chromium rendering
 
 ## Lightweight static runtime
 
-If you only need static pages or an external FlareSolverr service, select the static override. With `RSS_IMAGE` blank, it downloads `ghcr.io/ldogg123/rss-workshop:v0.1.2-static` automatically. This image contains the Go application and CA certificates, with no shell or local browser:
+If you only need static pages or an external FlareSolverr service, select the static override. With `RSS_IMAGE` blank, it downloads `ghcr.io/ldogg123/rss-workshop:v0.2.0-static` automatically. This image contains the Go application and CA certificates, with no shell or local browser:
 
 ```sh
 docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait
@@ -55,7 +55,7 @@ Changing the selected database does not copy recipes, articles, or reader tokens
 The default Compose files use versioned registry images. To pin another published tag or immutable digest, set the optional `RSS_IMAGE` in `.env`. Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for available versions. Tags include a runtime suffix; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.1.2-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.2.0-browser
 ```
 
 Recreate the app with the same runtime and other overrides used by your installation:
@@ -138,14 +138,14 @@ Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chro
 
 Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For example, download and verify `v0.1.2` for Linux x86-64 in an empty directory:
+For example, download and verify `v0.2.0` for Linux x86-64 in an empty directory:
 
 ```sh
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.2/rss-workshop-v0.1.2-linux-amd64.tar.gz
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.1.2/rss-workshop-v0.1.2-linux-amd64.tar.gz.sha256
-sha256sum -c rss-workshop-v0.1.2-linux-amd64.tar.gz.sha256
-tar -xzf rss-workshop-v0.1.2-linux-amd64.tar.gz
-cd rss-workshop-v0.1.2-linux-amd64
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.2.0/rss-workshop-v0.2.0-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.2.0/rss-workshop-v0.2.0-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v0.2.0-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v0.2.0-linux-amd64.tar.gz
+cd rss-workshop-v0.2.0-linux-amd64
 ./rss-workshop -version
 ```
 

@@ -7,18 +7,19 @@ type Field struct {
 	Attr     string `json:"attr"`
 }
 type Recipe struct {
-	Mode         string `json:"mode"`
-	WaitSelector string `json:"wait_selector"`
-	SettleMS     int    `json:"settle_ms"`
-	Type         string `json:"type"`
-	Items        string `json:"items"`
-	Title        Field  `json:"title"`
-	Link         Field  `json:"link"`
-	Date         Field  `json:"date"`
-	Content      Field  `json:"content"`
-	Image        Field  `json:"image"`
-	DateLayout   string `json:"date_layout"`
-	Timezone     string `json:"timezone"`
+	Mode         string     `json:"mode"`
+	WaitSelector string     `json:"wait_selector"`
+	SettleMS     int        `json:"settle_ms"`
+	Type         string     `json:"type"`
+	Items        string     `json:"items"`
+	Title        Field      `json:"title"`
+	Link         Field      `json:"link"`
+	Date         Field      `json:"date"`
+	Content      Field      `json:"content"`
+	Image        Field      `json:"image"`
+	DateLayout   string     `json:"date_layout"`
+	Timezone     string     `json:"timezone"`
+	Filters      *FilterSet `json:"filters,omitempty"`
 }
 type Feed struct {
 	ID           string    `json:"id"`
@@ -56,8 +57,11 @@ type Item struct {
 	LastSeen           time.Time `json:"last_seen"`
 }
 type Preview struct {
-	Matches     int             `json:"matches"`
-	Items       []Item          `json:"items"`
-	Warnings    []string        `json:"warnings"`
-	Diagnostics *RunDiagnostics `json:"diagnostics,omitempty"`
+	Matches        int             `json:"matches"`
+	Valid          int             `json:"valid"`
+	Filtered       int             `json:"filtered"`
+	Items          []Item          `json:"items"`
+	Warnings       []string        `json:"warnings"`
+	FilterExamples []FilterExample `json:"filter_examples,omitempty"`
+	Diagnostics    *RunDiagnostics `json:"diagnostics,omitempty"`
 }

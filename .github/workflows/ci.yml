@@ -2,7 +2,18 @@ name: CI
 
 on:
   push:
+    # Feature branches are covered by pull_request; release publication calls
+    # this workflow explicitly, so pushing a tag needs no extra CI run.
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/*.md'
+      - 'docs/screenshots/**'
   pull_request:
+    paths-ignore:
+      - '*.md'
+      - 'docs/*.md'
+      - 'docs/screenshots/**'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -14,6 +25,12 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  # Supersede automatic runs for the same PR/branch. Manual and release calls
+  # get their own run ID and cannot cancel each other or their calling workflow.
+  group: rss-workshop-ci-${{ github.workflow }}-${{ github.event_name }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 jobs:
   go:

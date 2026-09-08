@@ -13,7 +13,7 @@
   const attempts=[];
   for(const attempt of value.attempts.slice(0,2)){
    if(!attempt||!['static','browser','flaresolverr'].includes(attempt.mode)||!['success','failed','not_modified'].includes(attempt.outcome)||!['fetch','extract'].includes(attempt.stage))continue;
-   attempts.push({mode:attempt.mode,outcome:attempt.outcome,stage:attempt.stage,status:number(attempt.status),duration_ms:number(attempt.duration_ms),bytes:number(attempt.bytes),matches:number(attempt.matches),items:number(attempt.items),error:text(attempt.error),warnings:Array.isArray(attempt.warnings)?attempt.warnings.filter(w=>typeof w==='string').slice(0,20).map(w=>text(w,512)):[],warnings_omitted:number(attempt.warnings_omitted)||0});
+   attempts.push({mode:attempt.mode,outcome:attempt.outcome,stage:attempt.stage,status:number(attempt.status),duration_ms:number(attempt.duration_ms),bytes:number(attempt.bytes),matches:number(attempt.matches),valid:number(attempt.valid),filtered:number(attempt.filtered)||0,items:number(attempt.items),error:text(attempt.error),warnings:Array.isArray(attempt.warnings)?attempt.warnings.filter(w=>typeof w==='string').slice(0,20).map(w=>text(w,512)):[],warnings_omitted:number(attempt.warnings_omitted)||0});
   }
   return {version:1,recipe_version:number(value.recipe_version),requested_mode:value.requested_mode,selector_type:value.selector_type,started:text(value.started,64),duration_ms:number(value.duration_ms),attempts};
  }
@@ -40,7 +40,8 @@
    const details=[['Source response',attempt.status>0?`HTTP ${attempt.status}`:'No HTTP status recorded'],['Time',elapsed(attempt.duration_ms)]];
    if(attempt.bytes!==null)details.push(['Received',bytes(attempt.bytes)]);
    if(attempt.matches!==null)details.push(['Matched elements',attempt.matches]);
-   if(attempt.items!==null)details.push(['Valid items',attempt.items]);
+   if(attempt.valid!==null){details.push(['Valid before filters',attempt.valid]);if(attempt.items!==null)details.push(['Included items',attempt.items]);details.push(['Filtered out',attempt.filtered]);}
+   else if(attempt.items!==null)details.push(['Valid items',attempt.items]);
    item.append(metrics(details));
    if(attempt.outcome==='not_modified')item.append(node('p','The source reported no changes. Previously saved items were kept.','hint'));
    if(attempt.error)item.append(node('p',attempt.error,'run-error'));
@@ -64,7 +65,7 @@
   summary.append(node('span',failed?'Failed':unchanged?'Unchanged':'Completed','badge'+(failed?' error':'')),node('span',date(run.ended),'run-time'));
   if(trace)summary.append(node('span',modes[trace.requested_mode],'meta'));
   if(unchanged)summary.append(node('span','Saved items kept','meta'));
-  else if(number(run.count)!==null)summary.append(node('span',`${run.count} valid item${run.count===1?'':'s'}`,'meta'));
+  else if(number(run.count)!==null)summary.append(node('span',`${run.count} ${number(last?.valid)!==null?'included':'valid'} item${run.count===1?'':'s'}`,'meta'));
   item.append(summary);
   if(error)item.append(node('p',error,'run-error'));
   if(trace)item.append(renderTrace(trace));
