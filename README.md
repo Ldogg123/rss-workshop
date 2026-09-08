@@ -1,6 +1,6 @@
 # RSS Workshop
 
-Turn website pages into persistent RSS and Atom feeds. Choose repeating elements visually, refine CSS or XPath selectors with live highlights, filter stories by your interests, and let scheduled refreshes collect new matches.
+RSS Workshop is a self-hosted RSS and Atom feed generator for websites that don’t provide feeds. Build feeds visually or with CSS/XPath selectors, render JavaScript sites with Chromium, filter stories, and publish persistent RSS/Atom URLs.
 
 The default Docker installation includes Chromium for JavaScript pages, SQLite, a single-admin interface, and dark mode. Data stays in local folders on your host.
 
