@@ -23,3 +23,5 @@ SQLite is the default when `DATABASE_URL` is blank. For PostgreSQL storage chang
 Keep both the default browser runtime and the lightweight static runtime usable. Static fetching must work without local Chromium or FlareSolverr. Fetch modes should share extraction, sanitization, scheduling, and saved-feed behavior. New source fetching must retain bounded concurrency, cancellation, response limits, and clear network-policy behavior. Avoid changing stored publication dates or GUIDs on refresh.
 
 Publishing is a separate, manual step. Follow [release preparation](docs/releases.md) after the proposed changes pass review.
+
+CI runs once per pull-request update and again when code reaches `main`; feature-branch and tag pushes do not create duplicate runs. Documentation-only PRs skip CI for root Markdown files, guides directly under `docs/`, and screenshots. Check their links and commands locally. License notices and recipe examples still receive checks. Newer automatic runs cancel older runs for the same PR or branch. See [CI behavior](docs/releases.md#validation) for details and manual checks.

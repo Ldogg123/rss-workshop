@@ -45,7 +45,9 @@ The public source can then be built using the [local container build instruction
 
 ## Validation
 
-`.github/workflows/ci.yml` runs on pushes, pull requests, manual dispatches, and as a release prerequisite. It has read-only repository permissions and publishes no images. Separate native `ubuntu-24.04` and `ubuntu-24.04-arm` jobs run:
+`.github/workflows/ci.yml` runs for pull requests and pushes to `main`. Feature-branch pushes and tag pushes do not start a second run. Changes limited to root Markdown files, Markdown guides directly under `docs/`, and `docs/screenshots/` skip automatic CI. Code, workflows, deployment files, recipe examples, and shipped license notices still trigger it. GitHub evaluates the full pull-request diff, so a documentation edit in a PR that also changes code can still trigger CI. See GitHub's [path-filter rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore).
+
+A newer automatic run cancels an unfinished run for the same PR or `main` branch. Manual dispatches and the container release prerequisite always run the full suite and are isolated from automatic cancellation. CI has read-only repository permissions and publishes no images. Separate native `ubuntu-24.04` and `ubuntu-24.04-arm` jobs run:
 
 1. Module verification, reachable Go vulnerability checking, formatting, the full race suite, `go vet`, backup and release-source verification tests, a CGo-free build, and the native fixture workflow.
 2. Static and browser runtime builds, plus the dedicated browser test target.
