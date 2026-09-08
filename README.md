@@ -14,7 +14,9 @@ cd rss-workshop
 cp .env.example .env
 chmod 600 .env
 # Set ADMIN_PASSWORD in .env to your chosen admin password.
-sudo install -d -m 700 -o 65532 -g 65532 ./data
+sudo mkdir -p -m 700 ./data
+sudo chown 65532:65532 ./data
+sudo chmod 700 ./data
 docker compose up -d --pull always --wait
 ```
 

@@ -12,13 +12,17 @@ cd rss-workshop
 cp .env.example .env
 chmod 600 .env
 # Edit .env before starting.
-sudo install -d -m 700 -o 65532 -g 65532 ./data
+sudo mkdir -p -m 700 ./data
+sudo chown 65532:65532 ./data
+sudo chmod 700 ./data
 docker compose up -d --pull always --wait
 ```
 
 Use `sudo docker` if your account requires it. Compose defaults to project and service name `rss-workshop` and container `rss-workshop-rss-workshop-1`. It downloads `ghcr.io/ldogg123/rss-workshop:v0.1.1-browser`; no local build is required. Leave `RSS_IMAGE` blank to use that default, or [select a tag or digest](#registry-images). Keep the same Compose files and order for subsequent commands.
 
-`RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the `install` command. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
+`RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the directory preparation commands. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
+
+The directory commands assign numeric UID/GID 65532 without creating a host user or group. They avoid `install -o 65532 -g 65532`, which some implementations reject with an `invalid user` error when those IDs have no matching host account. Keep mode `700` on the app directory.
 
 Keep the same host directory on later runs. If upgrading from an existing SQLite named-volume deployment, follow [storage migration and recovery](operations.md#move-an-existing-sqlite-volume-to-a-host-directory) before recreating the app. Changing a mount to an empty directory starts a separate, empty SQLite library; it does not copy the old database. Keep the original data until migration is verified. PostgreSQL storage migration is covered in its [setup guide](postgresql.md#existing-postgresql-named-volumes).
 

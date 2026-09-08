@@ -12,7 +12,9 @@ if [ ! -e .env ]; then
 fi
 chmod 600 .env
 # Edit .env: set ADMIN_PASSWORD to your chosen admin password.
-sudo install -d -m 700 -o 65532 -g 65532 ./data
+sudo mkdir -p -m 700 ./data
+sudo chown 65532:65532 ./data
+sudo chmod 700 ./data
 ```
 
 Keep an existing `.env` and its configured admin password or `ADMIN_PASSWORD_HASH`. The base app mount still requires the host directory selected by `RSS_DATA_DIR`, even when PostgreSQL is selected; use that path instead of `./data` if customized. Add the database settings below before starting the app. For native operation, export the same authentication and database variables instead; see [source setup](deployment.md#run-from-source).
