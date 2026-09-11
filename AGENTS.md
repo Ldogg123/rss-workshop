@@ -51,6 +51,7 @@ That password is only for local development. The native process reads exported e
 ## Behavior to preserve
 
 - Reader requests serialize saved items; they must never fetch or render the source. Failed or empty extraction preserves previously saved output. Publication dates and GUIDs remain stable across refreshes, including relative-date estimates.
+- The OPML export lists every feed's private reader link, so it stays behind authentication, uncached, and out of recipe exports. Its `xmlUrl` values must remain the links the reader routes actually serve.
 - Reading per-feed diagnostics must not fetch or queue a source. Keep the latest 50 refresh runs per feed; previews do not write history. Preserve legacy summaries, bounded/redacted traces, and plain-text expected/received field samples. Missing optional fields must not reject otherwise valid items.
 - Filtering happens after required-field validation. Zero included items with valid extracted stories is successful and must not trigger Auto fallback or error backoff. Preserve existing history by default; only the explicit save option may prune nonmatching stored stories, atomically with the recipe edit. Never import that one-time option. Keep the keyword/tree/recipe-size bounds, bulk entry, and identical preview/refresh matching.
 - Static mode must work in the minimal image without Chromium or FlareSolverr. Optional modes share extraction, sanitization and persistence. Keep FlareSolverr an explicit opt-in; its remote network boundary differs from the local guarded fetcher.

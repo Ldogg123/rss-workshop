@@ -7,7 +7,7 @@
 <div id="notice" role="status" aria-live="polite" hidden></div>
 <section id="login-panel" class="login panel"><p class="eyebrow">YOUR FEEDS, YOUR SERVER</p><h1>Welcome back.</h1><p>Sign in to build and manage your feeds.</p><form id="login-form"><label for="password">Admin password</label><input id="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></section>
 <div id="workspace" hidden>
-<div class="heading"><div><p class="eyebrow">FEED LIBRARY</p><h1>Keep up with what matters.</h1></div><div class="library-actions"><a id="export-recipes" class="quiet button-link" href="/api/recipes/export" download>Export recipes</a><button id="import-recipes" class="quiet" type="button">Import recipes</button><button id="new-feed">+ New feed</button></div></div>
+<div class="heading"><div><p class="eyebrow">FEED LIBRARY</p><h1>Keep up with what matters.</h1></div><div class="library-actions"><a id="export-opml" class="quiet button-link" href="/api/opml" download>Export OPML</a><a id="export-recipes" class="quiet button-link" href="/api/recipes/export" download>Export recipes</a><button id="import-recipes" class="quiet" type="button">Import recipes</button><button id="new-feed">+ New feed</button></div></div>
 <p id="queue" class="meta"></p>
 <div class="layout">
 <section class="library" aria-label="Saved feeds"><div id="feeds"></div><div id="empty" class="panel empty" hidden><div class="empty-icon">◔</div><h2>Your first feed starts here.</h2><p>Add a page URL, select its article cards, and preview the results.</p><button id="empty-new">Create a feed</button></div></section>

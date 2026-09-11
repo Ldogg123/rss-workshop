@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add **Export OPML** to download an OPML 2.0 subscription list of every feed, so a reader can subscribe to the whole library in one import. `/api/opml` defaults to the RSS links and accepts `?format=atom`. The file contains every private reader link, so it requires an admin session and is never cached.
 - Publish stable container aliases: `latest` and `latest-browser` include Chromium; `latest-static` selects the lightweight runtime. Compose follows these aliases and checks for updates when recreating the service, with version and digest pins still available.
 - Preserve direct upgrades from every released SQLite/PostgreSQL schema with frozen schema fixtures and tests that compare all saved feed, item, and run data across upgrade and reopening. Retain every released migration as future schemas are added.
 

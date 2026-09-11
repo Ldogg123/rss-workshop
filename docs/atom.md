@@ -9,3 +9,13 @@ Atom responses use `application/atom+xml; charset=utf-8`, the Atom 1.0 namespace
 Atom entry IDs use the same stored GUIDs as RSS. Publication dates remain the saved publication/first-seen values. Entry `updated` uses the last successful observation because the current database does not store a separate per-item content-change timestamp; feed `updated` uses the latest successful refresh or entry timestamp. These are stored timestamps, so reader requests alone never change output bytes. The feed title is used as the fallback feed author, since recipes do not yet extract authors.
 
 Reader responses do not support Last-Modified handling. Recipe files are covered by the [export/import guide](recipe-portability.md). The Atom representation follows [RFC 4287](https://www.rfc-editor.org/rfc/rfc4287).
+
+## Subscribe to every feed at once
+
+**Export OPML** downloads `rss-workshop.opml`, an [OPML 2.0](http://opml.org/spec2.opml) subscription list naming every feed in the library. Import it into your reader to subscribe to all of them in one step, instead of copying each URL by hand. Add `?format=atom` to `/api/opml` for a list of Atom links; the default advertises the RSS ones, which more readers accept.
+
+Each entry carries the feed title, its reader link as `xmlUrl`, and the source page as `htmlUrl`, so a reader can link back to the site the feed was built from. Paused feeds are included, because their links keep serving the stories already saved. A feed that has not yet refreshed successfully is listed, but returns 503 until it does.
+
+The export covers up to 1,000 feeds. A larger library is refused rather than truncated, so the file never silently omits a subscription; the recipe export has the same limit.
+
+An OPML file lists the private read tokens for every feed at once, so it is exactly as sensitive as the reader links themselves. The export requires an active admin session, is never cached, and should be treated like a password file. **Reset feed links** revokes a feed's URLs; export again afterwards to refresh the list.
