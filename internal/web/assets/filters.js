@@ -2,6 +2,9 @@
 (() => {
  const section=$('#story-filters'), panels={include:$('#filter-include'),exclude:$('#filter-exclude')};
  const count=$('#filter-count'), error=$('#filter-error');
+ // Bounds are rendered by the server from internal/filter so this editor
+ // always matches the validator that rejects oversized filters on save.
+ const max={keywords:+count.dataset.maxKeywords,nodes:+count.dataset.maxNodes,depth:+count.dataset.maxDepth,characters:+count.dataset.maxKeywordCharacters};
  let roots={}, nextID=0;
  const leaf=()=>({op:'contains_any',field:'title',keywords:[],_text:'',_id:++nextID});
  const group=rules=>({op:'all',rules,_open:true,_id:++nextID});
@@ -19,8 +22,8 @@
   visit(roots.include);visit(roots.exclude);return {keywords,rules};
  }
  function update(){
-  const n=totals();count.textContent=`${n.keywords} / 500 phrases · ${n.rules} / 128 rules`;
-  count.classList.toggle('diagnostic',n.keywords>500||n.rules>128);
+  const n=totals();count.textContent=`${n.keywords} / ${max.keywords} phrases · ${n.rules} / ${max.nodes} rules`;
+  count.classList.toggle('diagnostic',n.keywords>max.keywords||n.rules>max.nodes);
   error.hidden=true;error.textContent='';
   $('#filter-summary-count').textContent=n.rules?`${n.keywords} phrase${n.keywords===1?'':'s'}`:'Optional';
  }
@@ -47,8 +50,8 @@
    const actions=node('div',undefined,'filter-actions');
    const addCondition=button('+ Condition',()=>{const added=leaf();rule.rules.push(added);rule._open=true;render();focusRule(added);},'quiet filter-add-condition');
    const addGroup=button('+ Group',()=>{const added=group([leaf()]);rule.rules.push(added);rule._open=true;render();focusRule(added);},'quiet filter-add-group');
-   addCondition.disabled=depth>=8;addGroup.disabled=depth>=7;
-   if(depth>=7)addGroup.title='Groups can nest up to 8 levels, including their conditions.';
+   addCondition.disabled=depth>=max.depth;addGroup.disabled=depth>=max.depth-1;
+   if(depth>=max.depth-1)addGroup.title=`Groups can nest up to ${max.depth} levels, including their conditions.`;
    actions.append(addCondition,addGroup);item.append(actions);
    if(!rule.rules.length)item.append(node('p','Add a condition, or remove this empty group.','hint'));
   }else{
@@ -84,16 +87,16 @@
  function read(){
   let nodes=0,keywords=0;
   function visit(rule,depth){
-   if(++nodes>128)throw new Error('Use at most 128 filter rules across both panels.');
-   if(depth>8)throw new Error('Filter groups can nest up to 8 levels, including their conditions.');
+   if(++nodes>max.nodes)throw new Error(`Use at most ${max.nodes} filter rules across both panels.`);
+   if(depth>max.depth)throw new Error(`Filter groups can nest up to ${max.depth} levels, including their conditions.`);
    if(isGroup(rule)){
     if(!rule.rules.length)throw new Error('Add a condition to each filter group, or remove the empty group.');
     return {op:rule.op,rules:rule.rules.map(child=>visit(child,depth+1))};
    }
    const terms=phrases(rule._text);
    if(!terms.length)throw new Error('Enter at least one phrase for each condition, or remove the empty condition.');
-   if(terms.some(term=>[...term].length>256))throw new Error('Each filter phrase must be at most 256 characters.');
-   keywords+=terms.length;if(keywords>500)throw new Error('Use at most 500 filter phrases across both panels.');
+   if(terms.some(term=>[...term].length>max.characters))throw new Error(`Each filter phrase must be at most ${max.characters} characters.`);
+   keywords+=terms.length;if(keywords>max.keywords)throw new Error(`Use at most ${max.keywords} filter phrases across both panels.`);
    return {op:rule.op,field:rule.field,keywords:terms};
   }
   try{

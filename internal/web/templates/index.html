@@ -33,10 +33,10 @@
 <details><summary>Date settings</summary><label>Go date layout<input name="date_layout" placeholder="Optional, e.g. 2006-01-02" aria-describedby="date-layout-help"></label><p class="hint" id="date-layout-help">A custom format is tried first. Standard dates and English relative phrases are recognized automatically.</p><label>Time zone<input name="timezone" placeholder="UTC" aria-describedby="date-timezone-help"></label><p class="hint" id="date-timezone-help">Use the site’s time zone, such as America/New_York, for dates without an offset and relative calendar dates. Blank uses UTC.</p></details>
 <details id="story-filters"><summary>Story filters <span id="filter-summary-count" class="meta">Optional</span></summary>
 <p class="hint">Keep the topics you care about. Matching ignores case and repeated whitespace. Each line is a literal phrase, not a regular expression.</p>
-<details class="filter-help"><summary>How include, exclude, and groups work</summary><p class="hint">A story must pass the include rules, then avoid the exclude rules. Leave either panel empty to skip it. “All” requires every condition; “Any” requires just one. Nest groups to combine them. Descriptions match readable text; links match the complete item URL.</p><p class="hint">Paste up to 500 phrases across both panels, one per line. Each phrase can contain up to 256 characters. Use up to 128 rules and 8 levels of nesting.</p></details>
+<details class="filter-help"><summary>How include, exclude, and groups work</summary><p class="hint">A story must pass the include rules, then avoid the exclude rules. Leave either panel empty to skip it. “All” requires every condition; “Any” requires just one. Nest groups to combine them. Descriptions match readable text; links match the complete item URL.</p><p class="hint">Paste up to {{.MaxKeywords}} phrases across both panels, one per line. Each phrase can contain up to {{.MaxKeywordCharacters}} characters. Use up to {{.MaxNodes}} rules and {{.MaxDepth}} levels of nesting.</p></details>
 <div class="filter-panels"><section class="filter-panel" aria-labelledby="filter-include-title"><h3 id="filter-include-title">Include stories</h3><p class="hint">Keep stories that match these rules.</p><div id="filter-include"></div></section>
 <section class="filter-panel" aria-labelledby="filter-exclude-title"><h3 id="filter-exclude-title">Exclude stories</h3><p class="hint">Exclude rules take priority over include rules.</p><div id="filter-exclude"></div></section></div>
-<p id="filter-count" class="hint" aria-live="polite"></p><p id="filter-error" class="diagnostic" role="alert" hidden></p>
+<p id="filter-count" class="hint" aria-live="polite" data-max-keywords="{{.MaxKeywords}}" data-max-nodes="{{.MaxNodes}}" data-max-keyword-characters="{{.MaxKeywordCharacters}}" data-max-depth="{{.MaxDepth}}"></p><p id="filter-error" class="diagnostic" role="alert" hidden></p>
 </details>
 <div id="apply-filter-history" hidden><label class="check"><input id="apply-filters-to-history" type="checkbox">Remove already-saved stories that do not match these filters</label><p class="hint">Applies when you save this edit. Removed stories can be discovered again if they match a later recipe; their first-seen dates may change. Leave unchecked to keep saved stories.</p></div>
 <label class="check"><input name="enabled" type="checkbox" checked>Refresh automatically</label>
@@ -50,9 +50,9 @@
 <dialog id="feed-diagnostics" aria-labelledby="diagnostics-title" aria-describedby="diagnostics-feed">
 <div class="editor-heading"><h2 id="diagnostics-title">Feed diagnostics</h2><button id="diagnostics-close" class="quiet" type="button">Close</button></div>
 <p id="diagnostics-feed"></p>
-<div class="diagnostics-toolbar"><p class="hint">The latest 50 refresh runs. Reloading only reads this history.</p><button id="diagnostics-reload" class="secondary" type="button">Reload history</button></div>
+<div class="diagnostics-toolbar"><p class="hint">The latest {{.MaxRuns}} refresh runs. Reloading only reads this history.</p><button id="diagnostics-reload" class="secondary" type="button">Reload history</button></div>
 <p id="diagnostics-status" role="status" aria-live="polite"></p>
-<div id="diagnostics-runs" aria-label="Recent refresh runs" aria-busy="false"></div>
+<div id="diagnostics-runs" aria-label="Recent refresh runs" aria-busy="false" data-max-runs="{{.MaxRuns}}"></div>
 </dialog>
 <dialog id="visual-selector" aria-labelledby="visual-title">
 <div class="selector-heading editor-heading"><div><h2 id="visual-title">Choose your feed elements</h2><p class="hint" id="selector-live-help">Click the page or edit a selector to see matching elements highlighted. Your changes stay in the feed editor.</p></div><button id="selector-close" class="secondary" type="button">Done</button></div>

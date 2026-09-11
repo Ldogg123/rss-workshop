@@ -89,7 +89,7 @@
    const out=await api(`/feeds/${encodeURIComponent(id)}/runs`,'GET',undefined,controller.signal);
    if(!current(version))return;
    if(!Array.isArray(out.runs))throw new Error('Refresh history could not be read. Try reloading it.');
-   const runs=out.runs.filter(run=>run&&typeof run==='object').slice(0,50);
+   const runs=out.runs.filter(run=>run&&typeof run==='object').slice(0,+rows.dataset.maxRuns);
    for(const run of runs)rows.append(renderRun(run));
    status.textContent=runs.length?`${runs.length} recent refresh run${runs.length===1?'':'s'}. Newest first.`:'No refresh runs yet. A run will appear after this feed is refreshed.';
   }catch(error){
