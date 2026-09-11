@@ -44,7 +44,10 @@ type atomEntry struct {
 	Links     []atomLink `xml:"link"`
 	Published string     `xml:"published"`
 	Updated   string     `xml:"updated"`
-	Content   atomText   `xml:"content"`
+	// Atom has both fields, so a reader's list view can show the list-page
+	// teaser while the entry itself carries the fetched article.
+	Summary *atomText `xml:"summary,omitempty"`
+	Content atomText  `xml:"content"`
 }
 
 // RenderAtom renders persisted items as Atom 1.0 and returns an ETag for the
@@ -103,7 +106,10 @@ func RenderAtom(f model.Feed, items []model.Item, baseURL string) ([]byte, strin
 			Title:     atomText{Type: "text", Value: it.Title},
 			Published: published.Format(time.RFC3339Nano),
 			Updated:   entryUpdated.Format(time.RFC3339Nano),
-			Content:   atomText{Type: "html", Value: itemHTML(it)},
+			Content:   atomText{Type: "html", Value: itemContent(it)},
+		}
+		if summary := itemSummary(it); summary != "" {
+			e.Summary = &atomText{Type: "html", Value: summary}
 		}
 		if it.URL != "" {
 			link, err := atomHTTPURL(it.URL, source)
@@ -111,6 +117,15 @@ func RenderAtom(f model.Feed, items []model.Item, baseURL string) ([]byte, strin
 				return nil, "", fmt.Errorf("Atom entry URL: %w", err)
 			}
 			e.Links = []atomLink{{Rel: "alternate", Type: "text/html", Href: link.String()}}
+		}
+		// The extracted image, offered where a reader looks for a thumbnail
+		// rather than only inline in the body. The image is never fetched, so
+		// its length is unknown and deliberately omitted.
+		if it.Image != "" {
+			image, err := atomHTTPURL(it.Image, source)
+			if err == nil {
+				e.Links = append(e.Links, atomLink{Rel: "enclosure", Type: imageType(it.Image), Href: image.String()})
+			}
 		}
 		doc.Entries = append(doc.Entries, e)
 	}

@@ -181,7 +181,7 @@ func relativeDatesAssertStable(t *testing.T, before, after map[string]model.Item
 
 func relativeDatesCheckReaderFormats(t *testing.T, f model.Feed, items []model.Item, expected map[string]model.Item) ([]byte, []byte) {
 	t.Helper()
-	rssBody, _, err := feedoutput.Render(f, items)
+	rssBody, _, err := feedoutput.Render(f, items, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

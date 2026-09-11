@@ -105,7 +105,7 @@ Screenshots use sample feeds.
 ## Documentation
 
 - [Visual selectors](docs/visual-selector.md), [story filters](docs/filtering.md), [dates](docs/dates.md), and [RSS/Atom output](docs/atom.md)
-- [Browser rendering](docs/browser.md), [FlareSolverr](docs/flaresolverr.md), and [Gluetun VPN](docs/gluetun.md)
+- [Reverse proxy](docs/reverse-proxy.md), [browser rendering](docs/browser.md), [FlareSolverr](docs/flaresolverr.md), and [Gluetun VPN](docs/gluetun.md)
 - [Recipe import/export](docs/recipe-portability.md) and [example recipes](docs/examples/) with a runnable demo site
 - [Backups, restores, and upgrades](docs/operations.md)
 - [Development](CONTRIBUTING.md), [repository guide](AGENTS.md), [releases](docs/releases.md), and [changelog](CHANGELOG.md)

@@ -110,7 +110,7 @@ rss.example.net {
 }
 ```
 
-Supply your hostname and DNS/TLS configuration. The [Caddy reverse proxy directive](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) forwards to the host's loopback port; a containerized proxy needs a shared network instead. Preserve the browser's `Origin` header, avoid caching management/API responses, and allow at least 150 seconds for the maximum FlareSolverr timeout and cleanup.
+Supply your hostname and DNS/TLS configuration. The [Caddy reverse proxy directive](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) forwards to the host's loopback port. A proxy running in Docker cannot reach that port and needs a shared network: add `compose.proxy.yaml`, described in [reverse proxy](reverse-proxy.md). Preserve the browser's `Origin` header, avoid caching management/API responses, and allow at least 150 seconds for the maximum FlareSolverr timeout and cleanup.
 
 For direct LAN access, deliberately bind the app to a LAN address and set `PUBLIC_BASE_URL` to the same origin. Use HTTPS across untrusted networks. HTTPS enables secure session cookies. Redact or disable proxy access logs for `/feeds/`, whose paths contain bearer tokens.
 
