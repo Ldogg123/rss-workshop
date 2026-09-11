@@ -38,6 +38,7 @@ class ComposeConfigurationTests(unittest.TestCase):
                              '@postgres:5432/rss_workshop?sslmode=disable') if postgres else '',
             'GLUETUN_CONTAINER': 'synthetic-gluetun-fixture',
             'GLUETUN_APP_PORT': '18080',
+            'PROXY_NETWORK': 'synthetic-proxy-network',
         }
         if image is not None:
             values['RSS_IMAGE'] = image
@@ -69,6 +70,28 @@ class ComposeConfigurationTests(unittest.TestCase):
         self.assertEqual(app['image'], 'ghcr.io/ldogg123/rss-workshop:' +
                          ('latest' if browser else 'latest-static'))
         self.assertEqual(app['pull_policy'], 'always')
+
+    def test_reverse_proxy_override_shares_a_network_and_stops_publishing(self):
+        # A proxy running in a container cannot reach 127.0.0.1:8080 on the
+        # host: it has its own network namespace. The override has to replace
+        # the published port with a network both containers are on.
+        config = self.resolve('compose.proxy.yaml')
+        app = config['services']['rss-workshop']
+        self.assertFalse(app.get('ports'), 'the app still publishes a host port behind a proxy')
+        networks = app.get('networks') or {}
+        self.assertIn('proxy', networks)
+        self.assertIn('default', networks,
+                      'dropping the default network would cut the app off from the database')
+        network = config['networks']['proxy']
+        self.assertIs(network.get('external'), True, 'the proxy network must already exist')
+        self.assert_bounded_logs(config)
+
+    def test_reverse_proxy_override_keeps_the_database_private(self):
+        config = self.resolve('compose.postgres.yaml', 'compose.proxy.yaml', postgres=True)
+        self.assertNotIn('proxy', config['services']['postgres'].get('networks') or {},
+                         'the database is reachable from the proxy network')
+        self.assertIn('proxy', config['services']['rss-workshop'].get('networks') or {})
+        self.assertIn('default', config['services']['rss-workshop'].get('networks') or {})
 
     def assert_bounded_logs(self, config):
         # Docker keeps container logs until the disk fills. An unbounded service

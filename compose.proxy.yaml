@@ -1,0 +1,29 @@
+# Put RSS Workshop behind a reverse proxy that runs in Docker.
+#
+#   docker compose -f compose.yaml -f compose.proxy.yaml up -d --pull always --wait
+#
+# The default publishes 127.0.0.1:8080 on the host, which a proxy container
+# cannot reach: it has its own network namespace, so the host's loopback is not
+# the app's. This override stops publishing a host port and joins an existing
+# network the proxy is already on, so the proxy reaches the app directly as
+# http://rss-workshop:8080.
+#
+# Create the network once, before the proxy and this stack start:
+#   docker network create proxy
+#
+# Set PROXY_NETWORK in .env if yours has another name, and set PUBLIC_BASE_URL
+# to the exact public origin the proxy serves, such as https://rss.example.net.
+# See docs/reverse-proxy.md.
+services:
+  rss-workshop:
+    # No host publication: reaching the app now goes through the proxy, which
+    # is the point of putting it behind one.
+    ports: !reset null
+    networks:
+      default: {}
+      proxy: {}
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}
