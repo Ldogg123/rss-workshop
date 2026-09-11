@@ -9,6 +9,7 @@ import (
 	"rss-workshop/internal/extract"
 	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/model"
+	"rss-workshop/internal/store"
 )
 
 const (
@@ -31,11 +32,11 @@ const (
 
 // fetchArticles fills in item bodies from each item's own page.
 //
-// known maps item key to the row already stored for this feed; a refresh passes
-// the saved history so an article is fetched once and then left alone, and a
-// preview passes nil. Items are never dropped or reordered: an item whose
+// known says, per item key, whether an article body is already stored and when
+// the item was first seen; a refresh passes the saved state so an article is
+// fetched once and then left alone, and a preview passes nil. Items are never dropped or reordered: an item whose
 // article cannot be fetched keeps the list-page teaser it already has.
-func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []model.Item, known map[string]model.Item, preview bool) []string {
+func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []model.Item, known map[string]store.ArticleState, preview bool) []string {
 	if f.Recipe.Full == nil || f.Recipe.Full.Selector == "" {
 		return nil
 	}
@@ -54,7 +55,7 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 		}
 		prior, ok := known[items[i].Key]
 		switch {
-		case preview, !ok, prior.FullHTML == "":
+		case preview, !ok, !prior.HasBody:
 			missing = append(missing, i)
 		case prior.FirstSeen.IsZero() || time.Since(prior.FirstSeen) <= articleRecency:
 			// A source may finish an article minutes after listing it.

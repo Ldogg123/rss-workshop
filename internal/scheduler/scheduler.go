@@ -239,13 +239,15 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	r, p, e := s.extract(ctx, f, false)
 	items := p.Items
 	if e == nil && f.Recipe.Full != nil {
-		// Saved rows say which articles were already retrieved. A read failure
+		// Which articles were already retrieved, without loading the stories
+		// themselves: the decision needs three facts per item, and reading whole
+		// rows would pull every stored article body into memory. A read failure
 		// only costs this round its skip list, so it must not fail the refresh.
-		known := map[string]model.Item{}
-		if stored, err := s.Store.Items(ctx, f.ID); err == nil {
-			for _, it := range stored {
-				known[it.Key] = it
-			}
+		known, err := s.Store.ArticleStates(ctx, f.ID)
+		if err != nil {
+			known = nil
+			slog.Warn("article skip list unavailable; articles may be refetched",
+				"feed", f.Title, "feed_id", f.ID, "error", err)
 		}
 		if w := s.fetchArticles(ctx, f, items, known, false); len(w) > 0 && p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
 			last := &p.Diagnostics.Attempts[len(p.Diagnostics.Attempts)-1]

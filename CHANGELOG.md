@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Read only what the article skip list needs during a refresh. Deciding which article pages to fetch previously loaded every stored story for the feed, including the article bodies themselves; with a full feed of long articles that was around 9.5 MiB per refresh against 140 KiB now, multiplied by the number of refreshes running at once.
 - Log when retention deletes saved stories. `MAX_ITEMS` applies to stories already stored, so lowering it permanently removes the excess at each feed's next refresh; that now appears in the log with the feed and the number removed, and is called out in the configuration reference.
 - Show the fetched article body in **Preview items** and make the editor a repair path for it. A selector that matched the wrong part of an article page succeeded silently and could not be corrected: the body was fetched once, preserved by every later refresh, and unaffected by editing the recipe. Previews now display the body, and changing or clearing the article selector discards the stored bodies so later refreshes fetch them again.
 - Correct the upgrade documentation for schema 4. The compatibility table described a v0.2.0 database as already current, which told the users most likely to upgrade that no migration would run and no backup was needed. Document the `LOG_LEVEL`, `LOG_FORMAT`, `LOG_MAX_SIZE`, `LOG_MAX_FILES` and `METRICS_TOKEN` settings in the configuration reference, and note that lowering `MAX_ITEMS` permanently deletes already-saved stories.
