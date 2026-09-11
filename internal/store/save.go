@@ -52,6 +52,21 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 			return "", err
 		}
 	} else {
+		// An article body is fetched once and then left alone, and the item merge
+		// preserves it, so a selector that grabbed the wrong block would survive
+		// every later refresh and every edit. Clearing the stored bodies when the
+		// article selector changes makes the editor a repair path: the next
+		// refreshes refetch them with the new selector, or leave the list-page
+		// description in place if the operator turned the feature off.
+		cleared, err := s.articleSelectorChanged(ctx, tx, f)
+		if err != nil {
+			return "", err
+		}
+		if cleared {
+			if _, err := tx.ExecContext(ctx, s.bind("UPDATE items SET content_full='' WHERE feed_id=?"), f.ID); err != nil {
+				return "", err
+			}
+		}
 		result, err := tx.ExecContext(ctx, s.bind(`UPDATE feeds SET title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), readableText(f.Title), readableText(f.URL), string(recipe), f.Interval, f.Enabled, time.Now().Unix(), f.ID)
 		if err != nil {
 			return "", err
@@ -73,6 +88,34 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		return "", err
 	}
 	return f.ID, nil
+}
+
+// articleSelectorChanged reports whether the saved recipe asks for a different
+// article body than the stored one does. Only the selector and attribute
+// matter: the fetch mode changes how a page is retrieved, not which part of it
+// becomes the story.
+func (s *Store) articleSelectorChanged(ctx context.Context, tx *sql.Tx, f model.Feed) (bool, error) {
+	var raw string
+	if err := tx.QueryRowContext(ctx, s.bind("SELECT recipe FROM feeds WHERE id=?"), f.ID).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	var stored model.Recipe
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		// An unreadable stored recipe cannot be compared. Refetching is the safe
+		// direction: it costs requests, never content.
+		return true, nil
+	}
+	was, now := stored.Full, f.Recipe.Full
+	if was == nil || now == nil {
+		// One side asks for an article body and the other does not: either the
+		// feature was just turned on, or it was turned off and the bodies it
+		// left behind would otherwise keep being published.
+		return (was == nil) != (now == nil), nil
+	}
+	return was.Selector != now.Selector || was.Attr != now.Attr, nil
 }
 
 func (s *Store) pruneFilteredHistory(ctx context.Context, tx *sql.Tx, feedID string, matcher *filter.Matcher) error {
