@@ -35,11 +35,22 @@ type Scheduler struct {
 	slots   chan struct{}
 	mu      sync.Mutex
 	active  map[string]bool
-	wg      sync.WaitGroup
+	// held records feeds whose result could not be persisted. The usual backoff
+	// lives in the feeds row, so a failed write leaves nothing behind to slow
+	// the feed down: its schedule rolls back with the rest of the transaction
+	// and the next tick refetches the source a second later, indefinitely. This
+	// keeps that backoff in memory, where a failing database cannot erase it.
+	held map[string]hold
+	wg   sync.WaitGroup
+}
+
+type hold struct {
+	until    time.Time
+	failures int
 }
 
 func New(s *store.Store, f fetch.Fetcher, workers int, timeout time.Duration) *Scheduler {
-	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}}
+	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, held: map[string]hold{}}
 }
 func (s *Scheduler) Stats() (int, int) { return len(s.slots), cap(s.slots) }
 func (s *Scheduler) timeout(mode string) time.Duration {
@@ -63,6 +74,53 @@ func (s *Scheduler) reserve(id string) bool {
 	}
 }
 func (s *Scheduler) release(id string) { s.mu.Lock(); delete(s.active, id); <-s.slots; s.mu.Unlock() }
+
+// hold backs a feed off after its result could not be stored, and reports how
+// long until it is tried again. The delay doubles per consecutive failure to a
+// daily ceiling, matching the backoff the database applies when a fetch fails.
+func (s *Scheduler) hold(id string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.held[id]
+	h.failures++
+	wait := min(time.Duration(1<<min(h.failures, 10))*time.Minute, 24*time.Hour)
+	h.until = time.Now().Add(wait)
+	s.held[id] = h
+	return wait
+}
+
+func (s *Scheduler) holding(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.held[id]
+	return ok && h.until.After(time.Now())
+}
+
+// released clears the backoff once a result is stored again.
+func (s *Scheduler) released(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.held, id)
+}
+
+// forgetHolds drops entries for feeds that no longer exist, so a long-running
+// process does not accumulate them for deleted feeds.
+func (s *Scheduler) forgetHolds(fs []model.Feed) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.held) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(fs))
+	for _, f := range fs {
+		live[f.ID] = true
+	}
+	for id := range s.held {
+		if !live[id] {
+			delete(s.held, id)
+		}
+	}
+}
 func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, error) {
 	id := store.ID()
 	if !s.reserve(id) {
@@ -135,7 +193,10 @@ func (s *Scheduler) tick(ctx context.Context) {
 	fs, e := s.Store.List(ctx)
 	if e != nil {
 		if ctx.Err() == nil {
-			slog.Error("scheduler database read failed")
+			// Once per second until the database recovers, so the reason has to
+			// be on the line: rotation would otherwise discard the first
+			// occurrence, which is the one that says what actually broke.
+			slog.Error("scheduler database read failed", "error", e)
 		}
 		return
 	}
@@ -153,8 +214,12 @@ func (s *Scheduler) tick(ctx context.Context) {
 			slog.Debug("scheduler tick", "feeds", len(fs), "due", due, "active", active, "capacity", capacity)
 		}
 	}
+	s.forgetHolds(fs)
 	for _, f := range fs {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
+			continue
+		}
+		if s.holding(f.ID) {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -214,8 +279,16 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	if err := s.Store.CompleteWithDiagnostics(saveCtx, f, items, r.ETag, r.LastModified, r.Status, e, r.RetryAfter, p.Diagnostics); err != nil && !errors.Is(err, store.ErrStale) {
-		slog.Error("refresh persistence failed", "feed_id", f.ID)
+		// Nothing was written, including the schedule, so this feed is still due.
+		// Hold it here or the source gets refetched every second for as long as
+		// the database stays unwritable. Reporting success below would also be a
+		// lie: no story, run record or timestamp survived.
+		wait := s.hold(f.ID)
+		slog.Error("refresh not saved", "feed", f.Title, "feed_id", f.ID, "error", err,
+			"retry_in", wait, "note", "nothing was stored, including this feed's schedule")
+		return
 	}
+	s.released(f.ID)
 	// A failure is the line an operator actually needs, so it carries the reason
 	// and rises above the routine ones. Titles are the operator's own labels;
 	// source URLs and reader tokens stay out of the log.
