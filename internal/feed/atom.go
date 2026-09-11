@@ -103,7 +103,7 @@ func RenderAtom(f model.Feed, items []model.Item, baseURL string) ([]byte, strin
 			Title:     atomText{Type: "text", Value: it.Title},
 			Published: published.Format(time.RFC3339Nano),
 			Updated:   entryUpdated.Format(time.RFC3339Nano),
-			Content:   atomText{Type: "html", Value: it.HTML},
+			Content:   atomText{Type: "html", Value: itemHTML(it)},
 		}
 		if it.URL != "" {
 			link, err := atomHTTPURL(it.URL, source)

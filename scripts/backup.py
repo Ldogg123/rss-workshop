@@ -25,7 +25,7 @@ import uuid
 
 FORMAT = "rss-workshop.sqlite-backup"
 TABLES = ("feeds", "items", "runs")
-SCHEMA_VERSIONS = (1, 2, 3)
+SCHEMA_VERSIONS = (1, 2, 3, 4)
 
 
 def docker(*args, **kwargs):

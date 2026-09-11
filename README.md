@@ -78,7 +78,7 @@ This includes Chromium and stores PostgreSQL in `./postgres-data`. Both data pat
 
 1. Choose **New feed** and enter a name and page URL.
 2. Choose **Choose elements visually**. Select a repeating card, then its title, link, description, image, and date. Edit CSS or XPath beside the live preview to fine-tune the matches.
-3. Optionally add **Story filters** for titles, descriptions, and links. Choose **Preview items**, check the included and excluded results, and save.
+3. Optionally turn on **Full article content** to publish each story's own article body instead of the list-page teaser, and add **Story filters** for titles, descriptions, and links. Choose **Preview items**, check the included and excluded results, and save.
 4. Copy the RSS or Atom URL into your reader.
 
 Reader requests use saved items; they never fetch the source. Failed refreshes preserve the last successful output. Anyone with a feed link can read it; **Reset feed links** revokes its existing RSS and Atom URLs.

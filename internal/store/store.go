@@ -137,7 +137,7 @@ func (s *Store) Queue(ctx context.Context, id string) (err error) {
 }
 func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error) {
 	defer s.cleanError(&err)
-	rows, e := s.DB.QueryContext(ctx, s.bind(`SELECT key,guid,title,url,html,image,published,first_seen,last_seen FROM items WHERE feed_id=? ORDER BY published DESC,key`), id)
+	rows, e := s.DB.QueryContext(ctx, s.bind(`SELECT key,guid,title,url,html,image,content_full,published,first_seen,last_seen FROM items WHERE feed_id=? ORDER BY published DESC,key`), id)
 	if e != nil {
 		return nil, e
 	}
@@ -146,7 +146,7 @@ func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error
 	for rows.Next() {
 		var it model.Item
 		var p, f, l int64
-		if e = rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &p, &f, &l); e != nil {
+		if e = rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &it.FullHTML, &p, &f, &l); e != nil {
 			return nil, e
 		}
 		it.Published = stamp(p)
@@ -203,7 +203,11 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 			if s.postgres {
 				identity = "feed_id,guid"
 			}
-			_, e = tx.ExecContext(ctx, s.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,published,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(`+identity+`) DO UPDATE SET title=excluded.title,url=excluded.url,html=excluded.html,image=excluded.image,last_seen=excluded.last_seen`), f.ID, s.opaque(it.Key), guid, readableText(it.Title), readableText(it.URL), readableText(it.HTML), readableText(it.Image), it.Published.Unix(), now.Unix(), now.Unix())
+			// html and image are replaced every refresh so a late-published
+			// preview image is picked up. content_full is only replaced when
+			// this refresh actually fetched an article body; an empty value
+			// means "not fetched this time", never "the article is empty".
+			_, e = tx.ExecContext(ctx, s.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(`+identity+`) DO UPDATE SET title=excluded.title,url=excluded.url,html=excluded.html,image=excluded.image,content_full=CASE WHEN excluded.content_full='' THEN items.content_full ELSE excluded.content_full END,last_seen=excluded.last_seen`), f.ID, s.opaque(it.Key), guid, readableText(it.Title), readableText(it.URL), readableText(it.HTML), readableText(it.Image), readableText(it.FullHTML), it.Published.Unix(), now.Unix(), now.Unix())
 			if e != nil {
 				return e
 			}

@@ -97,7 +97,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 	if err := tx.QueryRowContext(ctx, "SELECT count(*),COALESCE(min(version),0) FROM schema_version").Scan(&count, &version); err != nil {
 		return errors.New("cannot read PostgreSQL schema version")
 	}
-	if count > 1 || (count == 1 && (version < 1 || version > 3)) {
+	if count > 1 || (count == 1 && (version < 1 || version > 4)) {
 		return errors.New("unsupported PostgreSQL database schema version")
 	}
 	if count == 0 {
@@ -106,7 +106,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		if _, err := tx.ExecContext(ctx, postgresSchema); err != nil {
 			return errors.New("cannot initialize PostgreSQL tables; use an empty dedicated database with schema creation permission")
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(3)"); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(4)"); err != nil {
 			return errors.New("cannot record PostgreSQL schema version")
 		}
 	} else if version == 1 {
@@ -120,6 +120,15 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		// rather than ignore the rules while refreshing its feeds.
 		if _, err := tx.ExecContext(ctx, "UPDATE schema_version SET version=3"); err != nil {
 			return errors.New("cannot migrate PostgreSQL database from schema version 2 to 3")
+		}
+		version = 3
+	}
+	if version == 3 {
+		// Article bodies are stored beside the list-page teaser rather than
+		// replacing it, so re-extracting the list page each refresh keeps
+		// updating late-published images without discarding fetched content.
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE items ADD COLUMN content_full TEXT NOT NULL DEFAULT ''; UPDATE schema_version SET version=4`); err != nil {
+			return errors.New("cannot migrate PostgreSQL database from schema version 3 to 4")
 		}
 	}
 	if err := tx.Commit(); err != nil {

@@ -34,7 +34,7 @@ type guid struct {
 func Render(f model.Feed, items []model.Item) ([]byte, string, error) {
 	r := rss{Version: "2.0", Channel: channel{Title: f.Title, Link: f.URL, Description: "Updates from " + f.Title}}
 	for _, it := range items {
-		r.Channel.Items = append(r.Channel.Items, entry{Title: it.Title, Link: it.URL, GUID: guid{Permalink: "false", Value: it.GUID}, Description: it.HTML, Published: it.Published.UTC().Format(time.RFC1123Z)})
+		r.Channel.Items = append(r.Channel.Items, entry{Title: it.Title, Link: it.URL, GUID: guid{Permalink: "false", Value: it.GUID}, Description: itemHTML(it), Published: it.Published.UTC().Format(time.RFC1123Z)})
 	}
 	b, e := xml.MarshalIndent(r, "", "  ")
 	if e != nil {

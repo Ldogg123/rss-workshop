@@ -1,12 +1,15 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"rss-workshop/internal/model"
 	"rss-workshop/internal/testutil"
@@ -49,10 +52,48 @@ func releasedStore(t *testing.T, version int) (*Store, func() (*Store, error)) {
 	return &Store{DB: db, MaxItems: 10, postgres: postgres}, open
 }
 
+// legacyItems reads items with the pre-schema-4 column list. The current
+// Items() selects content_full, which a schema 1-3 database does not have, so
+// migration tests must capture "before" rows the way those releases stored them.
+func legacyItems(t *testing.T, s *Store, feedID string) []model.Item {
+	t.Helper()
+	rows, err := s.DB.QueryContext(t.Context(), s.bind(`SELECT key,guid,title,url,html,image,published,first_seen,last_seen FROM items WHERE feed_id=? ORDER BY published DESC,key`), feedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := []model.Item{}
+	for rows.Next() {
+		var it model.Item
+		var p, f, l int64
+		if err := rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &p, &f, &l); err != nil {
+			t.Fatal(err)
+		}
+		it.Published, it.FirstSeen, it.LastSeen = stamp(p), stamp(f), stamp(l)
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// legacyInsertItem stores one item the way schema 1-3 did, deriving the same
+// GUID the merge does so the PostgreSQL identity matches.
+func legacyInsertItem(t *testing.T, s *Store, feedID, key, title string) {
+	t.Helper()
+	guid := fmt.Sprintf("urn:sha256:%x", sha256.Sum256([]byte(feedID+"\x00"+key)))
+	now := time.Now().UTC().Unix()
+	if _, err := s.DB.ExecContext(t.Context(), s.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,published,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?)`),
+		feedID, s.opaque(key), guid, title, "", "", "", now, now, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Keep every released schema in this matrix as new migrations are added. The
 // current opener must upgrade the entire chain without an intermediate binary.
 func TestEveryReleasedSchemaPreservesStoredRowsAcrossDirectUpgrade(t *testing.T) {
-	for _, original := range []int{1, 2, 3} {
+	for _, original := range []int{1, 2, 3, 4} {
 		t.Run(strconv.Itoa(original), func(t *testing.T) {
 			legacy, open := releasedStore(t, original)
 			ctx := t.Context()
@@ -112,7 +153,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?)`), id, legacy.opaque(key+"\x00\xff"), id+"-guid-"+st
 					t.Fatal("direct upgrade or reopen failed", err)
 				}
 				var current int
-				if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&current); err != nil || current != 3 {
+				if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&current); err != nil || current != 4 {
 					s.DB.Close()
 					t.Fatal("direct upgrade did not reach current schema", err)
 				}
@@ -140,6 +181,9 @@ func releasedRows(t *testing.T, db *sql.DB, version int) map[string][][]any {
 	}
 	if version >= 2 {
 		queries["runs"] = "SELECT id,feed_id,ended,status,count,error,diagnostics FROM runs ORDER BY id"
+	}
+	if version >= 4 {
+		queries["items"] = "SELECT feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen FROM items ORDER BY feed_id,guid"
 	}
 	out := make(map[string][][]any, len(queries))
 	for table, query := range queries {
@@ -192,10 +236,7 @@ func TestSchemaOneMigrationPreservesLibraryAndRunSummaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeItems, err := legacy.Items(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	beforeItems := legacyItems(t, legacy, id)
 	if err := legacy.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +246,7 @@ func TestSchemaOneMigrationPreservesLibraryAndRunSummaries(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Close() })
 	var version int
-	if err = s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 3 {
+	if err = s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 4 {
 		t.Fatal("migration did not advance schema version", err)
 	}
 	afterFeed, err := s.Get(ctx, id)
@@ -274,17 +315,18 @@ func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
 	ctx := t.Context()
 	legacy, open := releasedStore(t, 2)
 	f := savedRunFeed(t, legacy)
-	if err := legacy.CompleteWithDiagnostics(ctx, f, []model.Item{{Key: "saved", Title: "Saved story"}}, "validator", "modified", 200, nil, 0, testRunDiagnostics()); err != nil {
+	// The run and feed state come from the real writer, because schema 2 is
+	// about run diagnostics. The item is inserted with the released column
+	// list: the current merge writes content_full, which schema 2 lacks.
+	if err := legacy.CompleteWithDiagnostics(ctx, f, nil, "validator", "modified", 200, nil, 0, testRunDiagnostics()); err != nil {
 		t.Fatal(err)
 	}
+	legacyInsertItem(t, legacy, f.ID, "saved", "Saved story")
 	beforeFeed, err := legacy.Get(ctx, f.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeItems, err := legacy.Items(ctx, f.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	beforeItems := legacyItems(t, legacy, f.ID)
 	beforeRuns, err := legacy.Runs(ctx, f.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +338,7 @@ func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
 	}
 	defer s.DB.Close()
 	var version int
-	if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 3 {
+	if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 4 {
 		t.Fatal("schema 2 did not migrate to 3", err)
 	}
 	afterFeed, err := s.Get(ctx, f.ID)
@@ -350,7 +392,7 @@ CREATE TRIGGER prevent_version_three BEFORE UPDATE ON schema_version FOR EACH RO
 }
 
 func TestUnsupportedSchemaDoesNotMigrateOrChangeJournal(t *testing.T) {
-	for _, version := range []int{0, 4, 99} {
+	for _, version := range []int{0, 5, 99} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			legacy, open := legacyStore(t)
 			if _, err := legacy.DB.ExecContext(t.Context(), legacy.bind("UPDATE schema_version SET version=?"), version); err != nil {
