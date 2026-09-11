@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"rss-workshop/internal/diagnostics"
 	"rss-workshop/internal/model"
@@ -15,6 +16,37 @@ const maxDiagnosticsBytes = 64 << 10
 // MaxRuns is the per-feed refresh history kept by Save and returned by Runs.
 // The editor renders it too, so the stored, served and displayed limits agree.
 const MaxRuns = 50
+
+// ArticleState is what a refresh needs to decide whether to fetch an item's
+// article page: whether one was already stored, and how long the item has been
+// known. Loading whole stories for this would pull every stored article body
+// into memory, which at the per-item size limit is far more than the decision
+// requires.
+type ArticleState struct {
+	HasBody   bool
+	FirstSeen time.Time
+}
+
+// ArticleStates maps item key to that decision data for one feed.
+func (s *Store) ArticleStates(ctx context.Context, feedID string) (_ map[string]ArticleState, err error) {
+	defer s.cleanError(&err)
+	rows, err := s.DB.QueryContext(ctx, s.bind("SELECT key,content_full<>'',first_seen FROM items WHERE feed_id=?"), feedID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]ArticleState{}
+	for rows.Next() {
+		var key string
+		var hasBody bool
+		var firstSeen int64
+		if err := rows.Scan(&key, &hasBody, &firstSeen); err != nil {
+			return nil, err
+		}
+		out[key] = ArticleState{HasBody: hasBody, FirstSeen: stamp(firstSeen)}
+	}
+	return out, rows.Err()
+}
 
 func encodeDiagnostics(details *model.RunDiagnostics) string {
 	safe := diagnostics.Sanitize(details)

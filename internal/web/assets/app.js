@@ -104,7 +104,12 @@ $('#preview-button').onclick=()=>{if(!form.reportValidity())return;busy($('#prev
   for(const item of out.items){
    const card=node('article',undefined,'preview-item'),title=node(item.url?'a':'h3',item.title);
    if(item.url){title.href=item.url;title.target='_blank';title.rel='noopener noreferrer';}card.append(title,previewDate(item));
-   const content=node('div');content.innerHTML=item.html;for(const a of content.querySelectorAll('a')){a.target='_blank';a.rel='noopener noreferrer';}card.append(content);p.append(card);
+   // Show the fetched article body when there is one: it is what the reader
+   // will receive, and a selector that matches the wrong block succeeds
+   // silently otherwise. Previews only fetch the first few articles.
+   const body=item.full_html||item.html;
+   if(item.full_html)card.append(node('p','Article body from this story\u2019s own page','meta'));
+   const content=node('div');content.innerHTML=body;for(const a of content.querySelectorAll('a')){a.target='_blank';a.rel='noopener noreferrer';}card.append(content);p.append(card);
   }
   window.rssDiagnostics?.appendPreview(p,out.diagnostics);
  }catch(e){

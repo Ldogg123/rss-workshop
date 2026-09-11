@@ -20,7 +20,9 @@ Each refresh fetches at most 10 article pages, so a long feed fills in over seve
 
 Fetched bodies are stored separately from the list-page description. Re-extracting the list page every refresh therefore keeps updating a preview image published after the story went live, without discarding an article body already retrieved. The current image is published with the article body, so a late image still reaches the reader.
 
-**Preview items** fetches the first 3 articles only. It runs while you wait and must not fan out a request for every story on the page, so a preview shows that the selector works rather than building the whole feed.
+**Preview items** fetches the first 3 articles only. It runs while you wait and must not fan out a request for every story on the page, so a preview shows that the selector works rather than building the whole feed. Those previewed stories display the fetched article body, labelled, so a selector that matches the wrong block — a navigation bar, a sidebar, a cookie notice — is visible before you save.
+
+Changing the article selector or its attribute, or clearing it to turn the feature off, discards the article bodies already stored for that feed in the same save. Later refreshes fetch them again with the new selector, or leave the list-page description in place. Nothing else about the stories changes: their identity, publication dates and list-page descriptions are untouched, so readers see no duplicates.
 
 ## Subscribe to every feed at once
 

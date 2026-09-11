@@ -134,11 +134,16 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `FLARESOLVERR_URL` | empty | Trusted service base URL or `/v1` endpoint |
 | `FLARESOLVERR_TIMEOUT` | `60s` | 5s–2m solver deadline, independent of `FETCH_TIMEOUT` |
 | `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |
-| `MAX_ITEMS` | `500` | 1–10,000 retained items per feed |
+| `MAX_ITEMS` | `500` | 1–10,000 retained items per feed. **Applies to already-saved stories**: lowering it deletes the excess at the next refresh of each feed, permanently |
 | `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
 | `RSS_IMAGE` | empty; `latest` browser or `latest-static` | Optional moving tag, version pin or digest; must match the selected runtime |
 | `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
 | `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; see [log detail](operations.md#log-detail) |
+| `LOG_FORMAT` | `text` | `text` for reading directly, `json` for a log collector |
+| `LOG_MAX_SIZE` | `10m` | Size of each retained container log file |
+| `LOG_MAX_FILES` | `3` | Container log files retained per service |
+| `METRICS_TOKEN` | empty | Enables `/metrics` and is required to scrape it; blank returns 404. See [metrics](operations.md#metrics) |
 
 Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters inside connection-URI passwords. Recreate the container after environment changes; restarting the process invalidates login sessions.
 

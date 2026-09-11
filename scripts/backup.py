@@ -94,7 +94,8 @@ def database_info(path, immutable=False, *, include_schema=False):
             raise ValueError("SQLite foreign-key check failed")
         versions = db.execute("SELECT version FROM schema_version").fetchmany(2)
         if len(versions) != 1 or type(versions[0][0]) is not int or versions[0][0] not in SCHEMA_VERSIONS:
-            raise ValueError("unsupported database schema; this tool supports exactly one version row of 1, 2 or 3")
+            raise ValueError("unsupported database schema; this tool supports exactly one version row of "
+                             + ", ".join(str(v) for v in SCHEMA_VERSIONS))
         counts = {table: db.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in TABLES}
         return {"schema_version": versions[0][0], "counts": counts} if include_schema else counts
 
@@ -127,7 +128,8 @@ def verify_backup(directory):
         raise ValueError("unsupported backup format")
     schema_version = manifest.get("schema_version")
     if type(schema_version) is not int or schema_version not in SCHEMA_VERSIONS:
-        raise ValueError("unsupported backup database schema; this tool supports versions 1, 2 and 3")
+        raise ValueError("unsupported backup database schema; this tool supports versions "
+                         + ", ".join(str(v) for v in SCHEMA_VERSIONS))
     if database.is_symlink() or not database.is_file():
         raise ValueError("rss.db must be a regular file")
     if any(os.path.lexists(str(database) + suffix) for suffix in ("-wal", "-shm", "-journal")):
