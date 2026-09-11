@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Pin the security headers applied to every response. The policy that blocks script execution from an extracted page had no test of its own, so a refactor of the request handler could have dropped it without any check failing.
 - Read only what the article skip list needs during a refresh. Deciding which article pages to fetch previously loaded every stored story for the feed, including the article bodies themselves; with a full feed of long articles that was around 9.5 MiB per refresh against 140 KiB now, multiplied by the number of refreshes running at once.
 - Log when retention deletes saved stories. `MAX_ITEMS` applies to stories already stored, so lowering it permanently removes the excess at each feed's next refresh; that now appears in the log with the feed and the number removed, and is called out in the configuration reference.
 - Show the fetched article body in **Preview items** and make the editor a repair path for it. A selector that matched the wrong part of an article page succeeded silently and could not be corrected: the body was fetched once, preserved by every later refresh, and unaffected by editing the recipe. Previews now display the body, and changing or clearing the article selector discards the stored bodies so later refreshes fetch them again.
