@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -97,4 +98,93 @@ func TestDatabaseConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Logging and metrics are the two settings an operator reaches for when a
+// deployment misbehaves, so an invalid value must fail at startup rather than
+// silently falling back to a default they did not choose.
+func TestLoggingAndMetricsConfig(t *testing.T) {
+	clean := func(t *testing.T) {
+		t.Helper()
+		for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL",
+			"FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS",
+			"STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL",
+			"LOG_LEVEL", "LOG_FORMAT", "METRICS_TOKEN"} {
+			t.Setenv(key, "")
+		}
+		t.Setenv("ADMIN_PASSWORD", "long-test-password")
+	}
+
+	t.Run("defaults", func(t *testing.T) {
+		clean(t)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.LogLevel != slog.LevelInfo || c.LogFormat != "text" {
+			t.Errorf("defaults are level=%v format=%q, want info/text", c.LogLevel, c.LogFormat)
+		}
+		if c.MetricsToken != "" {
+			t.Error("metrics are enabled by default")
+		}
+	})
+
+	for value, want := range map[string]slog.Level{
+		"debug": slog.LevelDebug, "info": slog.LevelInfo,
+		"warn": slog.LevelWarn, "warning": slog.LevelWarn, "error": slog.LevelError,
+		"DEBUG": slog.LevelDebug, "Warn": slog.LevelWarn,
+	} {
+		t.Run("level "+value, func(t *testing.T) {
+			clean(t)
+			t.Setenv("LOG_LEVEL", value)
+			c, err := Load()
+			if err != nil || c.LogLevel != want {
+				t.Fatalf("LOG_LEVEL=%q gave %v (%v)", value, c.LogLevel, err)
+			}
+		})
+	}
+
+	for _, bad := range []string{"verbose", "trace", "1", "info ", "critical"} {
+		t.Run("rejects level "+bad, func(t *testing.T) {
+			clean(t)
+			t.Setenv("LOG_LEVEL", bad)
+			if _, err := Load(); err == nil {
+				t.Fatalf("accepted LOG_LEVEL=%q", bad)
+			}
+		})
+	}
+
+	for _, format := range []string{"text", "json", "JSON"} {
+		t.Run("format "+format, func(t *testing.T) {
+			clean(t)
+			t.Setenv("LOG_FORMAT", format)
+			c, err := Load()
+			if err != nil || c.LogFormat != strings.ToLower(format) {
+				t.Fatalf("LOG_FORMAT=%q gave %q (%v)", format, c.LogFormat, err)
+			}
+		})
+	}
+	t.Run("rejects unknown format", func(t *testing.T) {
+		clean(t)
+		t.Setenv("LOG_FORMAT", "logfmt")
+		if _, err := Load(); err == nil {
+			t.Fatal("accepted an unknown LOG_FORMAT")
+		}
+	})
+
+	t.Run("metrics token", func(t *testing.T) {
+		clean(t)
+		t.Setenv("METRICS_TOKEN", strings.Repeat("k", 32))
+		c, err := Load()
+		if err != nil || c.MetricsToken != strings.Repeat("k", 32) {
+			t.Fatalf("token not accepted: %v", err)
+		}
+	})
+	t.Run("rejects a guessable metrics token", func(t *testing.T) {
+		clean(t)
+		t.Setenv("METRICS_TOKEN", "short")
+		if _, err := Load(); err == nil {
+			t.Fatal("accepted a 5-character metrics token")
+		}
+	})
 }

@@ -10,7 +10,51 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 docker compose logs --tail 30 rss-workshop
 ```
 
-The dashboard reports saved items, refresh status, due feeds, and fetch capacity. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. Refresh logs include the internal feed ID, HTTP status, duration, item count, and success flag; source URLs and reader tokens are omitted.
+The dashboard reports saved items, refresh status, due feeds, and fetch capacity. Chromium/FlareSolverr capacity indicates configuration, not remote-site health.
+
+### Log detail
+
+`LOG_LEVEL` selects how much reaches `docker compose logs`:
+
+| Level | Reports |
+| --- | --- |
+| `debug` | Everything below, plus scheduler activity when feeds are due |
+| `info` (default) | Startup configuration, sign-ins, shutdown, and each completed refresh |
+| `warn` | Only problems: failed refreshes with their reason, and rejected sign-ins |
+| `error` | Only failures: the server stopping, and the database errors that abort a scheduler tick or discard a completed refresh |
+
+The startup line summarizes the running deployment — version, commit, database backend, worker count, whether Chromium, FlareSolverr and metrics are enabled — which is the quickest way to confirm a container is running the configuration you intended.
+
+A failed refresh logs the feed title, its consecutive failure count, and the reason; a successful one logs the item count, HTTP status, and duration. Feed titles appear because they are your own labels, but source URLs, reader links, passwords and session cookies are never logged. A run of `login rejected` lines with a remote address is worth investigating.
+
+`LOG_FORMAT=json` emits one JSON object per line for a log collector such as Loki or Elasticsearch. The default `text` stays easier to read directly.
+
+Docker keeps container logs until the disk fills, so the Compose files rotate them: each service keeps `LOG_MAX_FILES` files of at most `LOG_MAX_SIZE`, defaulting to three 10 MiB files per service. Raise them in `.env` if you need longer history, and remember that `docker compose logs` only reaches back as far as the retained files. To use a different logging driver, such as `journald` or a remote collector, override the `logging` block in an ignored `compose.local.yaml`; its options are driver-specific, so `max-size` and `max-file` may not apply.
+
+### Metrics
+
+Setting `METRICS_TOKEN` enables `GET /metrics` in the Prometheus text format. Leave it blank and the endpoint returns 404, which is the default. Generate a token with `python3 -c 'import secrets; print(secrets.token_hex(24))'` and scrape it as a bearer credential:
+
+```yaml
+scrape_configs:
+  - job_name: rss-workshop
+    authorization:
+      credentials: YOUR_GENERATED_TOKEN
+    static_configs:
+      - targets: ["rss-workshop:8080"]
+```
+
+Aggregates cover the library, saved stories, and refresh/Chromium/FlareSolverr capacity. Per-feed series are labelled with the feed title and its internal ID, so an alert can name the feed that broke:
+
+| Metric | Use |
+| --- | --- |
+| `rss_workshop_feeds_failing` | Feeds whose last refresh failed |
+| `rss_workshop_feed_failures` | Consecutive failures for one feed |
+| `rss_workshop_feed_last_success_timestamp_seconds` | Alert when a feed has not succeeded for too long; `0` means it never has |
+| `rss_workshop_feed_items` | Stories saved for one feed |
+| `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
+
+Because the series name your feeds, the token is a real credential: keep it out of shared dashboards and rotate it by changing `METRICS_TOKEN` and recreating the service. Metrics never include reader links, source URLs, or story content. A library beyond 1,000 feeds keeps every aggregate, but per-feed series cover only the first 1,000 feeds by title, so a scrape stays bounded. Feeds after that have no per-feed series; `rss_workshop_feeds` still counts them.
 
 These examples use the default published browser image, or the matching image selected by `RSS_IMAGE` in `.env`. Include any static, PostgreSQL, VPN, storage, or development build overrides used by your deployment.
 

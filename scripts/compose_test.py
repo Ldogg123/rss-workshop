@@ -70,7 +70,21 @@ class ComposeConfigurationTests(unittest.TestCase):
                          ('latest' if browser else 'latest-static'))
         self.assertEqual(app['pull_policy'], 'always')
 
+    def assert_bounded_logs(self, config):
+        # Docker keeps container logs until the disk fills. An unbounded service
+        # log is a denial-of-service vector for anything that can make the app
+        # write log lines, so every service this project starts must rotate.
+        for name, service in config['services'].items():
+            logging = service.get('logging')
+            self.assertIsNotNone(logging, f'{name} has no logging configuration')
+            options = logging.get('options') or {}
+            self.assertEqual(logging.get('driver'), 'json-file', f'{name} driver')
+            self.assertTrue(options.get('max-size'), f'{name} has no max-size')
+            self.assertTrue(str(options.get('max-file', '')).isdigit(), f'{name} has no max-file')
+            self.assertGreaterEqual(int(options['max-file']), 1, f'{name} max-file')
+
     def assert_runtime(self, config, browser, postgres=False, gluetun=False):
+        self.assert_bounded_logs(config)
         app = config['services']['rss-workshop']
         self.assertTrue(app['read_only'])
         self.assertEqual(app['cap_drop'], ['ALL'])

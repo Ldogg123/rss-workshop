@@ -8,6 +8,8 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,6 +37,9 @@ type App struct {
 	Auth      *auth.Auth
 	BaseURL   string
 	Version   string
+	// MetricsToken enables GET /metrics. Blank leaves the route returning 404,
+	// so counters labelled with feed titles are never published by default.
+	MetricsToken string
 }
 
 func (a *App) Handler() http.Handler {
@@ -84,6 +89,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/feeds/{id}/runs", a.protect(a.runs))
 	mux.HandleFunc("POST /api/feeds/{id}/rotate-token", a.protect(a.rotateToken))
 	mux.HandleFunc("POST /api/preview", a.protect(a.preview))
+	// Not under /api and not session-authenticated: a scraper presents a bearer
+	// token instead. The handler returns 404 when no token is configured.
+	mux.HandleFunc("GET /metrics", a.metrics)
 	mux.HandleFunc("GET /api/opml", a.protect(a.exportOPML))
 	mux.HandleFunc("GET /api/recipes/export", a.protect(a.exportRecipes))
 	mux.HandleFunc("POST /api/recipes/preview", a.protect(a.previewRecipes))
@@ -176,9 +184,25 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s, e := a.Auth.Login(in.Password)
 	if e != nil {
+		// A self-hosted instance is often reachable from a LAN or a proxy, so a
+		// run of these is the signal an operator wants. The attempted password
+		// is never logged, only that one was rejected and from where.
+		//
+		// Throttled attempts are logged at debug instead. They are rejected
+		// before any password check, so an unauthenticated client can produce
+		// them as fast as it can open connections; at warn they would let anyone
+		// fill the host's disk with log lines that carry no extra signal. A real
+		// password rejection costs a bcrypt comparison, which the same limiter
+		// caps at ten per minute.
+		if errors.Is(e, auth.ErrThrottled) {
+			slog.Debug("login throttled", "remote", clientAddr(r))
+		} else {
+			slog.Warn("login rejected", "remote", clientAddr(r), "error", e)
+		}
 		failure(w, 401, e)
 		return
 	}
+	slog.Info("admin signed in", "remote", clientAddr(r))
 	a.Auth.Cookie(w, s)
 	reply(w, 200, map[string]string{"csrf": s.CSRF})
 }
@@ -189,6 +213,16 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 func (a *App) readerLinks(f *model.Feed) {
 	f.RSSURL = a.BaseURL + "/feeds/" + f.RSSToken + ".xml"
 	f.AtomURL = a.BaseURL + "/feeds/" + f.RSSToken + ".atom"
+}
+
+// clientAddr reports who made a request without trusting a forwarded header,
+// which any client can set. Behind a reverse proxy this is the proxy.
+func clientAddr(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func (a *App) list(w http.ResponseWriter, r *http.Request) {

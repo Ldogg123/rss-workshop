@@ -22,6 +22,11 @@ services:
         target: /var/lib/postgresql
         bind:
           create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILES:-3}"
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "rss_workshop", "-d", "rss_workshop"]
       interval: 5s
