@@ -61,7 +61,7 @@ make browser-test
 make docker-smoke
 ```
 
-Use `DOCKER='sudo docker'` with Make when needed; the smoke target forwards it to the Python checks. Direct smoke-script runs can also set `DOCKER='sudo docker'`. These checks require Python 3.9+. Browser tests run with the deployed sandbox profile and Go's race detector. They cover rendering, context isolation, private redirects/subresources, readiness timeouts, slot bounds, process recovery, and the visual editor. The Compose smoke checks use temporary fixture projects and host directories. See [contributing](../CONTRIBUTING.md) for the complete validation workflow.
+Use `DOCKER='sudo docker'` with Make when needed; the smoke target forwards it to the Python checks. Direct smoke-script runs can also set `DOCKER='sudo docker'`. These checks require Python 3.11+. Browser tests run with the deployed sandbox profile and Go's race detector. They cover rendering, context isolation, private redirects/subresources, readiness timeouts, slot bounds, process recovery, and the visual editor. The Compose smoke checks use temporary fixture projects and host directories. See [contributing](../CONTRIBUTING.md) for the complete validation workflow.
 
 Live-site trials are opt-in checks whose source pages may change. With native Chromium installed, run them as a non-root user:
 

@@ -69,7 +69,7 @@ make compose-test
 make check-containers
 ```
 
-The container checks create isolated smoke-test projects and private temporary host directories, and preserve operator storage. `make browser-test` writes synthetic screenshots to ignored `artifacts/browser/`. Go, Python 3.9+, Docker Engine, and Docker Compose are required. No Node installation is needed. `GO`, `PYTHON`, `DOCKER`, and the three image names can be overridden for another local toolchain; use `DOCKER='sudo docker'` only when your Docker installation requires it. CI also checks workflow syntax with a pinned actionlint version.
+The container checks create isolated smoke-test projects and private temporary host directories, and preserve operator storage. `make browser-test` writes synthetic screenshots to ignored `artifacts/browser/`. Go, Python 3.11+, Docker Engine, and Docker Compose are required. No Node installation is needed. `GO`, `PYTHON`, `DOCKER`, and the three image names can be overridden for another local toolchain; use `DOCKER='sudo docker'` only when your Docker installation requires it. CI also checks workflow syntax with a pinned actionlint version.
 
 ## Version and image metadata
 
