@@ -1,0 +1,40 @@
+{
+  "feeds": [
+    {
+      "interval": 900,
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ".story__standfirst"
+        },
+        "date": {
+          "attr": "datetime",
+          "selector": ".story__meta time"
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "src",
+          "selector": ".story__image img"
+        },
+        "items": ".story",
+        "link": {
+          "attr": "href",
+          "selector": ".story__title a"
+        },
+        "mode": "static",
+        "settle_ms": 0,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": ".story__title a"
+        },
+        "type": "css",
+        "wait_selector": ""
+      },
+      "title": "Demo: every field",
+      "url": "http://127.0.0.1:8000/index.html"
+    }
+  ],
+  "format": "rss-workshop.recipes",
+  "version": 1
+}

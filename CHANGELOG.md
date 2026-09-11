@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Replace the example recipes. They targeted five real news sites, extracted only a title and a link, and two relied on generated class names that change whenever those sites deploy; all five of those sites already publish their own feeds. The examples now build feeds from a demo site included in the repository, showing every field, the same feed in CSS and XPath, and filtering combined with full article content. A test imports each shipped example and extracts from that demo site, so they cannot quietly stop working.
 - Pin the security headers applied to every response. The policy that blocks script execution from an extracted page had no test of its own, so a refactor of the request handler could have dropped it without any check failing.
 - Read only what the article skip list needs during a refresh. Deciding which article pages to fetch previously loaded every stored story for the feed, including the article bodies themselves; with a full feed of long articles that was around 9.5 MiB per refresh against 140 KiB now, multiplied by the number of refreshes running at once.
 - Log when retention deletes saved stories. `MAX_ITEMS` applies to stories already stored, so lowering it permanently removes the excess at each feed's next refresh; that now appears in the log with the feed and the number removed, and is called out in the configuration reference.

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Bramblewood Gazette</title>
+  <meta name="description" content="A fictional local newspaper, used as a worked example for building a feed.">
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="index.html">The Bramblewood Gazette</a>
+    <nav class="sections">
+      <a href="index.html">News</a>
+      <a href="index.html">Transport</a>
+      <a href="index.html">Community</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- A single trailed story above the list. It is not an .story card, so a
+         recipe that selects .story alone will not pick it up. -->
+    <section class="lead">
+      <h1 class="lead__title"><a href="articles/harbour.html">Harbour footbridge reopens after two-year refit</a></h1>
+      <p class="lead__standfirst">The eastern span carries pedestrians and cyclists again.</p>
+    </section>
+
+    <section class="stories">
+      <article class="story" data-section="Transport">
+        <a class="story__image" href="articles/harbour.html"><img src="images/harbour.svg" alt="" loading="lazy"></a>
+        <div class="story__text">
+          <p class="story__kicker">Transport</p>
+          <h2 class="story__title"><a href="articles/harbour.html">Harbour footbridge reopens after two-year refit</a></h2>
+          <p class="story__standfirst">The eastern span carries pedestrians and cyclists again, with the long detour through Quay Street finally lifted.</p>
+          <p class="story__meta">By the Gazette newsroom · <time datetime="2026-03-18T07:30:00Z">18 March 2026</time></p>
+        </div>
+      </article>
+      <article class="story" data-section="Transport">
+        <a class="story__image" href="articles/tramway.html"><img src="images/tramway.svg" alt="" loading="lazy"></a>
+        <div class="story__text">
+          <p class="story__kicker">Transport</p>
+          <h2 class="story__title"><a href="articles/tramway.html">Tramway extension reaches Bramblewood Fields</a></h2>
+          <p class="story__standfirst">Services begin in April, adding four stops and cutting the journey from the northern estates to roughly eleven minutes.</p>
+          <p class="story__meta">By the Gazette newsroom · <time datetime="2026-03-16T16:45:00Z">16 March 2026</time></p>
+        </div>
+      </article>
+      <article class="story" data-section="Community">
+        <a class="story__image" href="articles/library.html"><img src="images/library.svg" alt="" loading="lazy"></a>
+        <div class="story__text">
+          <p class="story__kicker">Community</p>
+          <h2 class="story__title"><a href="articles/library.html">Central library returns to seven-day opening</a></h2>
+          <p class="story__standfirst">Sunday hours resume for the first time since the refurbishment, alongside a restored evening timetable on weekdays.</p>
+          <p class="story__meta">By the Gazette newsroom · <time datetime="2026-03-14T09:00:00Z">14 March 2026</time></p>
+        </div>
+      </article>
+      <article class="story story--promoted" data-section="Sponsored">
+        <a class="story__image" href="#"><img src="images/almanac.svg" alt="" loading="lazy"></a>
+        <div class="story__text">
+          <p class="story__kicker">Sponsored</p>
+          <h2 class="story__title"><a href="#">Sponsored: replace your windows before the autumn</a></h2>
+          <p class="story__standfirst">A message from a local glazing firm. Book a survey this month and the call-out fee is waived.</p>
+          <p class="story__meta">By the Gazette newsroom · <time datetime="2026-03-10T08:00:00Z">10 March 2026</time></p>
+        </div>
+      </article>
+      <article class="story" data-section="Community">
+        <a class="story__image" href="articles/almanac.html"><img src="images/almanac.svg" alt="" loading="lazy"></a>
+        <div class="story__text">
+          <p class="story__kicker">Community</p>
+          <h2 class="story__title"><a href="articles/almanac.html">Bramblewood Almanac: a reader’s guide to the spring markets</a></h2>
+          <p class="story__standfirst">Where to find the seasonal stalls, which days are busiest, and what the weather is likely to do to the outdoor pitches.</p>
+          <p class="story__meta">By the Gazette newsroom · <time datetime="2026-03-11T11:15:00Z">11 March 2026</time></p>
+        </div>
+      </article>
+    </section>
+
+    <nav class="pagination"><a href="index.html">Older stories</a></nav>
+  </main>
+
+  <footer class="site-footer">
+    <p>A fictional newspaper used as a worked example. Nothing here is real, and nothing is scraped from anyone.</p>
+  </footer>
+</body>
+</html>

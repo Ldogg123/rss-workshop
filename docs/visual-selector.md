@@ -60,4 +60,4 @@ Suggestions are a starting point: repeated classes may include unrelated cards, 
 
 Repeated-item selectors must return elements, and XPath field selectors must return nodes rather than scalar values such as `count(...)`. Live matching limits expressions to 1,000 characters and repeated items to 1,000 matches; broadly overlapping cards can also exceed the workspace's isolated-copy limit. Content inside discarded embeds, SVG, shadow roots, and interactive controls cannot be selected. Unusual CSS class/ID syntax is omitted from suggestions in favor of element/positional paths. The simplified selection view omits source styles and image downloads.
 
-The [example recipes](examples/all-visual-recipes.json) provide starting points for several public sites. Preview them before use because source layouts can change.
+The [example recipes](examples/) show every field, the CSS and XPath forms of the same feed, and filtering with full article content. They target a demo site included in this repository, so you can import one and watch it work before pointing a recipe at a site you do not control.

@@ -1,0 +1,120 @@
+{
+  "feeds": [
+    {
+      "interval": 900,
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ".story__standfirst"
+        },
+        "date": {
+          "attr": "datetime",
+          "selector": ".story__meta time"
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "src",
+          "selector": ".story__image img"
+        },
+        "items": ".story",
+        "link": {
+          "attr": "href",
+          "selector": ".story__title a"
+        },
+        "mode": "static",
+        "settle_ms": 0,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": ".story__title a"
+        },
+        "type": "css",
+        "wait_selector": ""
+      },
+      "title": "Demo: every field",
+      "url": "http://127.0.0.1:8000/index.html"
+    },
+    {
+      "interval": 900,
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ".//p[@class='story__standfirst']"
+        },
+        "date": {
+          "attr": "",
+          "selector": ".//time/@datetime"
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "",
+          "selector": ".//img/@src"
+        },
+        "items": "//article[contains(@class,'story')]",
+        "link": {
+          "attr": "",
+          "selector": ".//h2[@class='story__title']/a/@href"
+        },
+        "mode": "static",
+        "settle_ms": 0,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": ".//h2[@class='story__title']/a"
+        },
+        "type": "xpath",
+        "wait_selector": ""
+      },
+      "title": "Demo: the same feed with XPath",
+      "url": "http://127.0.0.1:8000/index.html"
+    },
+    {
+      "interval": 900,
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ".story__standfirst"
+        },
+        "date": {
+          "attr": "datetime",
+          "selector": ".story__meta time"
+        },
+        "date_layout": "",
+        "filters": {
+          "exclude": {
+            "field": "title",
+            "keywords": [
+              "Sponsored"
+            ],
+            "op": "contains_any"
+          }
+        },
+        "full_content": {
+          "selector": ".article-body"
+        },
+        "image": {
+          "attr": "src",
+          "selector": ".story__image img"
+        },
+        "items": ".story",
+        "link": {
+          "attr": "href",
+          "selector": ".story__title a"
+        },
+        "mode": "static",
+        "settle_ms": 0,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": ".story__title a"
+        },
+        "type": "css",
+        "wait_selector": ""
+      },
+      "title": "Demo: filters and full article content",
+      "url": "http://127.0.0.1:8000/index.html"
+    }
+  ],
+  "format": "rss-workshop.recipes",
+  "version": 1
+}
