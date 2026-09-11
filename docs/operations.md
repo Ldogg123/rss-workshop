@@ -207,13 +207,13 @@ Direct upgrades are supported from every released SQLite or PostgreSQL app schem
 
 | Existing app release | Stored schema | Startup upgrade to the current app |
 | --- | --- | --- |
-| v0.1.0, v0.1.1 | 1 | 1 → 2 → 3 in one transaction |
-| v0.1.2 | 2 | 2 → 3 in one transaction |
-| v0.2.0 | 3 | Already current |
+| v0.1.0, v0.1.1 | 1 | 1 → 2 → 3 → 4 in one transaction |
+| v0.1.2 | 2 | 2 → 3 → 4 in one transaction |
+| v0.2.0 | 3 | 3 → 4 in one transaction |
 
-Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
+Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description. **Every existing installation migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
 
-Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1, 2 and 3, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
+Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1, 2, 3 and 4, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
 
 For a downgrade, stop the app and restore its pre-upgrade backup into separate storage, then select the matching old image digest or executable. Older apps cannot open a newer schema than they support. Keep the original storage until recovery is verified; there is no in-place schema downgrade. Storage-layout changes, such as [moving an old named volume to a host directory](#move-an-existing-sqlite-volume-to-a-host-directory), are separate from schema upgrades.
 

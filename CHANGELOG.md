@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Correct the upgrade documentation for schema 4. The compatibility table described a v0.2.0 database as already current, which told the users most likely to upgrade that no migration would run and no backup was needed. Document the `LOG_LEVEL`, `LOG_FORMAT`, `LOG_MAX_SIZE`, `LOG_MAX_FILES` and `METRICS_TOKEN` settings in the configuration reference, and note that lowering `MAX_ITEMS` permanently deletes already-saved stories.
 - Hold a feed when its refresh cannot be stored. A failed database write rolls back the feed's schedule along with everything else, so the source was refetched on every scheduler tick for as long as writing failed, while the log reported the refresh as finished. The feed now backs off, the failure reports its reason, and success is no longer claimed for a refresh that stored nothing.
 - Add `LOG_LEVEL` (`debug`, `info`, `warn`, `error`) and `LOG_FORMAT` (`text`, `json`). The startup line now summarizes the running deployment, failed refreshes log their reason and feed title instead of only a success flag, rejected sign-ins are reported with their remote address, and shutdown is logged. Log lines now carry an RFC 3339 timestamp and `level=` field.
 - Rotate container logs in Compose so a long-running or noisy deployment cannot fill the host disk. Each service keeps three 10 MiB files by default, configurable through `LOG_MAX_SIZE` and `LOG_MAX_FILES`.
