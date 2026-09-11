@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `LOG_LEVEL` (`debug`, `info`, `warn`, `error`) and `LOG_FORMAT` (`text`, `json`). The startup line now summarizes the running deployment, failed refreshes log their reason and feed title instead of only a success flag, rejected sign-ins are reported with their remote address, and shutdown is logged. Log lines now carry an RFC 3339 timestamp and `level=` field.
+- Add an optional Prometheus metrics endpoint at `/metrics`, enabled by setting `METRICS_TOKEN` and scraped with that token as a bearer credential. It reports library, refresh and capacity aggregates plus per-feed item counts, failure counts and last-success timestamps. Blank leaves the endpoint returning 404.
 - Add optional full article content: follow each story's link and publish the article body instead of the list-page teaser. Article pages use the guarded static fetcher by default, with a per-feed option to render them like the list page. Each refresh fetches at most 10 articles so a long feed fills in over several refreshes, a failed article keeps its teaser without failing the refresh, and stored bodies are kept when the list page is re-extracted.
 - Advance both databases to schema 4, storing fetched article bodies beside the list-page description. Backups support schemas 1 through 4.
 - Add **Export OPML** to download an OPML 2.0 subscription list of every feed, so a reader can subscribe to the whole library in one import. `/api/opml` defaults to the RSS links and accepts `?format=atom`. The file contains every private reader link, so it requires an admin session and is never cached.

@@ -22,6 +22,9 @@ services:
       FLARESOLVERR_SLOTS: ${FLARESOLVERR_SLOTS:-1}
       MAX_ITEMS: ${MAX_ITEMS:-500}
       ALLOW_CIDRS: ${ALLOW_CIDRS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     volumes:
       - type: bind
         source: ${RSS_DATA_DIR:-./data}

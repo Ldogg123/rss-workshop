@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
@@ -17,6 +18,9 @@ type Config struct {
 	BrowserSlots                                                 int
 	FlareSolverrSlots                                            int
 	Workers, MaxItems                                            int
+	LogLevel                                                     slog.Level
+	LogFormat                                                    string
+	MetricsToken                                                 string
 	Timeout                                                      time.Duration
 	FlareSolverrTimeout                                          time.Duration
 }
@@ -57,6 +61,29 @@ func Load() (Config, error) {
 	c.FlareSolverrTimeout, e = time.ParseDuration(env("FLARESOLVERR_TIMEOUT", "60s"))
 	if e != nil || c.FlareSolverrTimeout < 5*time.Second || c.FlareSolverrTimeout > 2*time.Minute {
 		return c, fmt.Errorf("FLARESOLVERR_TIMEOUT must be between 5s and 2m")
+	}
+	switch strings.ToLower(env("LOG_LEVEL", "info")) {
+	case "debug":
+		c.LogLevel = slog.LevelDebug
+	case "info":
+		c.LogLevel = slog.LevelInfo
+	case "warn", "warning":
+		c.LogLevel = slog.LevelWarn
+	case "error":
+		c.LogLevel = slog.LevelError
+	default:
+		return c, fmt.Errorf("LOG_LEVEL must be debug, info, warn, or error")
+	}
+	c.LogFormat = strings.ToLower(env("LOG_FORMAT", "text"))
+	if c.LogFormat != "text" && c.LogFormat != "json" {
+		return c, fmt.Errorf("LOG_FORMAT must be text or json")
+	}
+	// Blank disables the metrics endpoint entirely rather than publishing feed
+	// names without a credential. This is a scrape credential, not the admin
+	// password: it grants read-only access to counters, never to the library.
+	c.MetricsToken = os.Getenv("METRICS_TOKEN")
+	if c.MetricsToken != "" && len(c.MetricsToken) < 16 {
+		return c, fmt.Errorf("METRICS_TOKEN must be at least 16 characters")
 	}
 	return c, nil
 }

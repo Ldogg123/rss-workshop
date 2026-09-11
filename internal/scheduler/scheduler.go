@@ -141,6 +141,18 @@ func (s *Scheduler) tick(ctx context.Context) {
 	}
 	// Oldest due first prevents a permanently busy queue starving later feeds.
 	sortFeeds(fs)
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		due := 0
+		for _, f := range fs {
+			if f.Enabled && !f.NextRun.After(time.Now()) {
+				due++
+			}
+		}
+		if due > 0 {
+			active, capacity := s.Stats()
+			slog.Debug("scheduler tick", "feeds", len(fs), "due", due, "active", active, "capacity", capacity)
+		}
+	}
 	for _, f := range fs {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
 			continue
@@ -204,7 +216,16 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	if err := s.Store.CompleteWithDiagnostics(saveCtx, f, items, r.ETag, r.LastModified, r.Status, e, r.RetryAfter, p.Diagnostics); err != nil && !errors.Is(err, store.ErrStale) {
 		slog.Error("refresh persistence failed", "feed_id", f.ID)
 	}
-	slog.Info("refresh finished", "feed_id", f.ID, "duration", time.Since(start), "items", len(items), "status", r.Status, "success", e == nil)
+	// A failure is the line an operator actually needs, so it carries the reason
+	// and rises above the routine ones. Titles are the operator's own labels;
+	// source URLs and reader tokens stay out of the log.
+	if e != nil {
+		slog.Warn("refresh failed", "feed", f.Title, "feed_id", f.ID, "error", e,
+			"status", r.Status, "failures", f.Failures+1, "duration", time.Since(start))
+		return
+	}
+	slog.Info("refresh finished", "feed", f.Title, "feed_id", f.ID,
+		"items", len(items), "status", r.Status, "duration", time.Since(start))
 }
 
 // extract is shared by previews and scheduled refreshes. Auto falls back exactly
