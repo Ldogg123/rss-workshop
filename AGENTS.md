@@ -84,7 +84,7 @@ Use focused tests while editing, then run `make check` for Go or application cha
 
 | Change | Additional checks |
 | --- | --- |
-| Visual editor, embedded UI or Chromium integration | `make browser-test` (sandboxed Chromium and UI fixture tests) |
+| Visual editor, embedded UI or Chromium integration | `make browser-test` (sandboxed Chromium and UI fixture tests); add `RSS_UI_DOCS=1` to also refresh `docs/screenshots/` |
 | Dockerfiles, Compose, executable paths or deployment wiring | `make compose-test` (merged configuration) and `make docker-smoke` (both images, including restart persistence) |
 | Both of the above | `make check-containers` |
 | Backup/restore tooling | `make backup-test` and the opt-in Docker roundtrip below |

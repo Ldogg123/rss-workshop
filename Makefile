@@ -9,6 +9,8 @@ SOURCE_URL ?= https://github.com/Ldogg123/rss-workshop
 STATIC_IMAGE ?= rss-workshop:static-check
 BROWSER_IMAGE ?= rss-workshop:browser-check
 BROWSER_TEST_IMAGE ?= rss-workshop:browser-tests
+# Set to 1 to also capture the documentation screenshots into artifacts/browser.
+RSS_UI_DOCS ?= 0
 
 BUILD_ARGS = --build-arg VERSION="$(VERSION)" --build-arg COMMIT="$(COMMIT)" --build-arg BUILD_DATE="$(BUILD_DATE)" --build-arg SOURCE_URL="$(SOURCE_URL)"
 
@@ -58,7 +60,7 @@ browser-test: docker-browser-tests
 		--security-opt seccomp=./deploy/chromium-seccomp.json \
 		--tmpfs /tmp:size=256m,mode=1777 --shm-size=256m --pids-limit 256 --memory 2g \
 		--mount type=bind,src="$(CURDIR)/artifacts/browser",dst=/artifacts \
-		-e RSS_SITE_ARTIFACTS=/artifacts $(BROWSER_TEST_IMAGE)
+		-e RSS_SITE_ARTIFACTS=/artifacts -e RSS_UI_DOCS=$(RSS_UI_DOCS) $(BROWSER_TEST_IMAGE)
 docker-smoke: compose-test docker-static docker-browser
 	DOCKER='$(DOCKER)' RSS_SMOKE_COMPOSE=1 RSS_SMOKE_IMAGE=$(STATIC_IMAGE) $(PYTHON) scripts/smoke.py
 	DOCKER='$(DOCKER)' RSS_SMOKE_COMPOSE=1 RSS_SMOKE_BROWSER=1 RSS_SMOKE_IMAGE=$(BROWSER_IMAGE) $(PYTHON) scripts/smoke.py

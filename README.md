@@ -8,106 +8,114 @@ The default Docker installation includes Chromium for JavaScript pages, SQLite, 
 
 RSS Workshop is designed for people looking for a self-hosted alternative to hosted RSS generators and tools such as Feedless, RSS.app, FetchRSS, and similar website-to-RSS services.
 
-- Fully self-hosted
-- MIT licensed
-- Visual selector editor
-- CSS and XPath support
-- JavaScript rendering with Chromium
-- RSS and Atom output
-- Story include/exclude filters
-- SQLite or PostgreSQL
-- Docker or standalone Linux binary
+- Fully self-hosted, MIT licensed, no account and no third-party service
+- Visual selector editor, with CSS and XPath side by side and live match highlighting
+- JavaScript rendering with sandboxed Chromium, or an optional external FlareSolverr
+- Full article content: follow each story’s link and publish the article, not the teaser
+- Story include/exclude filters with nested rules and bulk keyword lists
+- RSS and Atom output with stable item identities, plus OPML export of every feed
+- Per-feed diagnostics, Prometheus metrics, and verified backup and restore
+- SQLite or PostgreSQL, Docker or a standalone Linux executable
 
 ![RSS Workshop dashboard in dark mode](docs/screenshots/dashboard.png)
 
-Story filtering is included in [v0.2.0](https://github.com/Ldogg123/rss-workshop/releases/tag/v0.2.0), with nested include/exclude rules and bulk lists of up to 500 keywords. See [how filtering works](docs/filtering.md).
-
 ## Quickstart
 
-For a new installation with Docker Engine and Compose installed:
+With Docker Engine and the Compose plugin installed:
 
 ```sh
 git clone https://github.com/Ldogg123/rss-workshop.git
 cd rss-workshop
 cp .env.example .env
 chmod 600 .env
-# Set ADMIN_PASSWORD in .env to your chosen admin password.
+```
+
+Set `ADMIN_PASSWORD` in `.env` to a password of your choosing. There is no default, and the server refuses to start without one.
+
+Create the data directory. RSS Workshop runs as an unprivileged user inside the container and will not create this for you, so that a typo cannot silently start a fresh database somewhere unexpected:
+
+```sh
 sudo mkdir -p -m 700 ./data
 sudo chown 65532:65532 ./data
-sudo chmod 700 ./data
 docker compose up -d --pull always --wait
 ```
 
-Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. App settings are in `.env`; SQLite data is in `./data/rss.db`. Compose downloads `ghcr.io/ldogg123/rss-workshop:latest`, the latest stable browser image.
+Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if your account requires it. SQLite data lives in `./data/rss.db`, and Compose pulls `ghcr.io/ldogg123/rss-workshop:latest`, the current stable image with Chromium.
 
-For LAN access, HTTPS, custom paths, or the smaller static runtime, see [deployment](docs/deployment.md). Check [Releases](https://github.com/Ldogg123/rss-workshop/releases) for versions, [image selection](docs/deployment.md#registry-images) to pin a tag or digest, and [local builds](docs/deployment.md#build-container-images-from-source) for development. Existing named-volume installations should follow the [migration guide](docs/operations.md#move-an-existing-sqlite-volume-to-a-host-directory) first.
+## Your first feed
 
-## Updates
+1. Choose **New feed** and enter a name and the page you want a feed from.
+2. Choose **Choose elements visually**. Click a repeating card on the page, then its title, link, description, image and date. Edit the CSS or XPath beside the live preview to fine-tune what matches.
+3. Optionally turn on **Full article content** to publish each story’s own article body instead of the list-page teaser, and add **Story filters** to keep or drop stories by keyword.
+4. Choose **Preview items** to see exactly what a reader will receive, then save.
+5. Copy the RSS or Atom URL into your reader.
 
-After making a [verified backup](docs/operations.md#backup-and-restore), run:
+Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and three ready-made recipes covering every field, XPath, filtering and full article content. Serve it, import the recipes, and preview: see [examples](docs/examples/).
 
-```sh
-docker compose up -d --pull always --wait
-```
+Reader requests serve saved stories and never fetch the source, so a slow or broken site cannot stall your reader, and a failed refresh keeps the last good output. Anyone holding a feed link can read it; **Reset feed links** revokes a feed’s existing URLs.
 
-Use the same Compose overrides as your installation. The default follows stable releases; `latest` does not replace an already-running container automatically. Keep `RSS_IMAGE` blank to follow the default, or select a [version/digest pin](docs/deployment.md#registry-images). All released database schemas can upgrade directly to the current schema; see [upgrade compatibility and rollback](docs/operations.md#upgrades).
-
-## Run without Docker
-
-Download a Linux `amd64` (x86-64) or `arm64` executable archive and its `.sha256` file from [Releases](https://github.com/Ldogg123/rss-workshop/releases). The executable includes the web UI and SQLite support; Go and Docker are not required. Chromium is optional and installed separately on the host.
-
-Follow [native installation](docs/deployment.md#run-a-prebuilt-executable) to verify the download, set the password and data path, and start the server.
-
-## Optional PostgreSQL
-
-For a fresh PostgreSQL installation, use the preparation above but replace its final startup command with the one below. Generate a password with `python3 -c 'import secrets; print(secrets.token_hex(24))'`, then put the same generated value in both `.env` entries:
-
-```dotenv
-POSTGRES_PASSWORD='YOUR_GENERATED_HEX_PASSWORD'
-DATABASE_URL='postgres://rss_workshop:YOUR_GENERATED_HEX_PASSWORD@postgres:5432/rss_workshop?sslmode=disable'
-```
-
-```sh
-sudo install -d -m 755 ./postgres-data
-docker compose -f compose.yaml -f compose.postgres.yaml up -d --pull always --wait
-```
-
-This includes Chromium and stores PostgreSQL in `./postgres-data`. Both data paths can be changed in `.env`. Switching databases does not migrate existing data; see [PostgreSQL setup](docs/postgresql.md) for existing servers and migration.
-
-## Create a feed
-
-1. Choose **New feed** and enter a name and page URL.
-2. Choose **Choose elements visually**. Select a repeating card, then its title, link, description, image, and date. Edit CSS or XPath beside the live preview to fine-tune the matches.
-3. Optionally turn on **Full article content** to publish each story's own article body instead of the list-page teaser, and add **Story filters** for titles, descriptions, and links. Choose **Preview items**, check the included and excluded results, and save.
-4. Copy the RSS or Atom URL into your reader.
-
-Reader requests use saved items; they never fetch the source. Failed refreshes preserve the last successful output. Anyone with a feed link can read it; **Reset feed links** revokes its existing RSS and Atom URLs.
-
-To subscribe to everything at once, choose **Export OPML** and import the file into your reader. It contains every feed link, so keep it private. See [RSS/Atom output](docs/atom.md#subscribe-to-every-feed-at-once).
-
-For troubleshooting, **Preview items** explains missing or unexpected field values, and **Preview diagnostics** shows fetch and matching details. A saved feed's **Diagnostics** button opens its last 50 refresh results. See [diagnostics and retention](docs/operations.md#feed-diagnostics).
+To subscribe to everything at once, choose **Export OPML** and import the file into your reader. It contains every feed link, so keep it private.
 
 <details>
-<summary>See the visual editor and story filters</summary>
+<summary>See the visual editor, story filters, and full article content</summary>
 
-Choose elements visually and refine CSS/XPath beside the highlighted source page:
+Choose elements visually and refine CSS or XPath beside the highlighted source page:
 
 ![Visual selector editor with live matching highlights](docs/screenshots/visual-selector.png)
 
-Combine include/exclude groups and paste long keyword lists:
+Combine include and exclude groups, and paste long keyword lists:
 
 ![Story filter editor with a 100-phrase condition and optional history cleanup](docs/screenshots/filters.png)
+
+Follow each story’s link and publish the article body rather than the teaser:
+
+![Full article content settings in the feed editor](docs/screenshots/full-content.png)
 
 Screenshots use sample feeds.
 
 </details>
+
+## When something breaks
+
+Sites change their markup, and a feed that quietly stops updating is the usual symptom.
+
+- **Preview items** explains why a story was rejected, field by field.
+- A saved feed’s **Diagnostics** shows its last 50 refreshes with fetch mode, HTTP status, timing, match counts and field samples.
+- `docker compose logs -f rss-workshop` reports each refresh and the reason for any failure; set `LOG_LEVEL` to `warn` for problems only.
+- Setting `METRICS_TOKEN` exposes `/metrics` for Prometheus, including per-feed failure counts and last-success times, so an alert can name the feed that broke.
+
+![Per-feed refresh diagnostics](docs/screenshots/diagnostics.png)
+
+See [diagnostics and retention](docs/operations.md#feed-diagnostics) and [log detail](docs/operations.md#log-detail).
+
+## Updates
+
+After making a [verified backup](docs/operations.md#backup-and-restore), run the same command you installed with:
+
+```sh
+docker compose up -d --pull always --wait
+```
+
+Use the same Compose overrides as your installation. Every released database schema upgrades directly to the current one, in a single transaction, and an older release will refuse to open a newer database — so take the backup first. See [upgrade compatibility and rollback](docs/operations.md#upgrades).
+
+## Other ways to run
+
+| | |
+| --- | --- |
+| **Without Docker** | Download a Linux `amd64` or `arm64` executable from [Releases](https://github.com/Ldogg123/rss-workshop/releases). It includes the web UI and SQLite; Go and Docker are not needed. See [native installation](docs/deployment.md#run-a-prebuilt-executable). |
+| **Behind a reverse proxy** | For HTTPS and remote access. A proxy running in Docker needs `compose.proxy.yaml`; see [reverse proxy](docs/reverse-proxy.md). |
+| **Without Chromium** | `compose.static.yaml` selects a much smaller image for sites that need no JavaScript rendering. |
+| **With PostgreSQL** | `compose.postgres.yaml` adds a database service. See [PostgreSQL setup](docs/postgresql.md); switching databases does not migrate existing data. |
+| **Through a VPN** | `compose.gluetun.yaml` shares an existing Gluetun container’s network. See [VPN networking](docs/gluetun.md). |
+
+Every option is an override applied after `compose.yaml`, for example `docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait`. [Deployment](docs/deployment.md) has the full configuration reference and the order to combine them in.
 
 ## Documentation
 
 - [Visual selectors](docs/visual-selector.md), [story filters](docs/filtering.md), [dates](docs/dates.md), and [RSS/Atom output](docs/atom.md)
 - [Reverse proxy](docs/reverse-proxy.md), [browser rendering](docs/browser.md), [FlareSolverr](docs/flaresolverr.md), and [Gluetun VPN](docs/gluetun.md)
 - [Recipe import/export](docs/recipe-portability.md) and [example recipes](docs/examples/) with a runnable demo site
-- [Backups, restores, and upgrades](docs/operations.md)
+- [Backups, restores, and upgrades](docs/operations.md), and [deployment and configuration](docs/deployment.md)
 - [Development](CONTRIBUTING.md), [repository guide](AGENTS.md), [releases](docs/releases.md), and [changelog](CHANGELOG.md)
 
 ## License and security

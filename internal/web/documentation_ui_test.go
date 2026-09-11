@@ -42,8 +42,26 @@ func TestBrowserUIDocumentation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.Complete(context.Background(), f, []model.Item{{Key: "sample-a", Title: "Sample story", URL: f.URL + "/one"}, {Key: "sample-b", Title: "Another sample story", URL: f.URL + "/two"}}, "", "", 200, nil, 0); err != nil {
-			t.Fatal(err)
+		// The first feed gets a short history, because it is the one the
+		// diagnostics capture opens. Run timestamps come from the clock, so the
+		// runs are spaced rather than written in a tight loop -- four rows all
+		// stamped the same second would read as an artifact in the screenshot.
+		items := []model.Item{{Key: "sample-a", Title: "Sample story", URL: f.URL + "/one"}, {Key: "sample-b", Title: "Another sample story", URL: f.URL + "/two"}}
+		runs := 1
+		if i == 0 {
+			runs = 4
+		}
+		for run := 0; run < runs; run++ {
+			if run > 0 {
+				time.Sleep(1100 * time.Millisecond)
+			}
+			f, err = s.Get(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Complete(context.Background(), f, items, "", "", 200, nil, 0); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	app := &App{Store: s, Scheduler: jobs, Auth: a, Version: "0.2 preview"}
@@ -54,7 +72,9 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	defer stopAlloc()
 	tab, stopTab := chromedp.NewContext(alloc)
 	defer stopTab()
-	tab, cancel := context.WithTimeout(tab, 40*time.Second)
+	// Six captures, including a 100-phrase filter fixture and a live selector
+	// frame, so the budget covers the whole sequence rather than the first half.
+	tab, cancel := context.WithTimeout(tab, 150*time.Second)
 	defer cancel()
 	must := func(actions ...chromedp.Action) {
 		t.Helper()
@@ -91,4 +111,28 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	if counts != "3 valid before filters · 2 included · 1 filtered out" {
 		t.Fatalf("documentation filter fixture result: %s", counts)
 	}
+
+	// Full article content, the newest editor section, with the preview showing
+	// what a reader would receive.
+	must(chromedp.EmulateViewport(820, 760),
+		chromedp.Evaluate(`document.querySelector('#story-filters').open=false;document.querySelector('#full-content').open=true`, nil),
+		chromedp.SetValue(`[name="full_selector"]`, ".article-body"),
+		chromedp.Evaluate(`document.querySelector('[name=full_selector]').dispatchEvent(new Event('input'));`+
+			`document.querySelector('#full-content').scrollIntoView({block:'start'});window.scrollBy(0,-24)`, nil),
+		chromedp.Poll(`document.querySelector('#full-summary').textContent==='On'`, nil),
+		chromedp.Sleep(300*time.Millisecond))
+	captureTrial(t, tab, "docs-full-content")
+
+	// Per-feed diagnostics: the answer to "why did this feed stop working".
+	must(chromedp.EmulateViewport(1100, 1000), chromedp.Click("#close-editor"),
+		chromedp.Evaluate(`document.querySelector('.feed-diagnostics').click()`, nil),
+		chromedp.WaitVisible("#diagnostics-runs"),
+		chromedp.Poll(`document.querySelector('#diagnostics-status').textContent.length>0`, nil))
+	captureTrial(t, tab, "docs-diagnostics")
+
+	// The library in light mode, so the documentation shows both themes.
+	must(chromedp.EmulateViewport(1440, 1000), chromedp.Click("#diagnostics-close"),
+		chromedp.Evaluate(`if(document.documentElement.dataset.theme==='dark')document.querySelector('#theme-toggle').click()`, nil),
+		chromedp.WaitVisible(".feed-card"))
+	captureTrial(t, tab, "docs-dashboard-light")
 }
