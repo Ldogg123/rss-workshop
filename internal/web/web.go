@@ -187,7 +187,18 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		// A self-hosted instance is often reachable from a LAN or a proxy, so a
 		// run of these is the signal an operator wants. The attempted password
 		// is never logged, only that one was rejected and from where.
-		slog.Warn("login rejected", "remote", clientAddr(r), "error", e)
+		//
+		// Throttled attempts are logged at debug instead. They are rejected
+		// before any password check, so an unauthenticated client can produce
+		// them as fast as it can open connections; at warn they would let anyone
+		// fill the host's disk with log lines that carry no extra signal. A real
+		// password rejection costs a bcrypt comparison, which the same limiter
+		// caps at ten per minute.
+		if errors.Is(e, auth.ErrThrottled) {
+			slog.Debug("login throttled", "remote", clientAddr(r))
+		} else {
+			slog.Warn("login rejected", "remote", clientAddr(r), "error", e)
+		}
 		failure(w, 401, e)
 		return
 	}

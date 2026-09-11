@@ -6,6 +6,7 @@ import (
 	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -66,6 +67,12 @@ func (a *Auth) passwordInput(password string) []byte {
 	return []byte(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 }
 
+// ErrThrottled marks a rejection decided before any password check: the minute
+// window or the single hashing slot. These cost the server nothing, so a caller
+// can keep them out of per-request logging that an unauthenticated client would
+// otherwise be able to drive without limit.
+var ErrThrottled = errors.New("login throttled")
+
 func (a *Auth) Login(password string) (Session, error) {
 	a.mu.Lock()
 	now := time.Now()
@@ -77,13 +84,13 @@ func (a *Auth) Login(password string) (Session, error) {
 	limited := a.attempts > 10
 	a.mu.Unlock()
 	if limited {
-		return Session{}, fmt.Errorf("too many login attempts; wait one minute")
+		return Session{}, fmt.Errorf("too many login attempts; wait one minute: %w", ErrThrottled)
 	}
 	select {
 	case a.hashing <- struct{}{}:
 		defer func() { <-a.hashing }()
 	default:
-		return Session{}, fmt.Errorf("login busy; try again shortly")
+		return Session{}, fmt.Errorf("login busy; try again shortly: %w", ErrThrottled)
 	}
 	// Standard externally supplied bcrypt hashes cannot authenticate suffixes
 	// beyond 72 bytes. Reject such candidates instead of accepting a prefix.

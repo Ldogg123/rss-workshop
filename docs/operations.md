@@ -21,7 +21,7 @@ The dashboard reports saved items, refresh status, due feeds, and fetch capacity
 | `debug` | Everything below, plus scheduler activity when feeds are due |
 | `info` (default) | Startup configuration, sign-ins, shutdown, and each completed refresh |
 | `warn` | Only problems: failed refreshes with their reason, and rejected sign-ins |
-| `error` | Only failures that stop the server |
+| `error` | Only failures: the server stopping, and the database errors that abort a scheduler tick or discard a completed refresh |
 
 The startup line summarizes the running deployment — version, commit, database backend, worker count, whether Chromium, FlareSolverr and metrics are enabled — which is the quickest way to confirm a container is running the configuration you intended.
 
@@ -52,7 +52,7 @@ Aggregates cover the library, saved stories, and refresh/Chromium/FlareSolverr c
 | `rss_workshop_feed_items` | Stories saved for one feed |
 | `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
 
-Because the series name your feeds, the token is a real credential: keep it out of shared dashboards and rotate it by changing `METRICS_TOKEN` and recreating the service. Metrics never include reader links, source URLs, or story content. A library beyond 1,000 feeds keeps every aggregate but stops emitting per-feed series, so a scrape stays bounded.
+Because the series name your feeds, the token is a real credential: keep it out of shared dashboards and rotate it by changing `METRICS_TOKEN` and recreating the service. Metrics never include reader links, source URLs, or story content. A library beyond 1,000 feeds keeps every aggregate, but per-feed series cover only the first 1,000 feeds by title, so a scrape stays bounded. Feeds after that have no per-feed series; `rss_workshop_feeds` still counts them.
 
 These examples use the default published browser image, or the matching image selected by `RSS_IMAGE` in `.env`. Include any static, PostgreSQL, VPN, storage, or development build overrides used by your deployment.
 

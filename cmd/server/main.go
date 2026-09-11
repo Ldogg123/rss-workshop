@@ -32,6 +32,11 @@ var commit = "unknown"
 var buildDate = "unknown"
 
 func main() {
+	// Configuration has not been parsed yet, so read the format directly: a
+	// startup failure is exactly the line an operator needs, and it should reach
+	// a log collector in the same shape as every other line. Anything but "json"
+	// falls back to text here, and config.Load reports an invalid value.
+	setupLogging(config.Config{LogLevel: slog.LevelInfo, LogFormat: strings.ToLower(os.Getenv("LOG_FORMAT"))})
 	if e := run(); e != nil {
 		slog.Error("server stopped", "error", e)
 		os.Exit(1)

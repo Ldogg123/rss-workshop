@@ -93,7 +93,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		{"rss_workshop_refresh_capacity", "Concurrent refreshes allowed.", "gauge", capacity},
 		{"rss_workshop_browser_active", "Chromium jobs running now.", "gauge", browser.Active},
 		{"rss_workshop_browser_capacity", "Concurrent Chromium jobs allowed.", "gauge", browser.Capacity},
-		{"rss_workshop_browser_restarts", "Times the Chromium pool has been restarted.", "counter", browser.Restarts},
+		{"rss_workshop_browser_restarts_total", "Times the Chromium pool has been restarted.", "counter", browser.Restarts},
 		{"rss_workshop_browser_ready", "Whether Chromium is available.", "gauge", ready},
 		{"rss_workshop_flaresolverr_active", "FlareSolverr jobs running now.", "gauge", solverActive},
 		{"rss_workshop_flaresolverr_capacity", "Concurrent FlareSolverr jobs allowed.", "gauge", solverCapacity},
@@ -146,9 +146,11 @@ func boolValue(v bool) int {
 	return 0
 }
 
-// escapeLabel applies the Prometheus label-value escaping rules. A feed title
-// is operator-supplied text and may contain any of these.
+// escapeLabel applies the Prometheus label-value escaping rules. A feed title is
+// operator-supplied text: the editor will not produce these, but a recipe import
+// carries any JSON string, and a raw carriage return would split a sample line
+// for a scraper that reads the exposition a line at a time.
 func escapeLabel(v string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`)
 	return r.Replace(v)
 }

@@ -176,6 +176,54 @@ func TestMetricsReportLibraryState(t *testing.T) {
 	}
 }
 
+// A recipe import can carry any JSON string as a title. A raw newline or
+// carriage return inside a label value would split a sample line for a scraper
+// that reads the exposition one line at a time.
+func TestFeedTitlesCannotBreakASampleLine(t *testing.T) {
+	ctx := context.Background()
+	app, s := metricsApp(t, metricsToken)
+	h := app.Handler()
+	hostile := "Line\r\nbreak \"quoted\" \\slash"
+	id, err := s.Save(ctx, model.Feed{Title: hostile, URL: "https://example.com/x",
+		Recipe:   model.Recipe{Type: "css", Items: ".card", Title: model.Field{Selector: "h2"}},
+		Interval: 900, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := serve(h, newRequest("/metrics", "Bearer "+metricsToken)).Body.String()
+	for _, line := range strings.Split(body, "\n") {
+		if strings.ContainsAny(line, "\r") {
+			t.Fatalf("a sample line carries a raw carriage return: %q", line)
+		}
+	}
+	if !strings.Contains(body, `feed="Line\r\nbreak \"quoted\" \\slash"`) {
+		t.Errorf("title was not escaped as Prometheus expects; body:\n%s", body)
+	}
+	// The series is still addressable by the feed's id.
+	if !strings.Contains(body, `id="`+id+`"`) {
+		t.Error("per-feed series lost its id label")
+	}
+	series := parseExposition(t, body)
+	if len(series) == 0 {
+		t.Error("hostile title produced no parseable series")
+	}
+}
+
+// Prometheus names a cumulative counter with a _total suffix.
+func TestCountersUseTheTotalSuffix(t *testing.T) {
+	app, _ := metricsApp(t, metricsToken)
+	body := serve(app.Handler(), newRequest("/metrics", "Bearer "+metricsToken)).Body.String()
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "# TYPE ") || !strings.HasSuffix(line, " counter") {
+			continue
+		}
+		name := strings.Fields(line)[2]
+		if !strings.HasSuffix(name, "_total") {
+			t.Errorf("counter %q does not end in _total", name)
+		}
+	}
+}
+
 func keys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
