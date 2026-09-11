@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -212,8 +213,17 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 				return e
 			}
 		}
-		if _, e = tx.ExecContext(ctx, s.bind(`DELETE FROM items WHERE feed_id=? AND key NOT IN (SELECT key FROM items WHERE feed_id=? ORDER BY published DESC,key LIMIT ?)`), f.ID, f.ID, s.MaxItems); e != nil {
+		// Retention applies to everything already stored, not only to what this
+		// refresh added, so lowering MAX_ITEMS deletes existing stories the next
+		// time each feed refreshes. That is the one irreversible effect an
+		// operator can cause by editing configuration, so say when it happens.
+		pruned, e := tx.ExecContext(ctx, s.bind(`DELETE FROM items WHERE feed_id=? AND key NOT IN (SELECT key FROM items WHERE feed_id=? ORDER BY published DESC,key LIMIT ?)`), f.ID, f.ID, s.MaxItems)
+		if e != nil {
 			return e
+		}
+		if removed, err := pruned.RowsAffected(); err == nil && removed > 0 {
+			slog.Info("stories removed by retention", "feed", f.Title, "feed_id", f.ID,
+				"removed", removed, "max_items", s.MaxItems)
 		}
 		if _, e = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_success=?,etag=?,modified=? WHERE id=?"), now.Unix(), s.opaque(etag), s.opaque(modified), f.ID); e != nil {
 			return e
