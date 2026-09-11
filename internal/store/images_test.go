@@ -67,7 +67,7 @@ func TestLaterImageUpdatesExistingItemAndReaderOutput(t *testing.T) {
 				t.Fatal("later image/content did not merge into the saved story")
 			}
 			for phase, items := range map[string][]model.Item{"before": before, "after": after} {
-				rss, _, err := feedoutput.Render(f, items)
+				rss, _, err := feedoutput.Render(f, items, "", "")
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -215,6 +215,14 @@ func (a *App) readerLinks(f *model.Feed) {
 	f.AtomURL = a.BaseURL + "/feeds/" + f.RSSToken + ".atom"
 }
 
+// version is the build identity reported to readers in the RSS generator.
+func (a *App) version() string {
+	if a.Version == "" {
+		return "dev"
+	}
+	return a.Version
+}
+
 // clientAddr reports who made a request without trusting a forwarded header,
 // which any client can set. Behind a reverse proxy this is the proxy.
 func clientAddr(r *http.Request) string {
@@ -373,7 +381,8 @@ func (a *App) rss(w http.ResponseWriter, r *http.Request) {
 	if atom {
 		b, etag, e = feed.RenderAtom(f, items, a.BaseURL)
 	} else {
-		b, etag, e = feed.Render(f, items)
+		self := a.BaseURL + "/feeds/" + f.RSSToken + ".xml"
+		b, etag, e = feed.Render(f, items, self, "RSS Workshop "+a.version())
 	}
 	if e != nil {
 		http.Error(w, "could not render feed", 500)
@@ -384,12 +393,26 @@ func (a *App) rss(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
 	}
 	w.Header().Set("ETag", etag)
+	w.Header().Set("Last-Modified", f.LastSuccess.UTC().Format(http.TimeFormat))
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	for _, tag := range strings.Split(r.Header.Get("If-None-Match"), ",") {
 		tag = strings.TrimSpace(tag)
 		if tag == "*" || strings.TrimPrefix(tag, "W/") == etag {
 			w.WriteHeader(304)
 			return
+		}
+	}
+	// The ETag hashes the bytes, so it is the stronger validator and answers
+	// first; this only runs for readers and caches that send no If-None-Match
+	// at all, which today receive a full body on every poll. Second granularity
+	// means a refresh within the same second as the client's timestamp would be
+	// missed, so compare strictly.
+	if r.Header.Get("If-None-Match") == "" {
+		if since, err := http.ParseTime(r.Header.Get("If-Modified-Since")); err == nil {
+			if !f.LastSuccess.UTC().Truncate(time.Second).After(since) {
+				w.WriteHeader(304)
+				return
+			}
 		}
 	}
 	w.Write(b)

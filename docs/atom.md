@@ -4,11 +4,15 @@ Each saved feed provides both **Open RSS feed** and **Open Atom feed**, with cop
 
 The formats share one private read token. **Reset feed links** revokes both old URLs. The replacement Atom self link changes, while its feed ID and item IDs remain stable. A new recipe import creates a separate feed identity and separate reader URLs.
 
+Each story publishes its list-page description and, when full article content is enabled, the fetched article. RSS keeps the article in `description`, so no reader loses content it already receives, and repeats it in `content:encoded` for readers that prefer that field. Atom carries the list-page description as `summary` and the article as `content`, so a reader's list view can show the short form. The extracted image is published as `media:content` in RSS and as an enclosure link in Atom, which is where a reader building a card or grid layout looks for a thumbnail; it is also still shown inline, and is no longer repeated when the article body already contains it.
+
+The RSS channel carries `atom:link rel="self"` for rediscovery, `ttl` derived from the feed's refresh interval, `lastBuildDate` from the last successful refresh, and `generator`. Every one of these comes from stored values: serialization never reads the clock, so unchanged stories keep producing identical bytes and a polling reader keeps receiving 304.
+
 Atom responses use `application/atom+xml; charset=utf-8`, the Atom 1.0 namespace, absolute alternate/self links, escaped HTML content, and content-derived ETags. Conditional requests support `If-None-Match`, including weak tags. RSS and Atom have separate ETags. New feeds return HTTP 503 with `Retry-After: 60` until their first successful refresh; failed or empty extraction retains the last successful content.
 
 Atom entry IDs use the same stored GUIDs as RSS. Publication dates remain the saved publication/first-seen values. Entry `updated` uses the last successful observation because the current database does not store a separate per-item content-change timestamp; feed `updated` uses the latest successful refresh or entry timestamp. These are stored timestamps, so reader requests alone never change output bytes. The feed title is used as the fallback feed author, since recipes do not yet extract authors.
 
-Reader responses do not support Last-Modified handling. Recipe files are covered by the [export/import guide](recipe-portability.md). The Atom representation follows [RFC 4287](https://www.rfc-editor.org/rfc/rfc4287).
+Reader responses also carry `Last-Modified` from the last successful refresh and honour `If-Modified-Since`, for readers and caches that do not send `If-None-Match`. When a request carries both validators the ETag decides, because it hashes the bytes while `Last-Modified` has only one-second resolution. Recipe files are covered by the [export/import guide](recipe-portability.md). The Atom representation follows [RFC 4287](https://www.rfc-editor.org/rfc/rfc4287).
 
 ## Full article content
 

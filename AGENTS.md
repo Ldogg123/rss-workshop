@@ -50,6 +50,7 @@ That password is only for local development. The native process reads exported e
 
 ## Behavior to preserve
 
+- Serialization never reads the clock: every value published comes from stored state, so unchanged stories produce identical bytes and a polling reader keeps receiving 304. RSS keeps the full article in `description` and repeats it in `content:encoded`; Atom splits the list-page description into `summary` and the article into `content`. The extracted image is published as media and inline, but only once in the body. Changing any of this rewrites every feed and forces every subscriber to refetch, so batch such changes rather than shipping them one at a time.
 - Reader requests serialize saved items; they must never fetch or render the source. Failed or empty extraction preserves previously saved output. Publication dates and GUIDs remain stable across refreshes, including relative-date estimates.
 - `MAX_ITEMS` is retention over everything stored, not a cap on new stories, so lowering it deletes saved history at the next refresh. It is the only irreversible effect available through configuration: report it in the log when it removes rows, and keep it documented as destructive.
 - A refresh whose result cannot be stored has changed nothing, including the feed's schedule, so the scheduler holds that feed in memory with its own backoff. Without it the source is refetched every tick for as long as the database is unwritable. Such a refresh must report the failure and must not report success.
