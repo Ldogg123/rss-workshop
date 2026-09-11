@@ -44,7 +44,7 @@ That password is only for local development. The native process reads exported e
 | `internal/scheduler` | Shared job limits, refresh scheduling, conditional requests and retries |
 | `internal/feed` | RSS and Atom serialization |
 | `internal/web` | Management/reader routes, visual selection, embedded templates and assets |
-| `testdata`, `docs/examples` | Deterministic HTML fixtures and importable public recipe examples |
+| `testdata`, `docs/examples` | Deterministic HTML fixtures, plus a demo site and the importable recipes built from it |
 | `scripts` | Smoke, backup/restore and release-source tools with Python tests |
 | `.github/workflows`, `deploy` | CI, manual image publication and Chromium sandbox profile |
 
@@ -66,6 +66,8 @@ That password is only for local development. The native process reads exported e
 - Operator Compose files contain no local build. Development explicitly adds `compose.build.yaml` for Chromium, or `compose.build.static.yaml` after `compose.static.yaml` for the static runtime. Preserve their local image names and build policy; see [deployment](docs/deployment.md#build-container-images-from-source). Native release archives support Linux amd64/arm64, include license notices, and use the host's CA store and optional Chromium; they do not load `.env` automatically.
 - Keep concurrency, response sizes, item counts, timeouts and cancellation bounded. Recipe edits must invalidate stale in-flight results and conditional-fetch validators.
 - Preserve destination validation through redirects and exact-IP dialing. Do not bypass it with environment proxies, broad private-network exceptions, or a disabled Chromium sandbox. Local test fixtures use explicit, narrowly scoped network exceptions.
+- The shipped example recipes target the demo site in `docs/examples/demo-site`, not third-party publishers: they must keep working offline, and a test imports every example and extracts from that site. Do not add examples that scrape a real site.
+- Every response carries the security headers set in `Handler`, including unauthenticated and error responses. The content policy is the second layer behind server-side sanitization for extracted markup, so both layers stay tested; the visual selector frame is the one deliberate override and replaces the policy with a stricter sandboxed one.
 - Management mutations require authentication, Origin validation and CSRF protection. Keep the visual page preview isolated and sanitized. Preserve dark mode, field help, and live CSS/XPath highlighting when changing the editor.
 - Require configured admin credentials, without imposing a length policy on `ADMIN_PASSWORD`. Preserve full-password matching for long/Unicode values and compatibility with externally supplied bcrypt hashes.
 - `PUBLIC_BASE_URL` is the stable public origin without a path prefix. Temporary forwarded browser ports do not become deployment configuration. Check the existing origin tests before changing this behavior.

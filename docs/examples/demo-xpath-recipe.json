@@ -1,0 +1,40 @@
+{
+  "feeds": [
+    {
+      "interval": 900,
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ".//p[@class='story__standfirst']"
+        },
+        "date": {
+          "attr": "",
+          "selector": ".//time/@datetime"
+        },
+        "date_layout": "",
+        "image": {
+          "attr": "",
+          "selector": ".//img/@src"
+        },
+        "items": "//article[contains(@class,'story')]",
+        "link": {
+          "attr": "",
+          "selector": ".//h2[@class='story__title']/a/@href"
+        },
+        "mode": "static",
+        "settle_ms": 0,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": ".//h2[@class='story__title']/a"
+        },
+        "type": "xpath",
+        "wait_selector": ""
+      },
+      "title": "Demo: the same feed with XPath",
+      "url": "http://127.0.0.1:8000/index.html"
+    }
+  ],
+  "format": "rss-workshop.recipes",
+  "version": 1
+}
