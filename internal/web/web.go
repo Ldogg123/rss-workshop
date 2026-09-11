@@ -84,6 +84,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/feeds/{id}/runs", a.protect(a.runs))
 	mux.HandleFunc("POST /api/feeds/{id}/rotate-token", a.protect(a.rotateToken))
 	mux.HandleFunc("POST /api/preview", a.protect(a.preview))
+	mux.HandleFunc("GET /api/opml", a.protect(a.exportOPML))
 	mux.HandleFunc("GET /api/recipes/export", a.protect(a.exportRecipes))
 	mux.HandleFunc("POST /api/recipes/preview", a.protect(a.previewRecipes))
 	mux.HandleFunc("POST /api/recipes/import", a.protect(a.importRecipes))
@@ -181,6 +182,15 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	a.Auth.Cookie(w, s)
 	reply(w, 200, map[string]string{"csrf": s.CSRF})
 }
+
+// readerLinks fills the public RSS and Atom URLs for a feed. Both the library
+// listing and the OPML export hand these to readers, so they are derived here
+// once rather than reassembled from the token at each call site.
+func (a *App) readerLinks(f *model.Feed) {
+	f.RSSURL = a.BaseURL + "/feeds/" + f.RSSToken + ".xml"
+	f.AtomURL = a.BaseURL + "/feeds/" + f.RSSToken + ".atom"
+}
+
 func (a *App) list(w http.ResponseWriter, r *http.Request) {
 	fs, e := a.Store.List(r.Context())
 	if e != nil {
@@ -189,8 +199,7 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 	}
 	due := 0
 	for i := range fs {
-		fs[i].RSSURL = a.BaseURL + "/feeds/" + fs[i].RSSToken + ".xml"
-		fs[i].AtomURL = a.BaseURL + "/feeds/" + fs[i].RSSToken + ".atom"
+		a.readerLinks(&fs[i])
 		if fs[i].Enabled && !fs[i].NextRun.After(time.Now()) {
 			due++
 		}
