@@ -29,6 +29,8 @@ A failed refresh logs the feed title, its consecutive failure count, and the rea
 
 `LOG_FORMAT=json` emits one JSON object per line for a log collector such as Loki or Elasticsearch. The default `text` stays easier to read directly.
 
+Docker keeps container logs until the disk fills, so the Compose files rotate them: each service keeps `LOG_MAX_FILES` files of at most `LOG_MAX_SIZE`, defaulting to three 10 MiB files per service. Raise them in `.env` if you need longer history, and remember that `docker compose logs` only reaches back as far as the retained files. To use a different logging driver, such as `journald` or a remote collector, override the `logging` block in an ignored `compose.local.yaml`; its options are driver-specific, so `max-size` and `max-file` may not apply.
+
 ### Metrics
 
 Setting `METRICS_TOKEN` enables `GET /metrics` in the Prometheus text format. Leave it blank and the endpoint returns 404, which is the default. Generate a token with `python3 -c 'import secrets; print(secrets.token_hex(24))'` and scrape it as a bearer credential:

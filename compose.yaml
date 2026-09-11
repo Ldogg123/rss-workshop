@@ -43,3 +43,11 @@ services:
     pids_limit: 256
     mem_limit: 2g
     stop_grace_period: 20s
+    # Docker keeps container logs forever by default, so a long-running or noisy
+    # deployment can fill the host disk. Change the size or count in .env; for a
+    # different logging driver, override this block in compose.local.yaml.
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: "${LOG_MAX_FILES:-3}"
