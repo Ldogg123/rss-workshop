@@ -1,3 +1,4 @@
+-- Frozen schema-4 fixture for migration compatibility tests.
 CREATE TABLE schema_version(version INTEGER NOT NULL);
 INSERT INTO schema_version VALUES(4);
 CREATE TABLE feeds (

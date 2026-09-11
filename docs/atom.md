@@ -10,6 +10,18 @@ Atom entry IDs use the same stored GUIDs as RSS. Publication dates remain the sa
 
 Reader responses do not support Last-Modified handling. Recipe files are covered by the [export/import guide](recipe-portability.md). The Atom representation follows [RFC 4287](https://www.rfc-editor.org/rfc/rfc4287).
 
+## Full article content
+
+By default a story's description is whatever the list page shows, which is often a short teaser. **Full article content** in the feed editor follows each story's own link, extracts the article body from that page with a CSS or XPath selector, and publishes that instead. The selector runs against the article page, so XPath here is absolute (`//div[@class="article-body"]`) rather than relative like the per-field selectors.
+
+Article pages are fetched as plain HTML through the same guarded fetcher as list pages, with the same destination checks, redirect validation and size limits. Rendering them with Chromium or FlareSolverr is an explicit per-feed option, because a feed has many article pages and the browser pool is shared with every other feed.
+
+Each refresh fetches at most 10 article pages, so a long feed fills in over several refreshes rather than in one burst; nothing is skipped permanently. A story is fetched once and then left alone, except within the first hour after it is discovered, when it is re-fetched so a source that finishes an article shortly after listing it is picked up. An article that cannot be fetched or whose selector matches nothing keeps the list-page description and records a warning in diagnostics; it never fails the refresh or removes the story.
+
+Fetched bodies are stored separately from the list-page description. Re-extracting the list page every refresh therefore keeps updating a preview image published after the story went live, without discarding an article body already retrieved. The current image is published with the article body, so a late image still reaches the reader.
+
+**Preview items** fetches the first 3 articles only. It runs while you wait and must not fan out a request for every story on the page, so a preview shows that the selector works rather than building the whole feed.
+
 ## Subscribe to every feed at once
 
 **Export OPML** downloads `rss-workshop.opml`, an [OPML 2.0](http://opml.org/spec2.opml) subscription list naming every feed in the library. Import it into your reader to subscribe to all of them in one step, instead of copying each URL by hand. Add `?format=atom` to `/api/opml` for a list of Atom links; the default advertises the RSS ones, which more readers accept.

@@ -21,17 +21,25 @@ import backup
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def fixture_database(path, *, schema_version=3):
+CURRENT_SCHEMA = 4
+
+
+def fixture_database(path, *, schema_version=CURRENT_SCHEMA):
     db = sqlite3.connect(path)
-    schema = (ROOT / "internal/store/schema.sql" if schema_version == 3 else
+    schema = (ROOT / "internal/store/schema.sql" if schema_version == CURRENT_SCHEMA else
               ROOT / f"internal/store/testdata/schema_v{schema_version}.sql")
     db.executescript(schema.read_text())
     recipe = json.dumps({"mode": "static", "type": "css", "items": "article", "title": {"selector": "h2"}})
     db.execute("INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES(?,?,?,?,?,60,0,0)",
                ("fixture-feed", "fixture-token", "Backup fixture", "https://example.org/", recipe))
-    db.execute("INSERT INTO items VALUES(?,?,?,?,?,?,?,?,?,?)",
-               ("fixture-feed", "fixture-key", "fixture-guid", "Saved story", "https://example.org/story",
-                "<p>Saved content</p>", "", 123, 124, 125))
+    # Schema 4 stores the fetched article body beside the list-page teaser.
+    columns = "feed_id,key,guid,title,url,html,image,published,first_seen,last_seen"
+    values = ["fixture-feed", "fixture-key", "fixture-guid", "Saved story", "https://example.org/story",
+              "<p>Saved content</p>", "", 123, 124, 125]
+    if schema_version >= 4:
+        columns = "feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen"
+        values.insert(7, "<p>Full article</p>")
+    db.execute(f"INSERT INTO items({columns}) VALUES({','.join('?' * len(values))})", values)
     db.execute("INSERT INTO runs(feed_id,ended,status,count,error) VALUES(?,126,200,1,'')", ("fixture-feed",))
     db.commit()
     return db
@@ -65,7 +73,7 @@ class BackupTests(unittest.TestCase):
             source = root / "source"
             source.mkdir()
             with contextlib.closing(fixture_database(source / "rss.db")) as db:
-                self.assertEqual(db.execute("SELECT version FROM schema_version").fetchall(), [(3,)])
+                self.assertEqual(db.execute("SELECT version FROM schema_version").fetchall(), [(CURRENT_SCHEMA,)])
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA wal_autocheckpoint=0")
                 db.execute("UPDATE runs SET diagnostics=?", (diagnostics,))
@@ -83,7 +91,7 @@ class BackupTests(unittest.TestCase):
                     manifest = backup.backup_locked("fixture-container", root / "backup")
                     self.assertEqual(docker.call_count, 1)
             self.assertEqual(manifest["version"], 1)
-            self.assertEqual(manifest["schema_version"], 3)
+            self.assertEqual(manifest["schema_version"], CURRENT_SCHEMA)
             self.assertEqual(manifest["counts"], {"feeds": 1, "items": 1, "runs": 1})
             self.assertEqual(backup.verify_backup(root / "backup"), manifest)
             self.assertFalse((root / "backup/rss.db-wal").exists())
@@ -91,7 +99,7 @@ class BackupTests(unittest.TestCase):
                 backup.restore_directory(root / "backup", root / "restored")
             self.assertEqual(backup.checksum(root / "restored/rss.db"), manifest["sha256"])
             with contextlib.closing(sqlite3.connect(root / "restored/rss.db")) as restored:
-                self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(3,)])
+                self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(CURRENT_SCHEMA,)])
                 self.assertEqual(restored.execute("SELECT diagnostics FROM runs").fetchall(), [(diagnostics,)])
                 self.assertEqual(restored.execute("SELECT name FROM sqlite_master WHERE type='index' "
                                                   "AND name='runs_feed_history'").fetchall(), [("runs_feed_history",)])
@@ -130,7 +138,7 @@ class BackupTests(unittest.TestCase):
                 self.assertEqual(backup.database_info(root / "restored/rss.db"), manifest["counts"])
 
     def test_manifest_schema_must_match_database_before_restore(self):
-        for version in (1, 2, 3):
+        for version in (1, 2, 3, 4):
             with self.subTest(schema_version=version), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
                 fixture_database(root / "source.db", schema_version=version).close()
@@ -142,7 +150,7 @@ class BackupTests(unittest.TestCase):
                 self.assert_backup_rejected_before_restore(root, "metadata does not match")
 
     def test_unsupported_manifest_schema_rejected_before_restore(self):
-        for version in (4, 0, None, True, "3", 3.0):
+        for version in (CURRENT_SCHEMA + 1, 0, None, True, "3", 3.0):
             with self.subTest(schema_version=version), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
                 fixture_database(root / "source.db").close()
@@ -159,7 +167,7 @@ class BackupTests(unittest.TestCase):
             fixture_database(root / "source.db").close()
             make_backup(root / "source.db", root / "backup")
             with contextlib.closing(sqlite3.connect(root / "backup/rss.db")) as db:
-                db.execute("UPDATE schema_version SET version=4")
+                db.execute("UPDATE schema_version SET version=%d" % (CURRENT_SCHEMA + 1))
                 db.commit()
             path = root / "backup/manifest.json"
             manifest = json.loads(path.read_text())
@@ -169,7 +177,7 @@ class BackupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported database schema"):
                 backup.snapshot_database(root / "backup/rss.db", root / "future-snapshot.db")
             self.assertFalse((root / "future-snapshot.db").exists())
-            manifest["schema_version"] = 4
+            manifest["schema_version"] = CURRENT_SCHEMA + 1
             path.write_text(json.dumps(manifest))
             self.assert_backup_rejected_before_restore(root, "unsupported backup database schema")
 

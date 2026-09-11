@@ -20,6 +20,19 @@ type Recipe struct {
 	DateLayout   string     `json:"date_layout"`
 	Timezone     string     `json:"timezone"`
 	Filters      *FilterSet `json:"filters,omitempty"`
+	// Optional per-item article fetching. Nil leaves a feed built from its
+	// list page alone, which stays the default for every existing recipe.
+	Full *FullContent `json:"full_content,omitempty"`
+}
+
+// FullContent follows each item's own link and extracts the article body from
+// that page. Selector uses the recipe's existing CSS/XPath Type. Browser opts a
+// single feed into its configured fetch mode for articles; the default is the
+// plain guarded fetcher, which is cheap enough to run on every refresh.
+type FullContent struct {
+	Selector string `json:"selector"`
+	Attr     string `json:"attr,omitempty"`
+	Browser  bool   `json:"browser,omitempty"`
 }
 type Feed struct {
 	ID           string    `json:"id"`
@@ -42,12 +55,17 @@ type Feed struct {
 	AtomURL      string    `json:"atom_url,omitempty"`
 }
 type Item struct {
-	Key       string    `json:"key"`
-	GUID      string    `json:"guid"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	HTML      string    `json:"html"`
-	Image     string    `json:"image"`
+	Key   string `json:"key"`
+	GUID  string `json:"guid"`
+	Title string `json:"title"`
+	URL   string `json:"url"`
+	HTML  string `json:"html"`
+	Image string `json:"image"`
+	// FullHTML is the article body fetched from the item's own page. It is
+	// stored separately from HTML so that re-extracting the list page each
+	// refresh keeps updating the teaser and any late-published preview image
+	// without discarding article content already retrieved.
+	FullHTML  string    `json:"full_html,omitempty"`
 	Published time.Time `json:"published"`
 	// Preview-only provenance. The stored publication timestamp remains fixed
 	// after first discovery; these fields are not part of the database record.

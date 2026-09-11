@@ -83,6 +83,28 @@ func validateSelectors(r model.Recipe) error {
 			}
 		}
 	}
+	// The article selector runs against the item's own page, not against a card
+	// on the list page, so XPath here is absolute like Items rather than
+	// relative like the per-field selectors.
+	if r.Full != nil {
+		s := strings.TrimSpace(r.Full.Selector)
+		if s == "" {
+			return fmt.Errorf("full article content needs a selector for the article body")
+		}
+		if len(s) > 1000 {
+			return fmt.Errorf("selector exceeds 1000 characters")
+		}
+		if len(r.Full.Attr) > 200 {
+			return fmt.Errorf("attribute name exceeds 200 characters")
+		}
+		if r.Type == "css" {
+			if _, e := cascadia.Compile(s); e != nil {
+				return fmt.Errorf("invalid CSS selector for the article body: %w", e)
+			}
+		} else if _, e := xpath.Compile(s); e != nil {
+			return fmt.Errorf("invalid XPath selector for the article body: %w", e)
+		}
+	}
 	if r.Timezone != "" {
 		if _, e := time.LoadLocation(r.Timezone); e != nil {
 			return fmt.Errorf("unknown time zone")

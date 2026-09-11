@@ -1,3 +1,6 @@
+-- Frozen schema-4 fixture for migration compatibility tests.
+CREATE TABLE schema_version(singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), version INTEGER NOT NULL);
+INSERT INTO schema_version(version) VALUES(4);
 CREATE TABLE feeds (
  id TEXT COLLATE "C" PRIMARY KEY, rss_token TEXT NOT NULL UNIQUE,
  title TEXT COLLATE "C" NOT NULL, url TEXT NOT NULL, recipe TEXT NOT NULL,

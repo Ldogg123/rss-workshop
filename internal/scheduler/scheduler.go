@@ -72,6 +72,14 @@ func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, e
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(f.Recipe.Mode))
 	defer cancel()
 	_, p, e := s.extract(ctx, f, true)
+	if e == nil {
+		// A preview fetches a sample rather than every article: it runs while an
+		// operator waits, and it must not become a way to fan out hundreds of
+		// requests from the editor.
+		if w := s.fetchArticles(ctx, f, p.Items, nil, true); len(w) > 0 {
+			p.Warnings = append(p.Warnings, w...)
+		}
+	}
 	return p, e
 }
 
@@ -153,6 +161,23 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	defer cancel()
 	r, p, e := s.extract(ctx, f, false)
 	items := p.Items
+	if e == nil && f.Recipe.Full != nil {
+		// Saved rows say which articles were already retrieved. A read failure
+		// only costs this round its skip list, so it must not fail the refresh.
+		known := map[string]model.Item{}
+		if stored, err := s.Store.Items(ctx, f.ID); err == nil {
+			for _, it := range stored {
+				known[it.Key] = it
+			}
+		}
+		if w := s.fetchArticles(ctx, f, items, known, false); len(w) > 0 && p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
+			last := &p.Diagnostics.Attempts[len(p.Diagnostics.Attempts)-1]
+			// Appended after extract() sanitized the trace, which is safe
+			// because store.encodeDiagnostics sanitizes again on write: stored
+			// article warnings are bounded and have their URLs redacted there.
+			last.Warnings = append(last.Warnings, w...)
+		}
+	}
 	if e == nil && r.Status == 304 {
 		if f.LastSuccess.IsZero() {
 			e = fmt.Errorf("source returned 304 before any successful refresh")

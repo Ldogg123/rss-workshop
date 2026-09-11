@@ -60,8 +60,8 @@ func (a *App) Handler() http.Handler {
 	page := struct {
 		Version                                               string
 		MaxKeywords, MaxNodes, MaxDepth, MaxKeywordCharacters int
-		MaxRuns                                               int
-	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns}
+		MaxRuns, MaxArticles                                  int
+	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns, scheduler.MaxArticlesPerRun}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, page)
