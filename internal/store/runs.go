@@ -12,6 +12,10 @@ import (
 
 const maxDiagnosticsBytes = 64 << 10
 
+// MaxRuns is the per-feed refresh history kept by Save and returned by Runs.
+// The editor renders it too, so the stored, served and displayed limits agree.
+const MaxRuns = 50
+
 func encodeDiagnostics(details *model.RunDiagnostics) string {
 	safe := diagnostics.Sanitize(details)
 	if safe == nil {
@@ -39,13 +43,13 @@ func decodeDiagnostics(raw string) *model.RunDiagnostics {
 	return diagnostics.Sanitize(details)
 }
 
-// Runs returns the latest 50 refresh results for this feed, including older
+// Runs returns the latest MaxRuns refresh results for this feed, including older
 // summary-only rows. Invalid stored details cannot hide the surrounding history.
 func (s *Store) Runs(ctx context.Context, feedID string) (_ []model.Run, err error) {
 	defer s.cleanError(&err)
 	rows, err := s.DB.QueryContext(ctx, s.bind(`SELECT id,ended,status,count,error,
 CASE WHEN length(diagnostics)<=? THEN diagnostics ELSE '' END
-FROM runs WHERE feed_id=? ORDER BY id DESC LIMIT 50`), maxDiagnosticsBytes, feedID)
+FROM runs WHERE feed_id=? ORDER BY id DESC LIMIT ?`), maxDiagnosticsBytes, feedID, MaxRuns)
 	if err != nil {
 		return nil, err
 	}

@@ -185,6 +185,6 @@ For upgrades, back up the database, stop the old process, unpack the new executa
 
 ## Run from source
 
-Use the Go version specified in [go.mod](../go.mod) and Make; tests also require Python 3.9+ and a C compiler. `make build` produces `bin/rss-workshop`. Follow [native configuration](#configure-and-run), then run `./bin/rss-workshop` from the repository root instead of `./rss-workshop`. See [contributing](../CONTRIBUTING.md) for build and test commands.
+Use the Go version specified in [go.mod](../go.mod) and Make; tests also require Python 3.11+ and a C compiler. `make build` produces `bin/rss-workshop`. Follow [native configuration](#configure-and-run), then run `./bin/rss-workshop` from the repository root instead of `./rss-workshop`. See [contributing](../CONTRIBUTING.md) for build and test commands.
 
 Check readiness, sign in through the final URL, and preview a source before connecting readers. Follow [operations](operations.md) for health checks, verified backups, restores, and upgrades.

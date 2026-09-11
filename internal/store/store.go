@@ -224,7 +224,7 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 	if _, e = tx.ExecContext(ctx, s.bind("INSERT INTO runs(feed_id,ended,status,count,error,diagnostics) VALUES(?,?,?,?,?,?)"), f.ID, now.Unix(), status, len(items), msg, encodeDiagnostics(details)); e != nil {
 		return e
 	}
-	if _, e = tx.ExecContext(ctx, s.bind("DELETE FROM runs WHERE feed_id=? AND id NOT IN (SELECT id FROM runs WHERE feed_id=? ORDER BY id DESC LIMIT 50)"), f.ID, f.ID); e != nil {
+	if _, e = tx.ExecContext(ctx, s.bind("DELETE FROM runs WHERE feed_id=? AND id NOT IN (SELECT id FROM runs WHERE feed_id=? ORDER BY id DESC LIMIT ?)"), f.ID, f.ID, MaxRuns); e != nil {
 		return e
 	}
 	return tx.Commit()

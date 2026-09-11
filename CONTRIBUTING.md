@@ -4,7 +4,7 @@ Keep changes focused and include enough information to reproduce a bug or unders
 
 ## Local development
 
-Install the Go version in `go.mod`, Make, Python 3.9 or newer, and a C compiler for race tests. No Node or frontend package installation is required.
+Install the Go version in `go.mod`, Make, Python 3.11 or newer, and a C compiler for race tests. No Node or frontend package installation is required.
 
 ```sh
 go mod download

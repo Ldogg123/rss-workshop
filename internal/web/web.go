@@ -19,6 +19,7 @@ import (
 	"rss-workshop/internal/extract"
 	"rss-workshop/internal/feed"
 	"rss-workshop/internal/fetch"
+	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
 	"rss-workshop/internal/scheduler"
 	"rss-workshop/internal/store"
@@ -54,9 +55,16 @@ func (a *App) Handler() http.Handler {
 	if version == "" {
 		version = "dev"
 	}
+	// The editor renders these bounds and rejects oversized filters before saving.
+	// They come from internal/filter so the UI cannot drift from the validator.
+	page := struct {
+		Version                                               string
+		MaxKeywords, MaxNodes, MaxDepth, MaxKeywordCharacters int
+		MaxRuns                                               int
+	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = tmpl.Execute(w, struct{ Version string }{Version: version})
+		_ = tmpl.Execute(w, page)
 	})
 	mux.HandleFunc("GET /feeds/{id}", a.rss)
 	mux.HandleFunc("POST /api/login", a.login)
