@@ -3,7 +3,8 @@ name: CI
 on:
   push:
     # Feature branches are covered by pull_request; release publication calls
-    # this workflow explicitly, so pushing a tag needs no extra CI run.
+    # this workflow explicitly, so pushing a tag needs no extra CI run. A push
+    # to main runs the Go matrix only -- see the postgres job below.
     branches: [main]
     paths-ignore:
       - '*.md'
@@ -69,6 +70,12 @@ jobs:
 
   postgres:
     name: PostgreSQL persistence and native workflow
+    # Pull requests, manual runs and release calls get the whole matrix. A push
+    # to main is the merge of a pull request that just ran it, so repeating the
+    # slow half doubles the cost of every merge to re-test the same tree. The
+    # Go job still runs, which is what catches a merge that breaks main because
+    # another branch landed in between.
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
@@ -101,6 +108,7 @@ jobs:
 
   containers:
     name: Containers and sandboxed browser (${{ matrix.arch }})
+    if: github.event_name != 'push'
     needs: [go, postgres]
     strategy:
       fail-fast: false
