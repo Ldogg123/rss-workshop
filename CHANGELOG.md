@@ -1,25 +1,46 @@
 # Changelog
 
-## Unreleased
+## v1.0.0 — 2026-09-12
 
-- Reorganize the README around getting started: install, make a first feed, and diagnose a broken one, with the installation variants moved below them into one table. Group `.env.example` into required, storage, fetching, logging and integration sections. Refresh the screenshots and add captures of full article content and per-feed diagnostics; `make browser-test RSS_UI_DOCS=1` regenerates them.
-- Add `compose.proxy.yaml` and a [reverse proxy guide](docs/reverse-proxy.md) for a proxy that runs in Docker. The default publishes `127.0.0.1:8080`, which a proxy container cannot reach, and the documentation said a shared network was needed without providing one. The override stops publishing a host port and joins an existing network, leaving an optional PostgreSQL service reachable by the app and unreachable from the proxy.
-- Complete the published feed. The list-page description was discarded whenever full article content was enabled, the extracted image was published twice when the article body already contained it, and the image reached readers only inline, so readers that build card layouts showed no thumbnail. RSS now keeps the article in `description` and repeats it in `content:encoded`, Atom carries the description as `summary` and the article as `content`, and the image is published as `media:content` and as an Atom enclosure. The RSS channel gains `atom:link rel="self"`, `ttl`, `lastBuildDate` and `generator`. Reader responses also honour `If-Modified-Since`, with the ETag taking precedence when both validators are sent. **Every feed's bytes change once with this release, so subscribed readers refetch once**; stories keep their identities and dates, so no reader shows duplicates.
-- Replace the example recipes. They targeted five real news sites, extracted only a title and a link, and two relied on generated class names that change whenever those sites deploy; all five of those sites already publish their own feeds. The examples now build feeds from a demo site included in the repository, showing every field, the same feed in CSS and XPath, and filtering combined with full article content. A test imports each shipped example and extracts from that demo site, so they cannot quietly stop working.
-- Pin the security headers applied to every response. The policy that blocks script execution from an extracted page had no test of its own, so a refactor of the request handler could have dropped it without any check failing.
-- Read only what the article skip list needs during a refresh. Deciding which article pages to fetch previously loaded every stored story for the feed, including the article bodies themselves; with a full feed of long articles that was around 9.5 MiB per refresh against 140 KiB now, multiplied by the number of refreshes running at once.
-- Log when retention deletes saved stories. `MAX_ITEMS` applies to stories already stored, so lowering it permanently removes the excess at each feed's next refresh; that now appears in the log with the feed and the number removed, and is called out in the configuration reference.
-- Show the fetched article body in **Preview items** and make the editor a repair path for it. A selector that matched the wrong part of an article page succeeded silently and could not be corrected: the body was fetched once, preserved by every later refresh, and unaffected by editing the recipe. Previews now display the body, and changing or clearing the article selector discards the stored bodies so later refreshes fetch them again.
-- Correct the upgrade documentation for schema 4. The compatibility table described a v0.2.0 database as already current, which told the users most likely to upgrade that no migration would run and no backup was needed. Document the `LOG_LEVEL`, `LOG_FORMAT`, `LOG_MAX_SIZE`, `LOG_MAX_FILES` and `METRICS_TOKEN` settings in the configuration reference, and note that lowering `MAX_ITEMS` permanently deletes already-saved stories.
-- Hold a feed when its refresh cannot be stored. A failed database write rolls back the feed's schedule along with everything else, so the source was refetched on every scheduler tick for as long as writing failed, while the log reported the refresh as finished. The feed now backs off, the failure reports its reason, and success is no longer claimed for a refresh that stored nothing.
-- Add `LOG_LEVEL` (`debug`, `info`, `warn`, `error`) and `LOG_FORMAT` (`text`, `json`). The startup line now summarizes the running deployment, failed refreshes log their reason and feed title instead of only a success flag, rejected sign-ins are reported with their remote address, and shutdown is logged. Log lines now carry an RFC 3339 timestamp and `level=` field.
-- Rotate container logs in Compose so a long-running or noisy deployment cannot fill the host disk. Each service keeps three 10 MiB files by default, configurable through `LOG_MAX_SIZE` and `LOG_MAX_FILES`.
-- Add an optional Prometheus metrics endpoint at `/metrics`, enabled by setting `METRICS_TOKEN` and scraped with that token as a bearer credential. It reports library, refresh and capacity aggregates plus per-feed item counts, failure counts and last-success timestamps. Blank leaves the endpoint returning 404.
-- Add optional full article content: follow each story's link and publish the article body instead of the list-page teaser. Article pages use the guarded static fetcher by default, with a per-feed option to render them like the list page. Each refresh fetches at most 10 articles so a long feed fills in over several refreshes, a failed article keeps its teaser without failing the refresh, and stored bodies are kept when the list page is re-extracted.
-- Advance both databases to schema 4, storing fetched article bodies beside the list-page description. Backups support schemas 1 through 4.
-- Add **Export OPML** to download an OPML 2.0 subscription list of every feed, so a reader can subscribe to the whole library in one import. `/api/opml` defaults to the RSS links and accepts `?format=atom`. The file contains every private reader link, so it requires an admin session and is never cached.
-- Publish stable container aliases: `latest` and `latest-browser` include Chromium; `latest-static` selects the lightweight runtime. Compose follows these aliases and checks for updates when recreating the service, with version and digest pins still available.
-- Preserve direct upgrades from every released SQLite/PostgreSQL schema with frozen schema fixtures and tests that compare all saved feed, item, and run data across upgrade and reopening. Retain every released migration as future schemas are added.
+First stable release. RSS Workshop turns pages that publish no feed into RSS and Atom feeds you keep, and 1.0 is the point at which its upgrade path, configuration surface and reader URLs become commitments rather than implementation details. See [upgrades](docs/operations.md#upgrades) before installing over an existing deployment.
+
+### Upgrading from v0.2.0
+
+- **Take a backup first.** Starting this version migrates the database to schema 4 in a single transaction. Every released schema upgrades directly, but an older release cannot open a newer database, so rolling back needs a backup taken *before* the upgrade. See [backup and restore](docs/operations.md#backup-and-restore).
+- **Readers refetch once.** Published feeds carry more than they did, so every feed's bytes change once and subscribed readers fetch a full copy on their next poll. Stories keep their identities and publication dates, so nobody sees a duplicate.
+- **Container logs now rotate**, at three 10 MiB files per service. `docker compose logs` reaches back only as far as the retained files.
+
+### Feeds readers actually want
+
+- **Full article content.** Follow each story's own link, extract the article body, and publish that instead of the list page's one-line teaser. Off by default and configured per feed. Article pages are fetched with the same guarded fetcher as list pages, at most 10 per refresh so a long feed fills in over several cycles, and an article that cannot be fetched keeps its teaser rather than dropping the story or failing the refresh.
+- **Better published feeds.** RSS keeps the article in `description` and repeats it in `content:encoded`; Atom carries the list-page description as `summary` and the article as `content`. The extracted image is published as `media:content` and as an Atom enclosure, where readers look for a thumbnail, and is no longer repeated when the article body already contains it. The RSS channel gains `atom:link rel="self"`, `ttl`, `lastBuildDate` and `generator`.
+- **Conditional requests.** Reader responses honour `If-Modified-Since` alongside the existing ETag, so a reader polling from several devices costs validators rather than full copies.
+- **OPML export.** Download a subscription list of every feed and import it into your reader in one step. It contains every private reader link, so it requires an admin session and is never cached.
+
+### Knowing when something breaks
+
+- **Log levels.** `LOG_LEVEL` selects `debug`, `info`, `warn` or `error`, and `LOG_FORMAT` switches to JSON for a log collector. The startup line summarizes the running deployment, failed refreshes report their reason and feed, rejected sign-ins are reported with their remote address, and shutdown is logged.
+- **Prometheus metrics.** Setting `METRICS_TOKEN` enables `/metrics`, scraped with that token as a bearer credential; blank leaves the endpoint returning 404. Per-feed series carry item counts, consecutive failures and last-success timestamps, so an alert can name the feed that broke.
+- **A failed database write no longer hammers the source.** Such a refresh rolls back the feed's schedule along with everything else, so the source was refetched on every scheduler tick for as long as writing failed, while the log reported success. The feed now backs off, and the failure reports its reason.
+- **Retention is visible.** `MAX_ITEMS` applies to stories already saved, so lowering it permanently deletes the excess at each feed's next refresh. That now appears in the log and is documented as destructive.
+
+### Running it
+
+- **Reverse proxy support.** `compose.proxy.yaml` and a [guide](docs/reverse-proxy.md) for a proxy running in Docker, which cannot reach the default loopback publication.
+- **Container log rotation**, configurable through `LOG_MAX_SIZE` and `LOG_MAX_FILES`.
+- **Stable image aliases.** `latest` and `latest-browser` include Chromium; `latest-static` selects the lightweight runtime. Compose follows these aliases, with version and digest pins still available.
+- **Direct upgrades from every released schema**, with frozen per-backend fixtures and tests comparing all saved feed, item and run data across upgrade and reopening. Backups support schemas 1 through 4.
+
+### Editor and examples
+
+- **Full article content is inspectable and repairable.** Previews show the fetched body, so a selector matching the wrong block is visible before saving, and changing or clearing the selector discards the stored bodies so later refreshes fetch them again.
+- **New example recipes.** The previous examples targeted five real news sites that all publish their own feeds, extracted only a title and link, and two relied on generated class names that change whenever those sites deploy. They are replaced by a demo site included in the repository, with recipes covering every field, CSS and XPath, and filtering with full article content. A test imports each example and extracts from that site.
+- **Reorganized documentation.** The README follows install, first feed, and diagnosing a broken one, with installation variants collected below; `.env.example` is grouped by purpose. Screenshots are refreshed and now include full article content and per-feed diagnostics.
+
+### Internal
+
+- Security headers applied to every response are pinned by a test; the content policy is the second layer behind sanitization for extracted markup and previously had no coverage of its own.
+- A refresh no longer loads every stored article body to decide which article pages to fetch.
 
 ## v0.2.0 — 2026-09-08
 

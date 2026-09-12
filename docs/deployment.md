@@ -60,10 +60,10 @@ The default Compose files follow stable releases. These moving tags point to the
 | `ghcr.io/ldogg123/rss-workshop:latest-browser` | Explicit alias for the same browser image |
 | `ghcr.io/ldogg123/rss-workshop:latest-static` | Static default |
 
-To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. The published `v0.2.0-browser` and `v0.2.0-static` tags remain available; for example:
+To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.0.0-browser` and `v1.0.0-static` remain available unchanged; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v0.2.0-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.0.0-browser
 ```
 
 Recreate the app with the same runtime and other overrides used by your installation:
@@ -153,14 +153,14 @@ Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chro
 
 Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For example, download and verify `v0.2.0` for Linux x86-64 in an empty directory:
+For example, download and verify `v1.0.0` for Linux x86-64 in an empty directory:
 
 ```sh
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.2.0/rss-workshop-v0.2.0-linux-amd64.tar.gz
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v0.2.0/rss-workshop-v0.2.0-linux-amd64.tar.gz.sha256
-sha256sum -c rss-workshop-v0.2.0-linux-amd64.tar.gz.sha256
-tar -xzf rss-workshop-v0.2.0-linux-amd64.tar.gz
-cd rss-workshop-v0.2.0-linux-amd64
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.0.0/rss-workshop-v1.0.0-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.0.0/rss-workshop-v1.0.0-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v1.0.0-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v1.0.0-linux-amd64.tar.gz
+cd rss-workshop-v1.0.0-linux-amd64
 ./rss-workshop -version
 ```
 

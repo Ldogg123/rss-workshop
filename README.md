@@ -118,6 +118,19 @@ Every option is an override applied after `compose.yaml`, for example `docker co
 - [Backups, restores, and upgrades](docs/operations.md), and [deployment and configuration](docs/deployment.md)
 - [Development](CONTRIBUTING.md), [repository guide](AGENTS.md), [releases](docs/releases.md), and [changelog](CHANGELOG.md)
 
+## Versioning
+
+From 1.0 these are commitments for the 1.x line:
+
+- **Every released database schema upgrades directly to the current one**, in a single transaction, with a rollback if any step fails. You never need to install an intermediate version.
+- **There is no in-place downgrade.** An older release refuses to open a newer database rather than damaging it, so rolling back means restoring a backup taken before the upgrade. Take one before every upgrade.
+- **Environment variable names do not change.** `STATIC_WORKERS` keeps its name for the life of 1.x even though it governs all refresh and preview slots, not only static ones.
+- **Reader URLs stay stable and private.** Item identities and publication dates never change once a story is first seen, so subscribers never see duplicates or reordering across upgrades.
+- **Reader requests never fetch the source**, and a failed or empty refresh keeps the last good output.
+- **Single admin, one application process per database.** Nothing enforces the one-process rule, so it is yours to keep.
+
+Security fixes are best-effort and apply to the latest release; see [SECURITY.md](SECURITY.md).
+
 ## License and security
 
 RSS Workshop is [MIT licensed](LICENSE). Dependencies retain their own licenses; see [licensing and redistribution](docs/licensing.md) and [dependency notices](docs/dependencies.md). Report vulnerabilities using the process in [SECURITY.md](SECURITY.md).

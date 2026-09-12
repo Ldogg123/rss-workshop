@@ -2,14 +2,14 @@
 
 CI validates changes without publishing release assets. Separate manual workflows publish native executable archives and container images for a matching release tag. Container publication additionally requires verified corresponding-source archives.
 
-The source repository is [Ldogg123/rss-workshop](https://github.com/Ldogg123/rss-workshop). Check [GitHub Releases](https://github.com/Ldogg123/rss-workshop/releases) for published versions and prebuilt image availability. The examples below use `v0.2.0`.
+The source repository is [Ldogg123/rss-workshop](https://github.com/Ldogg123/rss-workshop). Check [GitHub Releases](https://github.com/Ldogg123/rss-workshop/releases) for published versions and prebuilt image availability. The examples below use `v1.0.0`.
 
 ## Images and architectures
 
 | Variant | Example image tag | Runtime |
 | --- | --- | --- |
-| Browser (default) | `ghcr.io/ldogg123/rss-workshop:v0.2.0-browser` | App with the pinned Debian slim Chromium runtime |
-| Static | `ghcr.io/ldogg123/rss-workshop:v0.2.0-static` | Statically linked Go executable, CA certificates and license notices; no shell or local browser |
+| Browser (default) | `ghcr.io/ldogg123/rss-workshop:v1.0.0-browser` | App with the pinned Debian slim Chromium runtime |
+| Static | `ghcr.io/ldogg123/rss-workshop:v1.0.0-static` | Statically linked Go executable, CA certificates and license notices; no shell or local browser |
 
 Both variants support the configured external FlareSolverr service. The browser variant additionally supports local Chromium and Auto rendering. The publishing workflow builds Linux `amd64` and `arm64` manifests for both tags. The lowercased GitHub repository determines the GHCR namespace: `Ldogg123/rss-workshop` publishes under `ghcr.io/ldogg123/rss-workshop`.
 
@@ -19,7 +19,7 @@ The Dockerfiles support cross-compiling the Go app on the builder's native CPU. 
 
 ## Native executable archives
 
-Linux users can download `rss-workshop-v0.2.0-linux-amd64.tar.gz` or `rss-workshop-v0.2.0-linux-arm64.tar.gz`, plus the archive's `.sha256` file. Each extracts into a directory of the same name without `.tar.gz`, containing the executable, `LICENSE`, dependency notices in `licenses/`, and build information. See [native installation](deployment.md#run-a-prebuilt-executable) for checksum verification, environment variables, and persistent storage.
+Linux users can download `rss-workshop-v1.0.0-linux-amd64.tar.gz` or `rss-workshop-v1.0.0-linux-arm64.tar.gz`, plus the archive's `.sha256` file. Each extracts into a directory of the same name without `.tar.gz`, containing the executable, `LICENSE`, dependency notices in `licenses/`, and build information. See [native installation](deployment.md#run-a-prebuilt-executable) for checksum verification, environment variables, and persistent storage.
 
 The executable embeds the UI and SQLite support. It uses the host's CA certificate store and optionally an installed Chromium browser or external FlareSolverr. Native archives do not contain the container's Debian packages or Chromium and do not require the Debian source bundles to run. Prebuilt support is limited to Linux `amd64` and `arm64`, tested on native runners.
 
@@ -74,9 +74,9 @@ The container checks create isolated smoke-test projects and private temporary h
 ## Version and image metadata
 
 ```sh
-make build VERSION=v0.2.0 COMMIT=COMMIT_SHA
+make build VERSION=v1.0.0 COMMIT=COMMIT_SHA
 ./bin/rss-workshop -version
-make docker-static docker-browser VERSION=v0.2.0 COMMIT=COMMIT_SHA \
+make docker-static docker-browser VERSION=v1.0.0 COMMIT=COMMIT_SHA \
   SOURCE_URL=https://github.com/Ldogg123/rss-workshop
 ```
 
@@ -112,8 +112,8 @@ python3 scripts/collect-debian-sources.py --image rss-workshop:static-check \
   --output dist/debian-sources/linux-amd64/static --download
 python3 scripts/collect-debian-sources.py --image rss-workshop:browser-check \
   --output dist/debian-sources/linux-amd64/browser --download
-tar -C dist/debian-sources/linux-amd64 -czf dist/debian-sources-v0.2.0-linux-amd64.tar.gz static browser
-(cd dist && sha256sum debian-sources-v0.2.0-linux-amd64.tar.gz > debian-sources-v0.2.0-linux-amd64.tar.gz.sha256)
+tar -C dist/debian-sources/linux-amd64 -czf dist/debian-sources-v1.0.0-linux-amd64.tar.gz static browser
+(cd dist && sha256sum debian-sources-v1.0.0-linux-amd64.tar.gz > debian-sources-v1.0.0-linux-amd64.tar.gz.sha256)
 ```
 
 Use `linux-arm64` and the native ARM images for the other archive. Add `--docker 'sudo docker'` where Docker requires sudo. Start with empty output directories; an interrupted collection can resume in the same directory only while the image's installed package inventory is unchanged. If packages change, collect into a new directory so the archive cannot include old versions left by an earlier build. Each archive must contain `static/` and `browser/` at its root, including their `index.json`, `SHA256SUMS`, and actual source files. The collector records image identity, installed package/source versions, checksum manifest, and completion status. All downloads must finish and the inventories must match the released images. Chromium's source archive is large; allow sufficient disk space and download time. Keep these generated archives outside Git.
@@ -121,11 +121,11 @@ Use `linux-arm64` and the native ARM images for the other archive. Add `--docker
 Attach the two archives to the durable GitHub release for the same version, using exactly `debian-sources-VERSION-linux-amd64.tar.gz` and `debian-sources-VERSION-linux-arm64.tar.gz`. GitHub requires [each release asset to be under 2 GiB](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases). Split a larger archive into 1900 MiB chunks:
 
 ```sh
-split -b 1900M -d -a 2 dist/debian-sources-v0.2.0-linux-amd64.tar.gz \
-  dist/debian-sources-v0.2.0-linux-amd64.tar.gz.part-
+split -b 1900M -d -a 2 dist/debian-sources-v1.0.0-linux-amd64.tar.gz \
+  dist/debian-sources-v1.0.0-linux-amd64.tar.gz.part-
 ```
 
-Upload either the single archive or its complete contiguous `.part-00`, `.part-01`, and subsequent parts, never both. Include the original archive's `.sha256` file in either case. The verifier streams parts in order without extracting or creating another combined copy. Anyone downloading split sources can reconstruct the archive with `cat debian-sources-v0.2.0-linux-amd64.tar.gz.part-* > debian-sources-v0.2.0-linux-amd64.tar.gz`, then run `sha256sum -c debian-sources-v0.2.0-linux-amd64.tar.gz.sha256`; publish those instructions with the assets.
+Upload either the single archive or its complete contiguous `.part-00`, `.part-01`, and subsequent parts, never both. Include the original archive's `.sha256` file in either case. The verifier streams parts in order without extracting or creating another combined copy. Anyone downloading split sources can reconstruct the archive with `cat debian-sources-v1.0.0-linux-amd64.tar.gz.part-* > debian-sources-v1.0.0-linux-amd64.tar.gz`, then run `sha256sum -c debian-sources-v1.0.0-linux-amd64.tar.gz.sha256`; publish those instructions with the assets.
 
 Make the release and archives accessible to recipients before publishing the images. Preserve them alongside the release; do not rely on an upstream package mirror retaining an old version indefinitely. Refresh the source archives if a rebuild changes the installed packages.
 
@@ -145,7 +145,7 @@ Registry writes are confined to the platform-upload, manifest and separate promo
 
 ### Stable alias promotion and recovery
 
-Open **Actions → Update stable image tags → Run workflow** to promote an already-published stable version manually. Select the reviewed default branch and enter its version, for example `v0.2.0`. It reuses the existing version manifests and does not change their tags, rebuild images or republish native archives. The automatic call runs only after both container manifest jobs finish successfully. Promotion runs are serialized, and a published newer stable release prevents promoting an older one.
+Open **Actions → Update stable image tags → Run workflow** to promote an already-published stable version manually. Select the reviewed default branch and enter its version, for example `v1.0.0`. It reuses the existing version manifests and does not change their tags, rebuild images or republish native archives. The automatic call runs only after both container manifest jobs finish successfully. Promotion runs are serialized, and a published newer stable release prevents promoting an older one.
 
 The aliases are three separate registry writes, so promotion cannot switch all three atomically. It updates `latest-static` and `latest-browser` before the default `latest`. If a run is interrupted, inspect all three aliases and rerun promotion for the same version to finish it; never overwrite immutable version tags to repair an alias. Confirm the aliases resolve to the recorded version-manifest digests before announcing the update. Docker clients still need to pull and recreate their containers; moving an alias does not restart deployments.
 
