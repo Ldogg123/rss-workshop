@@ -57,15 +57,19 @@ Reader requests serve saved stories and never fetch the source, so a slow or bro
 To subscribe to everything at once, choose **Export OPML** and import the file into your reader. It contains every feed link, so keep it private.
 
 <details>
-<summary>See the visual editor, story filters, and full article content</summary>
+<summary>See the visual editor, story filters, the filter library, and full article content</summary>
 
 Choose elements visually and refine CSS or XPath beside the highlighted source page:
 
 ![Visual selector editor with live matching highlights](docs/screenshots/visual-selector.png)
 
-Combine include and exclude groups, and paste long keyword lists:
+Combine include and exclude groups, paste long keyword lists, and add filters saved in the library:
 
-![Story filter editor with a 100-phrase condition and optional history cleanup](docs/screenshots/filters.png)
+![Story filter editor with a selected library filter, a 100-phrase condition and optional history cleanup](docs/screenshots/filters.png)
+
+Save a filter once in the filter library and use it in any feed; editing it updates every feed that uses it:
+
+![Filter library dialog editing a filter used by one feed](docs/screenshots/filter-library.png)
 
 Follow each story’s link and publish the article body rather than the teaser:
 

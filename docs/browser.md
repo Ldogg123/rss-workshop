@@ -81,4 +81,4 @@ CHROMIUM_PATH=/usr/bin/chromium RSS_UI_DOCS=1 RSS_SITE_ARTIFACTS="$PWD/artifacts
   go test -run '^TestBrowserUIDocumentation$' -v ./internal/web
 ```
 
-The three `docs-*.png` files are written to the artifact directory. Inspect them before copying the dashboard, visual-selector, and filters images into `docs/screenshots/`. Keep operator data, credentials, and reader links out of documentation captures. The fixture also verifies that its 100-phrase example includes two of its three stories.
+The `docs-*.png` files are written to the artifact directory. Inspect them before copying `docs-dashboard`, `docs-visual-selector`, `docs-filters`, `docs-filter-library`, `docs-full-content` and `docs-diagnostics` into `docs/screenshots/` without the `docs-` prefix; `docs-dashboard-light` is not used in the README. Keep operator data, credentials, and reader links out of documentation captures. The fixture also verifies that its 100-phrase example includes two of its three stories.
