@@ -5,6 +5,9 @@ import (
 	"fmt"
 )
 
+// currentSchema is the schema this application creates and upgrades to.
+const currentSchema = 5
+
 // initializeSQLite applies supported upgrades in one transaction. Fresh
 // schemas fail on existing unrelated tables; failed or future-version opens
 // never create, replace, or partially migrate the application's tables.
@@ -27,7 +30,7 @@ func initializeSQLite(db *sql.DB) error {
 		if err := tx.QueryRow("SELECT count(*),COALESCE(min(version),0) FROM schema_version").Scan(&count, &version); err != nil {
 			return fmt.Errorf("cannot read SQLite database schema version: %w", err)
 		}
-		if count != 1 || version < 1 || version > 4 {
+		if count != 1 || version < 1 || version > currentSchema {
 			return fmt.Errorf("unsupported database schema version")
 		}
 		if version == 1 {
@@ -54,7 +57,41 @@ UPDATE schema_version SET version=2`); err != nil {
 UPDATE schema_version SET version=4`); err != nil {
 				return fmt.Errorf("cannot migrate SQLite database from schema version 3 to 4: %w", err)
 			}
+			version = 4
+		}
+		if version == 4 {
+			// Library filters are shared by reference. The version gate also stops
+			// an older application from refreshing linked feeds without their rules.
+			if _, err := tx.Exec(libraryFiltersSQLite + "UPDATE schema_version SET version=5"); err != nil {
+				return fmt.Errorf("cannot migrate SQLite database from schema version 4 to 5: %w", err)
+			}
 		}
 	}
 	return tx.Commit()
 }
+
+// Keep these in step with the matching tables in schema.sql and
+// postgres_schema.sql; migration tests compare upgraded and fresh databases.
+const libraryFiltersSQLite = `CREATE TABLE filters (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, rules TEXT NOT NULL
+);
+CREATE TABLE feed_filters (
+ feed_id TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+ filter_id TEXT NOT NULL REFERENCES filters(id),
+ position INTEGER NOT NULL,
+ PRIMARY KEY(feed_id,filter_id)
+);
+CREATE INDEX feed_filters_filter ON feed_filters(filter_id);
+`
+
+const libraryFiltersPostgres = `CREATE TABLE filters (
+ id TEXT COLLATE "C" PRIMARY KEY, name TEXT COLLATE "C" NOT NULL, rules TEXT NOT NULL
+);
+CREATE TABLE feed_filters (
+ feed_id TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+ filter_id TEXT NOT NULL REFERENCES filters(id),
+ position INTEGER NOT NULL,
+ PRIMARY KEY(feed_id,filter_id)
+);
+CREATE INDEX feed_filters_filter ON feed_filters(filter_id);
+`

@@ -143,6 +143,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `LOG_FORMAT` | `text` | `text` for reading directly, `json` for a log collector |
 | `LOG_MAX_SIZE` | `10m` | Size of each retained container log file |
 | `LOG_MAX_FILES` | `3` | Container log files retained per service |
+| `UPGRADE_BACKUP` | `true` | `true` saves a verified copy of an SQLite database in `backups/` before upgrading its schema; `false` upgrades without one. See [automatic copy](operations.md#automatic-copy-before-an-sqlite-upgrade) |
 | `METRICS_TOKEN` | empty | Enables `/metrics` and is required to scrape it; blank returns 404. See [metrics](operations.md#metrics) |
 
 Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters inside connection-URI passwords. Recreate the container after environment changes; restarting the process invalidates login sessions.

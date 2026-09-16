@@ -83,7 +83,14 @@ func (a *App) exportRecipes(w http.ResponseWriter, r *http.Request) {
 	}
 	doc := recipeDocument{Format: recipeFormat, Version: recipeVersion, Feeds: make([]portableFeed, 0, len(feeds))}
 	for _, f := range feeds {
-		doc.Feeds = append(doc.Feeds, portableFeed{Title: f.Title, URL: f.URL, Interval: f.Interval, Recipe: f.Recipe})
+		// A recipe file cannot refer to this server's library, so each exported
+		// recipe carries the merged rules and imports as a self-contained feed.
+		recipe, err := a.Store.EffectiveRecipe(r.Context(), f)
+		if err != nil {
+			http.Error(w, "could not read recipes", 500)
+			return
+		}
+		doc.Feeds = append(doc.Feeds, portableFeed{Title: f.Title, URL: f.URL, Interval: f.Interval, Recipe: recipe})
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {

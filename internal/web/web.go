@@ -2,10 +2,10 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -89,6 +89,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/feeds/{id}/runs", a.protect(a.runs))
 	mux.HandleFunc("POST /api/feeds/{id}/rotate-token", a.protect(a.rotateToken))
 	mux.HandleFunc("POST /api/preview", a.protect(a.preview))
+	mux.HandleFunc("GET /api/filters", a.protect(a.listFilters))
+	mux.HandleFunc("POST /api/filters", a.protect(a.saveFilter))
+	mux.HandleFunc("PUT /api/filters/{id}", a.protect(a.saveFilter))
+	mux.HandleFunc("DELETE /api/filters/{id}", a.protect(a.removeFilter))
 	// Not under /api and not session-authenticated: a scraper presents a bearer
 	// token instead. The handler returns 404 when no token is configured.
 	mux.HandleFunc("GET /metrics", a.metrics)
@@ -148,8 +152,19 @@ func failure(w http.ResponseWriter, status int, e error) {
 
 const maxRequestBytes = 64 << 10
 
+// maxFilterIDsBytes is the room feed saves and previews allow beyond
+// maxRequestBytes for their filter_ids list. validate() sizes a configuration
+// without it, so a recipe that imports within the limit can still be saved
+// from the editor with its full library filter selection.
+// Each ID is 48 hex characters, quoted and comma-separated.
+const maxFilterIDsBytes = len(`,"filter_ids":[]`) + store.MaxFiltersPerFeed*(48+3)
+
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	return decodeWithin(w, r, v, maxRequestBytes)
+}
+
+func decodeWithin(w http.ResponseWriter, r *http.Request, v any, limit int) error {
+	r.Body = http.MaxBytesReader(w, r.Body, int64(limit))
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if e := d.Decode(v); e != nil {
@@ -286,7 +301,7 @@ func (a *App) save(w http.ResponseWriter, r *http.Request) {
 		model.Feed
 		ApplyFiltersToHistory bool `json:"apply_filters_to_history"`
 	}
-	if e := decode(w, r, &in); e != nil {
+	if e := decodeWithin(w, r, &in, maxRequestBytes+maxFilterIDsBytes); e != nil {
 		failure(w, 400, e)
 		return
 	}
@@ -296,15 +311,9 @@ func (a *App) save(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, e)
 		return
 	}
-	id, e := a.Store.SaveWithOptions(r.Context(), f, store.SaveOptions{ApplyFiltersToHistory: in.ApplyFiltersToHistory})
+	id, e := a.Store.SaveWithOptions(r.Context(), f, store.SaveOptions{ApplyFiltersToHistory: in.ApplyFiltersToHistory, Validate: validate})
 	if e != nil {
-		if errors.Is(e, sql.ErrNoRows) {
-			http.NotFound(w, r)
-		} else if in.ApplyFiltersToHistory && errors.Is(e, context.DeadlineExceeded) {
-			failure(w, 503, errors.New("applying filters to saved history timed out; try narrowing the rules or leave the history option unchecked"))
-		} else {
-			http.Error(w, "could not save feed", 500)
-		}
+		a.saveFailure(w, r, e, in.ApplyFiltersToHistory, "could not save feed")
 		return
 	}
 	reply(w, 200, map[string]string{"id": id})
@@ -334,12 +343,25 @@ func (a *App) refresh(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) preview(w http.ResponseWriter, r *http.Request) {
 	var f model.Feed
-	if e := decode(w, r, &f); e != nil {
+	if e := decodeWithin(w, r, &f, maxRequestBytes+maxFilterIDsBytes); e != nil {
 		failure(w, 400, e)
 		return
 	}
 	if e := validate(f); e != nil {
 		failure(w, 400, e)
+		return
+	}
+	// Preview the rules a refresh will apply: the editor's own rules merged
+	// with the library filters it currently has selected.
+	recipe, e := a.Store.EffectiveRecipe(r.Context(), f)
+	if e == nil && len(f.FilterIDs) > 0 {
+		f.Recipe = recipe
+		if e = validate(f); e != nil {
+			e = &store.InvalidError{Err: fmt.Errorf("with its library filters, %w", e)}
+		}
+	}
+	if e != nil {
+		a.saveFailure(w, r, e, false, "could not read library filters")
 		return
 	}
 	p, e := a.Scheduler.Preview(r.Context(), f)

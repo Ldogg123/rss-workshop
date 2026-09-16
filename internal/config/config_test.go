@@ -109,7 +109,7 @@ func TestLoggingAndMetricsConfig(t *testing.T) {
 		for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL",
 			"FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS",
 			"STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL",
-			"LOG_LEVEL", "LOG_FORMAT", "METRICS_TOKEN"} {
+			"LOG_LEVEL", "LOG_FORMAT", "METRICS_TOKEN", "UPGRADE_BACKUP"} {
 			t.Setenv(key, "")
 		}
 		t.Setenv("ADMIN_PASSWORD", "long-test-password")
@@ -169,6 +169,24 @@ func TestLoggingAndMetricsConfig(t *testing.T) {
 		t.Setenv("LOG_FORMAT", "logfmt")
 		if _, err := Load(); err == nil {
 			t.Fatal("accepted an unknown LOG_FORMAT")
+		}
+	})
+
+	t.Run("upgrade backup", func(t *testing.T) {
+		for value, want := range map[string]bool{"": true, "true": true, "TRUE": true, "false": false, " False ": false} {
+			clean(t)
+			t.Setenv("UPGRADE_BACKUP", value)
+			c, err := Load()
+			if err != nil || c.UpgradeBackup != want {
+				t.Fatalf("UPGRADE_BACKUP=%q gave %v (%v)", value, c.UpgradeBackup, err)
+			}
+		}
+		for _, value := range []string{"no", "0", "off"} {
+			clean(t)
+			t.Setenv("UPGRADE_BACKUP", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("accepted UPGRADE_BACKUP=%q", value)
+			}
 		}
 	})
 

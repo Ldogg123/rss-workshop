@@ -35,6 +35,8 @@ Optional recipe fields use the same defaults as the editor. Future incompatible 
 
 Filters are optional recipe settings in this same format. Older RSS Workshop versions reject files containing `recipe.filters`; filter-free version-1 files remain compatible. Empty or invalid rule groups are rejected when reviewing and submitting an import. Imported filtered feeds still start paused and do not change existing history.
 
+[Library filters](filtering.md#library-filters) belong to one server, so exports copy them into each recipe: `recipe.filters` holds the feed's own rules combined with every library filter it uses. An imported feed keeps those rules as its own and is not linked to a library filter, even on the server that exported it.
+
 The [example recipes](examples/) can be selected directly in the import dialog, and use this same versioned format. They build feeds from a demo site that ships beside them, so they work offline and cannot break when a real site is redesigned; [examples/README.md](examples/README.md) explains how to serve it. Preview any recipe before resuming it, particularly one written against a site you do not control.
 
 ## API

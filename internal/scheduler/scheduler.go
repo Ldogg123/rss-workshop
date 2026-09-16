@@ -236,7 +236,16 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(parent, s.timeout(f.Recipe.Mode))
 	defer cancel()
-	r, p, e := s.extract(ctx, f, false)
+	var r fetch.Result
+	var p model.Preview
+	// Library filters are read as the refresh starts. Editing one afterwards
+	// bumps this feed's version, so a result built with the old rules is
+	// discarded as stale rather than saved.
+	recipe, e := s.Store.EffectiveRecipe(ctx, f)
+	if e == nil {
+		f.Recipe = recipe
+		r, p, e = s.extract(ctx, f, false)
+	}
 	items := p.Items
 	if e == nil && f.Recipe.Full != nil {
 		// Which articles were already retrieved, without loading the stories

@@ -34,7 +34,7 @@ function previewDate(item){
  return p;
 }
 function showLogin(){clearInterval(polling);$('#workspace').hidden=true;$('#logout').hidden=true;$('#login-panel').hidden=false;csrf='';window.dispatchEvent(new Event('rss-session-ended'));}
-async function showApp(){ $('#login-panel').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;await load();clearInterval(polling);polling=setInterval(()=>{if(!document.hidden)load().catch(e=>notice(e.message));},10000); }
+async function showApp(){ $('#login-panel').hidden=true;$('#workspace').hidden=false;$('#logout').hidden=false;await window.rssLibrary?.refresh().catch(e=>notice(e.message));await load();clearInterval(polling);polling=setInterval(()=>{if(!document.hidden)load().catch(e=>notice(e.message));},10000); }
 async function load(){
  const out=await api('/feeds');feeds=out.feeds;browserAvailable=out.browser?.capacity>0;flaresolverrAvailable=out.flaresolverr?.capacity>0;
  $('#queue').textContent=`${feeds.length} feed${feeds.length===1?'':'s'} · ${out.active} of ${out.capacity} refresh slots in use · ${out.due} due · Chromium ${browserAvailable?`${out.browser.active}/${out.browser.capacity} slots`:"not configured"} · FlareSolverr ${flaresolverrAvailable?`${out.flaresolverr.active}/${out.flaresolverr.capacity} slots`:"not configured"}`;
@@ -44,6 +44,8 @@ async function load(){
   const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',!f.enabled?'Paused':f.error?'Needs attention':f.last_success.startsWith('0001-')?'Pending':'Active','badge'+(f.error?' error':'')));card.append(top);
   const source=node('a',f.url,'source');source.href=f.url;source.target='_blank';source.rel='noopener noreferrer';card.append(source);
   const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',f.enabled?when(f.next_run):'Paused']]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
+  const libraryFilters=window.rssLibrary?.names(f.filter_ids||[])||[];
+  if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
   if(f.error)card.append(node('p',f.error,'diagnostic'));
   const actions=node('div',undefined,'feed-actions');actions.append(action('Edit',()=>openEditor(f)),action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}`,'PUT',payload(f,!f.enabled));await load();}),action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'));card.append(actions);
   const diagnostics=node('button','Diagnostics','quiet feed-diagnostics');diagnostics.type='button';diagnostics.onclick=()=>window.rssDiagnostics.open(f);diagnostics.dataset.feedId=f.id;actions.append(diagnostics);
@@ -66,12 +68,15 @@ function openEditor(f){
  form.reset();$('#preview').replaceChildren();$('#editor-title').textContent=f?'Edit feed':'New feed';form.elements.id.value=f?.id||'';
  if(f){form.elements.mode.value=f.recipe.mode||"static";form.elements.wait_selector.value=f.recipe.wait_selector||"";form.elements.settle_ms.value=f.recipe.settle_ms||0;form.elements.title.value=f.title;form.elements.url.value=f.url;form.elements.type.value=f.recipe.type;form.elements.items.value=f.recipe.items;form.elements.interval.value=f.interval/60;form.elements.enabled.checked=f.enabled;for(const k of ['title','link','content','image','date']){form.elements[k+'_selector'].value=f.recipe[k].selector;form.elements[k+'_attr'].value=f.recipe[k].attr;}form.elements.date_layout.value=f.recipe.date_layout;form.elements.timezone.value=f.recipe.timezone;
   const full=f.recipe.full_content;form.elements.full_selector.value=full?.selector||'';form.elements.full_attr.value=full?.attr||'';form.elements.full_browser.checked=!!full?.browser;}
- window.rssFilters?.load(f?.recipe.filters,!!f);$('#editor').hidden=false;renderHelp();help();fullContentSummary();form.elements.title.focus();
+ window.rssFilters?.load(f?.recipe.filters,!!f);window.rssLibrary?.loadFeed(f?.filter_ids);window.rssLibrary?.refresh().catch(()=>{});$('#editor').hidden=false;renderHelp();help();fullContentSummary();form.elements.title.focus();
 }
 function readForm(){const v=new FormData(form);const recipe={mode:v.get('mode'),wait_selector:v.get('wait_selector'),settle_ms:Number(v.get('settle_ms')),type:v.get('type'),items:v.get('items'),date_layout:v.get('date_layout'),timezone:v.get('timezone')};for(const k of ['title','link','content','image','date'])recipe[k]={selector:v.get(k+'_selector'),attr:v.get(k+'_attr')};const filters=window.rssFilters?.read();if(filters)recipe.filters=filters;
  const fullSelector=(v.get('full_selector')||'').trim();
  if(fullSelector)recipe.full_content={selector:fullSelector,attr:v.get('full_attr')||'',browser:form.elements.full_browser.checked};
- return {title:v.get('title'),url:v.get('url'),interval:Number(v.get('interval'))*60,enabled:form.elements.enabled.checked,recipe};}
+ const out={title:v.get('title'),url:v.get('url'),interval:Number(v.get('interval'))*60,enabled:form.elements.enabled.checked,recipe};
+ // Omitted while the library is unavailable, which keeps the feed's current filters.
+ const libraryFilters=window.rssLibrary?.selected();if(libraryFilters)out.filter_ids=libraryFilters;
+ return out;}
 function fullContentSummary(){
  const on=(form.elements.full_selector?.value||'').trim();
  const label=$('#full-summary');if(label)label.textContent=on?'On':'Off';

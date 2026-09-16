@@ -1,13 +1,13 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RSS Workshop</title><meta name="description" content="Build and manage RSS feeds from websites."><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script><script src="/assets/diagnostics.js" defer></script><script src="/assets/filters.js" defer></script><script src="/assets/portability.js" defer></script><script src="/assets/selector.js" defer></script><script src="/assets/selector-help.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RSS Workshop</title><meta name="description" content="Build and manage RSS feeds from websites."><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script><script src="/assets/diagnostics.js" defer></script><script src="/assets/filters.js" defer></script><script src="/assets/library.js" defer></script><script src="/assets/portability.js" defer></script><script src="/assets/selector.js" defer></script><script src="/assets/selector-help.js" defer></script></head>
 <body>
 <header><a class="brand" href="/">◔ <span>RSS Workshop</span></a><span class="tag">SELF-HOSTED</span><div class="header-actions"><button id="theme-toggle" class="quiet" type="button">Dark mode</button><button id="logout" class="quiet" hidden>Sign out</button></div></header>
 <main>
 <div id="notice" role="status" aria-live="polite" hidden></div>
 <section id="login-panel" class="login panel"><p class="eyebrow">YOUR FEEDS, YOUR SERVER</p><h1>Welcome back.</h1><p>Sign in to build and manage your feeds.</p><form id="login-form"><label for="password">Admin password</label><input id="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></section>
 <div id="workspace" hidden>
-<div class="heading"><div><p class="eyebrow">FEED LIBRARY</p><h1>Keep up with what matters.</h1></div><div class="library-actions"><a id="export-opml" class="quiet button-link" href="/api/opml" download>Export OPML</a><a id="export-recipes" class="quiet button-link" href="/api/recipes/export" download>Export recipes</a><button id="import-recipes" class="quiet" type="button">Import recipes</button><button id="new-feed">+ New feed</button></div></div>
+<div class="heading"><div><p class="eyebrow">FEED LIBRARY</p><h1>Keep up with what matters.</h1></div><div class="library-actions"><a id="export-opml" class="quiet button-link" href="/api/opml" download>Export OPML</a><a id="export-recipes" class="quiet button-link" href="/api/recipes/export" download>Export recipes</a><button id="import-recipes" class="quiet" type="button">Import recipes</button><button id="manage-filters" class="quiet" type="button">Filter library</button><button id="new-feed">+ New feed</button></div></div>
 <p id="queue" class="meta"></p>
 <div class="layout">
 <section class="library" aria-label="Saved feeds"><div id="feeds"></div><div id="empty" class="panel empty" hidden><div class="empty-icon">◔</div><h2>Your first feed starts here.</h2><p>Add a page URL, select its article cards, and preview the results.</p><button id="empty-new">Create a feed</button></div></section>
@@ -39,6 +39,8 @@
 <details id="story-filters"><summary>Story filters <span id="filter-summary-count" class="meta">Optional</span></summary>
 <p class="hint">Keep the topics you care about. Matching ignores case and repeated whitespace. Each line is a literal phrase, not a regular expression.</p>
 <details class="filter-help"><summary>How include, exclude, and groups work</summary><p class="hint">A story must pass the include rules, then avoid the exclude rules. Leave either panel empty to skip it. “All” requires every condition; “Any” requires just one. Nest groups to combine them. Descriptions match readable text; links match the complete item URL.</p><p class="hint">Paste up to {{.MaxKeywords}} phrases across both panels, one per line. Each phrase can contain up to {{.MaxKeywordCharacters}} characters. Use up to {{.MaxNodes}} rules and {{.MaxDepth}} levels of nesting.</p></details>
+<section id="library-filter-picker" class="filter-panel" aria-labelledby="library-filter-picker-title"><h3 id="library-filter-picker-title">Library filters</h3><p class="hint">Reuse filters saved in the library. Editing a library filter updates every feed that uses it.</p><div id="library-filter-choices"></div><button id="library-filter-manage" class="quiet" type="button">Manage filter library</button></section>
+<h3 class="filter-own-heading">This feed’s own rules</h3><p class="hint">Stories must pass these rules and every library filter selected above.</p>
 <div class="filter-panels"><section class="filter-panel" aria-labelledby="filter-include-title"><h3 id="filter-include-title">Include stories</h3><p class="hint">Keep stories that match these rules.</p><div id="filter-include"></div></section>
 <section class="filter-panel" aria-labelledby="filter-exclude-title"><h3 id="filter-exclude-title">Exclude stories</h3><p class="hint">Exclude rules take priority over include rules.</p><div id="filter-exclude"></div></section></div>
 <p id="filter-count" class="hint" aria-live="polite" data-max-keywords="{{.MaxKeywords}}" data-max-nodes="{{.MaxNodes}}" data-max-keyword-characters="{{.MaxKeywordCharacters}}" data-max-depth="{{.MaxDepth}}"></p><p id="filter-error" class="diagnostic" role="alert" hidden></p>
@@ -94,6 +96,22 @@
 <p class="hint selector-preview-note">A simplified view of the page, with image placeholders. Preview items in the feed editor to check the extracted content.</p>
 </section>
 </div>
+</dialog>
+<dialog id="filter-library" aria-labelledby="filter-library-title">
+<div class="editor-heading"><h2 id="filter-library-title">Filter library</h2><button id="filter-library-close" class="quiet" type="button">Close</button></div>
+<p class="hint">Save a filter once, then select it in any feed’s Story filters. Changes apply to every feed using the filter from its next refresh.</p>
+<p id="filter-library-status" role="status" aria-live="polite"></p>
+<div id="filter-library-browse"><div class="actions"><button id="library-filter-new" type="button">+ New filter</button></div><p id="filter-library-empty" class="hint" hidden>No library filters yet. Create one to reuse it across feeds.</p><ul id="filter-library-list" aria-label="Library filters"></ul></div>
+<form id="library-filter-form" hidden>
+<h3 id="library-filter-form-title">New filter</h3>
+<label>Filter name<input id="library-filter-name" required maxlength="100" placeholder="No sponsored posts"></label>
+<p id="library-filter-used-by" class="hint" hidden></p>
+<div class="filter-panels"><section class="filter-panel" aria-labelledby="library-filter-include-title"><h3 id="library-filter-include-title">Include stories</h3><p class="hint">Keep stories that match these rules.</p><div id="library-filter-include"></div></section>
+<section class="filter-panel" aria-labelledby="library-filter-exclude-title"><h3 id="library-filter-exclude-title">Exclude stories</h3><p class="hint">Exclude rules take priority over include rules.</p><div id="library-filter-exclude"></div></section></div>
+<p id="library-filter-count" class="hint" aria-live="polite"></p><p id="library-filter-error" class="diagnostic" role="alert" hidden></p>
+<div id="library-filter-history" hidden><label class="check"><input id="library-filter-apply-history" type="checkbox">Remove already-saved stories that no longer match, in every feed using this filter</label><p class="hint">Applies when you save. Leave unchecked to keep saved stories; future refreshes use the new rules either way.</p></div>
+<div class="actions"><button type="submit">Save filter</button><button id="library-filter-cancel" class="quiet" type="button">Cancel</button></div>
+</form>
 </dialog>
 <dialog id="recipe-import" aria-labelledby="import-title">
 <div class="editor-heading"><h2 id="import-title">Import feed recipes</h2><button id="import-close" class="quiet" type="button">Close</button></div>

@@ -50,9 +50,13 @@ type Feed struct {
 	LastModified string    `json:"-"`
 	Version      int       `json:"version"`
 	Count        int       `json:"count"`
-	RSSToken     string    `json:"-"`
-	RSSURL       string    `json:"rss_url,omitempty"`
-	AtomURL      string    `json:"atom_url,omitempty"`
+	// FilterIDs lists the library filters this feed uses, in order. They live
+	// outside the recipe: exports and previews receive the merged rules instead.
+	// A save request that omits the field keeps the feed's current filters.
+	FilterIDs []string `json:"filter_ids"`
+	RSSToken  string   `json:"-"`
+	RSSURL    string   `json:"rss_url,omitempty"`
+	AtomURL   string   `json:"atom_url,omitempty"`
 }
 type Item struct {
 	Key   string `json:"key"`

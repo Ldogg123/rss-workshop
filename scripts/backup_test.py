@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -21,7 +22,8 @@ import backup
 ROOT = Path(__file__).resolve().parents[1]
 
 
-CURRENT_SCHEMA = 4
+CURRENT_SCHEMA = 5
+CURRENT_COUNTS = {"feeds": 1, "items": 1, "runs": 1, "filters": 1, "feed_filters": 1}
 
 
 def fixture_database(path, *, schema_version=CURRENT_SCHEMA):
@@ -41,8 +43,27 @@ def fixture_database(path, *, schema_version=CURRENT_SCHEMA):
         values.insert(7, "<p>Full article</p>")
     db.execute(f"INSERT INTO items({columns}) VALUES({','.join('?' * len(values))})", values)
     db.execute("INSERT INTO runs(feed_id,ended,status,count,error) VALUES(?,126,200,1,'')", ("fixture-feed",))
+    # Schema 5 adds library filters that feeds use by reference.
+    if schema_version >= 5:
+        rules = json.dumps({"exclude": {"op": "contains_any", "field": "title", "keywords": ["sponsored"]}})
+        db.execute("INSERT INTO filters(id,name,rules) VALUES('fixture-filter','No sponsored posts',?)", (rules,))
+        db.execute("INSERT INTO feed_filters(feed_id,filter_id,position) VALUES('fixture-feed','fixture-filter',0)")
     db.commit()
     return db
+
+
+def stopped_data_stream(data, status=0):
+    """Replace `docker cp <container>:/data/. -` with a tar stream of a local directory."""
+    def popen(command, stdout, stderr):
+        assert command == ["docker", "cp", "fixture-container:/data/.", "-"], command
+        buffer = tempfile.TemporaryFile()
+        with tarfile.open(fileobj=buffer, mode="w") as bundle:
+            bundle.add(data, arcname=".")
+        buffer.seek(0)
+        process = mock.Mock(args=command, stdout=buffer)
+        process.wait.return_value = status
+        return process
+    return popen
 
 
 def make_backup(source, destination):
@@ -80,19 +101,15 @@ class BackupTests(unittest.TestCase):
                 db.commit()
                 self.assertGreater((source / "rss.db-wal").stat().st_size, 0)
 
-                def copy_stopped_fixture(*args):
-                    self.assertEqual(args[:2], ("cp", "fixture-container:/data/."))
-                    for path in source.iterdir():
-                        shutil.copyfile(path, Path(args[2]) / path.name)
-
                 mount = {"Type": "bind", "Source": str(source)}
                 with mock.patch.object(backup, "inspect_container", return_value=("fixture-container", False, mount)), \
-                        mock.patch.object(backup, "docker", side_effect=copy_stopped_fixture) as docker:
+                        mock.patch.object(backup, "docker") as docker, \
+                        mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(source)):
                     manifest = backup.backup_locked("fixture-container", root / "backup")
-                    self.assertEqual(docker.call_count, 1)
+                    docker.assert_not_called()
             self.assertEqual(manifest["version"], 1)
             self.assertEqual(manifest["schema_version"], CURRENT_SCHEMA)
-            self.assertEqual(manifest["counts"], {"feeds": 1, "items": 1, "runs": 1})
+            self.assertEqual(manifest["counts"], CURRENT_COUNTS)
             self.assertEqual(backup.verify_backup(root / "backup"), manifest)
             self.assertFalse((root / "backup/rss.db-wal").exists())
             with mock.patch.object(backup.os, "geteuid", return_value=0), mock.patch.object(backup.os, "fchown"):
@@ -101,8 +118,41 @@ class BackupTests(unittest.TestCase):
             with contextlib.closing(sqlite3.connect(root / "restored/rss.db")) as restored:
                 self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(CURRENT_SCHEMA,)])
                 self.assertEqual(restored.execute("SELECT diagnostics FROM runs").fetchall(), [(diagnostics,)])
+                self.assertEqual(restored.execute("SELECT f.name,l.feed_id FROM filters f JOIN feed_filters l ON l.filter_id=f.id").fetchall(),
+                                 [("No sponsored posts", "fixture-feed")])
                 self.assertEqual(restored.execute("SELECT name FROM sqlite_master WHERE type='index' "
                                                   "AND name='runs_feed_history'").fetchall(), [("runs_feed_history",)])
+
+    def test_backup_copies_only_the_database_from_data(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            data = root / "data"
+            copy = data / "backups/pre-upgrade-schema-4-20260101T000000Z"
+            copy.mkdir(parents=True)
+            (copy / "rss.db").write_bytes(b"automatic copy" * 4096)
+            (copy / "manifest.json").write_text("{}")
+            (data / "rss.db").write_bytes(b"live database")
+            (data / "rss.db-wal").write_bytes(b"write-ahead log")
+            (data / "rss.db-shm").write_bytes(b"shared memory")
+            copied = root / "copied"
+            copied.mkdir()
+            with mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(data)):
+                backup.copy_database_files("fixture-container", copied)
+            self.assertEqual(sorted(path.name for path in copied.iterdir()), ["rss.db", "rss.db-wal"])
+            self.assertEqual((copied / "rss.db-wal").read_bytes(), b"write-ahead log")
+
+            # A symlinked database is refused, and a failed docker cp is reported.
+            (data / "rss.db").unlink()
+            (data / "rss.db").symlink_to("rss.db-wal")
+            with mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(data)), \
+                    self.assertRaisesRegex(ValueError, "regular file"):
+                backup.copy_database_files("fixture-container", root / "unused")
+            (data / "rss.db").unlink()
+            failed = root / "failed"
+            failed.mkdir()
+            with mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(data, status=1)), \
+                    self.assertRaises(backup.subprocess.CalledProcessError):
+                backup.copy_database_files("fixture-container", failed)
 
     def test_schema_one_backup_verifies_and_restores_without_migration(self):
         with tempfile.TemporaryDirectory() as work:
@@ -138,7 +188,7 @@ class BackupTests(unittest.TestCase):
                 self.assertEqual(backup.database_info(root / "restored/rss.db"), manifest["counts"])
 
     def test_manifest_schema_must_match_database_before_restore(self):
-        for version in (1, 2, 3, 4):
+        for version in backup.SCHEMA_VERSIONS:
             with self.subTest(schema_version=version), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
                 fixture_database(root / "source.db", schema_version=version).close()
@@ -342,7 +392,7 @@ class BackupTests(unittest.TestCase):
                 self.assertGreater((root / "source.db-wal").stat().st_size, 0)
                 make_backup(root / "source.db", root / "backup")
                 manifest = backup.verify_backup(root / "backup")
-                self.assertEqual(manifest["counts"], {"feeds": 1, "items": 1, "runs": 1})
+                self.assertEqual(manifest["counts"], CURRENT_COUNTS)
                 with contextlib.closing(sqlite3.connect(root / "backup/rss.db")) as restored:
                     self.assertEqual(restored.execute("SELECT title,published,guid FROM items").fetchone(),
                                      ("Updated in WAL", 123, "fixture-guid"))
@@ -398,7 +448,7 @@ class BackupTests(unittest.TestCase):
                 start(original, prefix + "-app")
                 saved = backup.backup_container(prefix + "-app", root / "saved")
                 self.assertTrue(backup.inspect_container(prefix + "-app")[1], "backup failed to restart the app")
-                self.assertEqual(saved["counts"], {"feeds": 1, "items": 1, "runs": 1})
+                self.assertEqual(saved["counts"], CURRENT_COUNTS)
                 restored = prefix + "-restored"
                 volumes.append(restored)
                 backup.restore_volume(root / "saved", restored, image)
@@ -406,7 +456,7 @@ class BackupTests(unittest.TestCase):
                 backup.backup_container(prefix + "-restored-app", root / "roundtrip")
                 with contextlib.closing(sqlite3.connect(root / "saved/rss.db")) as a:
                     with contextlib.closing(sqlite3.connect(root / "roundtrip/rss.db")) as b:
-                        for table in ("schema_version", *backup.TABLES):
+                        for table in ("schema_version", *backup.schema_tables(CURRENT_SCHEMA)):
                             self.assertEqual(a.execute("SELECT * FROM " + table).fetchall(),
                                              b.execute("SELECT * FROM " + table).fetchall(), table)
                 # A stopped app remains stopped; the original still exists independently.
@@ -456,11 +506,18 @@ class BackupTests(unittest.TestCase):
         try:
             with contextlib.nullcontext(temporary.name) as work:
                 root = Path(work)
-                fixture_database(root / "source.db").close()
+                # Start from the previous schema: the app copies it into
+                # /data/backups before upgrading, and the backup below must
+                # stream past that copy and save only the upgraded database.
+                fixture_database(root / "source.db", schema_version=CURRENT_SCHEMA - 1).close()
                 make_backup(root / "source.db", root / "seed")
                 backup.restore_directory(root / "seed", root / "original")
                 start(root / "original", prefix + "-app")
+                copies = list((root / "original/backups").glob("pre-upgrade-schema-%d-*" % (CURRENT_SCHEMA - 1)))
+                self.assertEqual(len(copies), 1, "app did not save one copy before upgrading")
+                self.assertEqual(backup.verify_backup(copies[0])["schema_version"], CURRENT_SCHEMA - 1)
                 saved = backup.backup_container(prefix + "-app", root / "saved")
+                self.assertEqual(saved["schema_version"], CURRENT_SCHEMA)
                 self.assertTrue(backup.inspect_container(prefix + "-app")[1])
                 self.assertEqual(saved["source_directory"], str(root / "original"))
                 self.assertNotIn("source_volume", saved)
@@ -472,7 +529,7 @@ class BackupTests(unittest.TestCase):
                 backup.backup_container(prefix + "-restored-app", root / "roundtrip")
                 with contextlib.closing(sqlite3.connect(root / "saved/rss.db")) as a:
                     with contextlib.closing(sqlite3.connect(root / "roundtrip/rss.db")) as b:
-                        for table in ("schema_version", *backup.TABLES):
+                        for table in ("schema_version", *backup.schema_tables(CURRENT_SCHEMA)):
                             self.assertEqual(a.execute("SELECT * FROM " + table).fetchall(),
                                              b.execute("SELECT * FROM " + table).fetchall(), table)
                 # Backups from bind storage retain named-volume restore
