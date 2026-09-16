@@ -381,3 +381,27 @@ func TestEveryConnectionEnforcesForeignKeys(t *testing.T) {
 		t.Fatal("a filter from a deleted feed could not be deleted", err)
 	}
 }
+
+// A data directory whose name contains URI syntax must still open the
+// database inside it, with the connection settings applied.
+func TestDataDirectoryWithURICharactersKeepsSettings(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "feeds?prod#1 50%")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rss.db")
+	s, err := Open(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	s.DB.SetMaxIdleConns(0)
+	var file string
+	var foreignKeys int
+	if err := s.DB.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&file); err != nil || file != path {
+		t.Fatalf("opened %q, want %q (%v)", file, path, err)
+	}
+	if err := s.DB.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
+		t.Fatal("foreign keys are off", foreignKeys, err)
+	}
+}

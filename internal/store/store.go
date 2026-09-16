@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,7 +44,14 @@ func OpenWithOptions(path string, maxItems int, options OpenOptions) (*Store, er
 	// replaces a connection whose statement was interrupted, for example by a
 	// reader disconnecting mid-read, and the replacement would silently run
 	// without foreign keys, so deleting a feed would leave its rows behind.
-	db, e := sql.Open("sqlite", path+"?_foreign_keys=1&_busy_timeout=5000")
+	absolute, e := filepath.Abs(path)
+	if e != nil {
+		return nil, e
+	}
+	// A file: URI with an escaped path, so a directory name containing ? or #
+	// cannot cut the path short and drop the settings that follow it.
+	dsn := (&url.URL{Scheme: "file", Path: absolute, RawQuery: "_foreign_keys=1&_busy_timeout=5000"}).String()
+	db, e := sql.Open("sqlite", dsn)
 	if e != nil {
 		return nil, e
 	}
@@ -249,6 +258,9 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 		// identical bytes and headers.
 		changedAt := max(now.Unix(), lastChanged+1)
 		changed := false
+		// Keys this merge inserted or changed, and whether each was inserted.
+		// Whether they changed the output depends on retention below.
+		touched := map[string]bool{}
 		for _, it := range items {
 			if it.Published.IsZero() {
 				it.Published = now
@@ -265,29 +277,51 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 			// last_changed moves only when a published field differs. A row not
 			// merged since schema 5 first takes the last_seen it was rendered
 			// with, so its published date does not move either.
-			var itemChanged int64
+			var itemChanged, firstSeen int64
 			e = tx.QueryRowContext(ctx, s.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(`+identity+`) DO UPDATE SET title=excluded.title,url=excluded.url,html=excluded.html,image=excluded.image,content_full=CASE WHEN excluded.content_full='' THEN items.content_full ELSE excluded.content_full END,last_seen=excluded.last_seen,
 last_changed=CASE WHEN items.title<>excluded.title OR items.url<>excluded.url OR items.html<>excluded.html OR items.image<>excluded.image OR (excluded.content_full<>'' AND excluded.content_full<>items.content_full) THEN excluded.last_changed WHEN items.last_changed=0 THEN items.last_seen ELSE items.last_changed END
-RETURNING last_changed`), f.ID, s.opaque(it.Key), guid, readableText(it.Title), readableText(it.URL), readableText(it.HTML), readableText(it.Image), readableText(it.FullHTML), it.Published.Unix(), now.Unix(), now.Unix(), changedAt).Scan(&itemChanged)
+RETURNING last_changed,first_seen`), f.ID, s.opaque(it.Key), guid, readableText(it.Title), readableText(it.URL), readableText(it.HTML), readableText(it.Image), readableText(it.FullHTML), it.Published.Unix(), now.Unix(), now.Unix(), changedAt).Scan(&itemChanged, &firstSeen)
 			if e != nil {
 				return e
 			}
-			changed = changed || itemChanged == changedAt
+			if itemChanged == changedAt {
+				touched[it.Key] = firstSeen == now.Unix()
+			}
 		}
 		// Retention applies to everything already stored, not only to what this
 		// refresh added, so lowering MAX_ITEMS deletes existing stories the next
 		// time each feed refreshes. That is the one irreversible effect an
 		// operator can cause by editing configuration, so say when it happens.
-		pruned, e := tx.ExecContext(ctx, s.bind(`DELETE FROM items WHERE feed_id=? AND key NOT IN (SELECT key FROM items WHERE feed_id=? ORDER BY published DESC,key LIMIT ?)`), f.ID, f.ID, s.MaxItems)
+		pruned, e := tx.QueryContext(ctx, s.bind(`DELETE FROM items WHERE feed_id=? AND key NOT IN (SELECT key FROM items WHERE feed_id=? ORDER BY published DESC,key LIMIT ?) RETURNING key`), f.ID, f.ID, s.MaxItems)
 		if e != nil {
 			return e
 		}
-		removed, e := pruned.RowsAffected()
-		if e != nil {
+		removed := 0
+		for pruned.Next() {
+			var key string
+			if e = pruned.Scan(&key); e != nil {
+				pruned.Close()
+				return e
+			}
+			removed++
+			// A story inserted by this merge and removed again was never
+			// published, as happens every refresh to a listed story older than
+			// the retention window. Removing any other story changes output.
+			if inserted, ok := touched[key]; !ok || !inserted {
+				changed = true
+			}
+			delete(touched, key)
+		}
+		if e = pruned.Err(); e != nil {
+			pruned.Close()
 			return e
 		}
+		if e = pruned.Close(); e != nil {
+			return e
+		}
+		// Inserted or changed stories that retention kept.
+		changed = changed || len(touched) > 0
 		if removed > 0 {
-			changed = true
 			slog.Info("stories removed by retention", "feed", f.Title, "feed_id", f.ID,
 				"removed", removed, "max_items", s.MaxItems)
 		}

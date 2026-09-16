@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -603,12 +605,52 @@ func TestPostgresSaveKeepingLinksRejectsLinksChangedWhileWaiting(t *testing.T) {
 		_, err := s.Save(ctx, paused)
 		saved <- err
 	}()
-	waitBlocked("UPDATE feeds SET title")
+	waitBlocked("UPDATE feeds SET last_changed=CASE WHEN title")
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	var bad *InvalidError
 	if err := <-saved; !errors.As(err, &bad) || !strings.Contains(err.Error(), "reload") {
 		t.Fatal("a save kept links it had not validated", err)
+	}
+}
+
+// A refresh holding the feed row may be merging bodies fetched with the old
+// article selector. Clearing them before that row lock would miss those rows.
+func TestPostgresSelectorChangeClearsBodiesMergedWhileWaiting(t *testing.T) {
+	s, ctx, tx, waitBlocked := postgresRace(t)
+	f := savedRunFeed(t, s)
+	f.Recipe.Full = &model.FullContent{Selector: "div.wrong"}
+	if _, err := s.Save(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.Get(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, "SELECT id FROM feeds WHERE id=$1 FOR UPDATE", f.ID); err != nil {
+		t.Fatal(err)
+	}
+	guid := fmt.Sprintf("urn:sha256:%x", sha256.Sum256([]byte(f.ID+"\x00late")))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES($1,$2,$3,'Late','','','','<p>wrong block</p>',1,1,1)`, f.ID, []byte("late"), guid); err != nil {
+		t.Fatal(err)
+	}
+	saved := make(chan error, 1)
+	go func() {
+		edited := f
+		edited.Recipe.Full = &model.FullContent{Selector: "article"}
+		_, err := s.Save(ctx, edited)
+		saved <- err
+	}()
+	waitBlocked("UPDATE feeds SET last_changed=CASE WHEN title")
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-saved; err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.Items(ctx, f.ID)
+	if err != nil || len(items) != 1 || items[0].FullHTML != "" {
+		t.Fatalf("a body merged while the selector change waited survived: %+v %v", items, err)
 	}
 }

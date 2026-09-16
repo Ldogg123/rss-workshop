@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -89,10 +91,16 @@ func TestOutputChangeTimesMoveOnlyWithPublishedOutput(t *testing.T) {
 	refresh(withBody, nil)
 	current = expect("same article body again", false, current)
 
-	// Retention removing stories changes output with no story changing.
+	// Retention removing stories changes output with no story changing. A
+	// listed story older than the window is then inserted and removed again on
+	// every refresh without ever being published, which is no change.
 	s.MaxItems = 1
 	refresh(changed, nil)
 	current = expect("retention", true, current)
+	refresh(changed, nil)
+	current = expect("listed story beyond retention", false, current)
+	refresh(changed, nil)
+	current = expect("listed story beyond retention", false, current)
 	s.MaxItems = 10
 
 	// Edits change output before any refresh: a paused feed's rename or
@@ -114,6 +122,11 @@ func TestOutputChangeTimesMoveOnlyWithPublishedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	current = expect("interval", true, current)
+	edited.Interval = 1230 // still 20 minutes of ttl
+	if _, err := s.Save(ctx, edited); err != nil {
+		t.Fatal(err)
+	}
+	current = expect("interval within the same minute", false, current)
 	refresh(withBody, nil)
 	current, _ = changeTimes(t, s, f.ID)
 	edited = current
@@ -122,6 +135,9 @@ func TestOutputChangeTimesMoveOnlyWithPublishedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	current = expect("article selector change that cleared a stored body", true, current)
+	if _, times := changeTimes(t, s, f.ID); !times["b"].Equal(current.LastChanged) {
+		t.Fatalf("cleared story time %v, feed %v", times["b"], current.LastChanged)
+	}
 	edited = current
 	edited.Recipe.Full = nil
 	if _, err := s.Save(ctx, edited); err != nil {
@@ -167,13 +183,13 @@ func TestOutputChangeTimesMoveOnlyWithPublishedOutput(t *testing.T) {
 func TestSchemaFiveStartsChangeTimesFromPublishedValues(t *testing.T) {
 	ctx := t.Context()
 	legacy, open := releasedStore(t, 4)
-	for _, q := range []string{
-		`INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run,last_success,version) VALUES('feed','token','Feed','https://example.com','{}',600,0,0,1700000500,3)`,
-		`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES('feed','a','g','Story','https://example.com/a','<p>One</p>','','',1700000000,1700000100,1700000400)`,
-	} {
-		if _, err := legacy.DB.ExecContext(ctx, legacy.bind(q)); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := legacy.DB.ExecContext(ctx, legacy.bind(`INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run,last_success,version) VALUES('feed','token','Feed','https://example.com','{}',600,?,0,1700000500,3)`), false); err != nil {
+		t.Fatal(err)
+	}
+	// The GUID a v1.0.0 merge derived; PostgreSQL identifies stories by it.
+	guid := fmt.Sprintf("urn:sha256:%x", sha256.Sum256([]byte("feed\x00a")))
+	if _, err := legacy.DB.ExecContext(ctx, legacy.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES('feed',?,?,'Story','https://example.com/a','<p>One</p>','','',1700000000,1700000100,1700000400)`), legacy.opaque("a"), guid); err != nil {
+		t.Fatal(err)
 	}
 	legacy.DB.Close()
 	s, err := open()
@@ -191,5 +207,34 @@ func TestSchemaFiveStartsChangeTimesFromPublishedValues(t *testing.T) {
 	f, times = changeTimes(t, s, "feed")
 	if f.LastChanged.Unix() != 1700000500 || times["a"].Unix() != 1700000400 {
 		t.Fatalf("unchanged merge after upgrade: feed %v, story %v", f.LastChanged, times["a"])
+	}
+}
+
+// Several changes inside one second push the feed's time ahead of the clock.
+// A story whose body is then cleared must still move forward, or its Atom
+// updated goes backwards while its content changes.
+func TestClearedArticleBodyMovesStoryForward(t *testing.T) {
+	ctx := t.Context()
+	s, _ := libraryStore(t)
+	f := savedRunFeed(t, s)
+	story := []model.Item{{Key: "a", Title: "Story", URL: "https://example.com/a", HTML: "<p>Teaser</p>", FullHTML: "<p>Body</p>", Published: time.Unix(1700000000, 0)}}
+	for i := range 4 {
+		current, err := s.Get(ctx, f.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		story[0].Title = "Story " + string(rune('a'+i))
+		if err := s.Complete(ctx, current, story, "", "", 200, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, before := changeTimes(t, s, f.ID)
+	current.Recipe.Full = &model.FullContent{Selector: "article"}
+	if _, err := s.Save(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	after, times := changeTimes(t, s, f.ID)
+	if !times["a"].After(before["a"]) || !times["a"].Equal(after.LastChanged) {
+		t.Fatalf("cleared story moved %v -> %v, feed %v", before["a"], times["a"], after.LastChanged)
 	}
 }

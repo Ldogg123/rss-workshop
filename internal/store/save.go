@@ -88,23 +88,12 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		}
 		// Output changes an edit makes before any refresh must still move the
 		// feed's modification time, or a reader holding Last-Modified keeps
-		// getting 304 for a renamed, cleared or pruned feed that is paused.
-		outputChanged := false
+		// getting 304 for a renamed, cleared or pruned feed that is paused. The
+		// interval is published only as whole minutes of ttl.
 		now := time.Now().Unix()
-		if cleared {
-			result, err := tx.ExecContext(ctx, s.bind("UPDATE items SET content_full='',last_changed=? WHERE feed_id=? AND content_full<>''"), now, f.ID)
-			if err != nil {
-				return "", err
-			}
-			if n, err := result.RowsAffected(); err != nil {
-				return "", err
-			} else if n > 0 {
-				outputChanged = true
-			}
-		}
 		title, url := readableText(f.Title), readableText(f.URL)
-		result, err := tx.ExecContext(ctx, s.bind(`UPDATE feeds SET last_changed=CASE WHEN title<>? OR url<>? OR interval<>? THEN `+bumpChanged+` ELSE last_changed END,
-title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), title, url, f.Interval, now, now, title, url, string(recipe), f.Interval, f.Enabled, now, f.ID)
+		result, err := tx.ExecContext(ctx, s.bind(`UPDATE feeds SET last_changed=CASE WHEN title<>? OR url<>? OR interval/60<>? THEN `+bumpChanged+` ELSE last_changed END,
+title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), title, url, f.Interval/60, now, now, title, url, string(recipe), f.Interval, f.Enabled, now, f.ID)
 		if err != nil {
 			return "", err
 		}
@@ -114,6 +103,14 @@ title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error
 		}
 		if n == 0 {
 			return "", sql.ErrNoRows
+		}
+		// Clear only while holding the feed row. On PostgreSQL a refresh merging
+		// bodies from the old selector holds that lock; clearing before it would
+		// miss the rows it has not committed yet, and they would survive.
+		if cleared {
+			if err := s.clearArticleBodies(ctx, tx, f.ID); err != nil {
+				return "", err
+			}
 		}
 		if links == nil {
 			// The links kept were read before this row was locked. If a concurrent
@@ -132,11 +129,10 @@ title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error
 			if err != nil {
 				return "", err
 			}
-			outputChanged = outputChanged || removed > 0
-		}
-		if outputChanged {
-			if err := s.markChanged(ctx, tx, f.ID); err != nil {
-				return "", err
+			if removed > 0 {
+				if err := s.markChanged(ctx, tx, f.ID); err != nil {
+					return "", err
+				}
 			}
 		}
 	}
@@ -189,6 +185,27 @@ const bumpChanged = `CASE WHEN last_changed>=? THEN last_changed+1 ELSE ? END`
 func (s *Store) markChanged(ctx context.Context, tx *sql.Tx, feedID string) error {
 	now := time.Now().Unix()
 	_, err := tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_changed="+bumpChanged+" WHERE id=?"), now, now, feedID)
+	return err
+}
+
+// clearArticleBodies discards a feed's stored article bodies. Each cleared
+// story takes the feed's next change time rather than the clock, so its Atom
+// updated moves forward even when earlier changes in the same second already
+// pushed the feed's time ahead.
+func (s *Store) clearArticleBodies(ctx context.Context, tx *sql.Tx, feedID string) error {
+	now := time.Now().Unix()
+	var changedAt int64
+	if err := tx.QueryRowContext(ctx, s.bind("SELECT "+bumpChanged+" FROM feeds WHERE id=?"), now, now, feedID).Scan(&changedAt); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, s.bind("UPDATE items SET content_full='',last_changed=? WHERE feed_id=? AND content_full<>''"), changedAt, feedID)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_changed=? WHERE id=?"), changedAt, feedID)
 	return err
 }
 

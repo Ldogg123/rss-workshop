@@ -344,7 +344,7 @@ func TestPostgresRefreshWaitsForHistoricalPruning(t *testing.T) {
 	go func() {
 		refreshed <- s.Complete(ctx, f, before, "old", "old", 200, nil, 0)
 	}()
-	waitForBlockedQuery(savePID, "SELECT version FROM feeds")
+	waitForBlockedQuery(savePID, "SELECT version,last_changed FROM feeds")
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}

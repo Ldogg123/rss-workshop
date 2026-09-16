@@ -360,5 +360,5 @@ func syncDirectory(path string) error {
 // message may include local file paths but never database contents.
 func upgradeBackupError(version int, err error) error {
 	reason := strings.TrimSpace(err.Error())
-	return fmt.Errorf("%w from schema %d; the database was not changed: %s", ErrUpgradeBackup, version, reason)
+	return fmt.Errorf("%w from schema %d; the database was not upgraded: %s", ErrUpgradeBackup, version, reason)
 }
