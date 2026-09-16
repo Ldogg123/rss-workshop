@@ -1,12 +1,33 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 — 2026-09-16
 
-- Stop rewriting every feed on every refresh. Published dates and `Last-Modified` came from the time of the last refresh, so a refresh that changed nothing, even one where the source answered 304, gave each feed new bytes and a new ETag, and a reader polling at the advertised `ttl` almost never received a 304. Feeds and stories now record when their published output last changed, which moves only when a story, the feed's title, URL or interval, or its saved history actually changes, including edits to a paused feed. Upgrading keeps every published date as it was. The RSS `generator` no longer includes the version, so RSS subscribers download each feed once after this upgrade and not again on later ones; Atom subscribers are unaffected.
-- Fix SQLite foreign keys switching off after an interrupted read. The settings were applied once, and a reader disconnecting mid-response could leave the app on a replacement connection without them; deleting a feed then left its stories, runs and filter links behind. Settings now apply to every connection, and startup removes rows left by feeds that were already deleted, which otherwise make the backup utility and the pre-upgrade copy refuse the database.
+Reusable filters, safer upgrades, and feeds that stop changing when nothing in them has. See [upgrades](docs/operations.md#upgrades) before installing over an existing deployment.
+
+### Upgrading from v1.0.0
+
+- **Update your checkout first** (`git pull`). The current `compose.yaml` passes the new `UPGRADE_BACKUP` setting into the container, and the current `scripts/backup.py` reads schema 5 and leaves the automatic copies out of its backups; the v1.0.0 versions do neither.
+- **The database moves to schema 5**, in one transaction, the first time this version starts. v1.0.0 cannot open the result, so rolling back means restoring a copy taken before the upgrade.
+- **SQLite takes that copy for you.** Before upgrading, the app saves a verified copy to `backups/pre-upgrade-schema-4-<time>` in the data directory and names it in the log. It needs free space about the size of the database, or startup stops before changing anything; the copies are never deleted automatically. To roll back, stop the app, `sudo python3 scripts/backup.py restore` the copy into a new directory, point `RSS_DATA_DIR` at it and pin `RSS_IMAGE` to v1.0.0. The copy sits on the same disk, so keep an off-host backup too. See [automatic copy](docs/operations.md#automatic-copy-before-an-sqlite-upgrade).
+- **PostgreSQL gets no automatic copy.** Take a `pg_dump` before upgrading; the app logs a warning when it migrates.
+- **RSS readers refetch once.** The RSS `generator` no longer carries a version, so each RSS feed's bytes change once with this upgrade and not again because of later version bumps. Atom feeds are byte-for-byte unchanged by the upgrade.
+
+### Filter library
+
+- Add a **Filter library**: save story filters once and select them in any feed. Feeds use library filters by reference, so editing one updates every feed using it, with the same optional cleanup of saved stories as a feed edit. A feed's own rules and its library filters combine, and the existing filter limits apply to the combination. Recipe exports copy the combined rules so files stay importable anywhere. This adds database schema 5; take a backup before upgrading, because v1.0.0 cannot open the upgraded database.
+
+### Upgrades you can undo
+
 - Save a verified copy of an SQLite database in `backups/` inside the data directory before upgrading its schema, because an older release cannot open the upgraded database. The copy uses the backup utility's format, so `scripts/backup.py verify` and `restore` accept it. If it cannot be saved, the app stops before upgrading the database; `UPGRADE_BACKUP=false` skips the copy. A restart after a failed upgrade reuses an identical copy instead of saving another. PostgreSQL upgrades log a warning instead, since the app cannot run `pg_dump`.
 - `scripts/backup.py backup` now keeps only the database and its write-ahead log from the stopped container, instead of copying all of `/data` into temporary space.
-- Add a **Filter library**: save story filters once and select them in any feed. Feeds use library filters by reference, so editing one updates every feed using it, with the same optional cleanup of saved stories as a feed edit. A feed's own rules and its library filters combine, and the existing filter limits apply to the combination. Recipe exports copy the combined rules so files stay importable anywhere. This adds database schema 5; take a backup before upgrading, because v1.0.0 cannot open the upgraded database.
+
+### Fewer full downloads for readers
+
+- Stop rewriting every feed on every refresh. Published dates and `Last-Modified` came from the time of the last refresh, so a refresh that changed nothing, even one where the source answered 304, gave each feed new bytes and a new ETag, and a reader polling at the advertised `ttl` almost never received a 304. Feeds and stories now record when their published output last changed, which moves only when a story, the feed's title, URL or interval, or its saved history actually changes, including edits to a paused feed. Upgrading keeps every published date as it was. The RSS `generator` no longer includes the version, so RSS subscribers download each feed once after this upgrade and not again on later ones; Atom subscribers are unaffected.
+
+### Fixes
+
+- Fix SQLite foreign keys switching off after an interrupted read. The settings were applied once, and a reader disconnecting mid-response could leave the app on a replacement connection without them; deleting a feed then left its stories, runs and filter links behind. Settings now apply to every connection, and startup removes rows left by feeds that were already deleted, which otherwise make the backup utility and the pre-upgrade copy refuse the database.
 
 ## v1.0.0 — 2026-09-12
 

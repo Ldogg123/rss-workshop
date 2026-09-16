@@ -157,10 +157,10 @@ Named-volume restore remains available for existing deployments and accepts back
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image ghcr.io/ldogg123/rss-workshop:v1.0.0-browser
+  --image ghcr.io/ldogg123/rss-workshop:v1.1.0-browser
 ```
 
-This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; schema-1, schema-2, and schema-3 backups remain usable with the current utility. Select an app version that supports the restored database schema.
+This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; backups of every schema the utility supports, including [automatic pre-upgrade copies](#automatic-copy-before-an-sqlite-upgrade), remain usable with the current utility. Select an app version that supports the restored database schema.
 
 Create an ignored local `compose.restore.yaml` to explicitly replace the app's `/data` bind mount. For rollback, use the preserved original volume's actual name instead of `rss-workshop-restored`:
 
@@ -190,7 +190,7 @@ For native installations, stop the process and copy `rss.db` with its WAL/SHM fi
 
 ## Upgrades
 
-Back up the database and retain the current configuration and image digest. With `RSS_IMAGE` blank, the current Compose files follow the latest stable release through `latest` (browser) or `latest-static`. Existing explicit `.env` values continue to take precedence: clear `RSS_IMAGE` to follow the default, or set a chosen versioned tag/digest to stay pinned. Older checkouts with versioned defaults can select `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:latest` explicitly, or `:latest-static` with their static runtime.
+Back up the database and retain the current configuration and image digest. Update your checkout of this repository first (`git pull`): the Compose files pass new settings such as `UPGRADE_BACKUP` into the container only in their current form, and an older `scripts/backup.py` cannot read a newer schema. With `RSS_IMAGE` blank, the current Compose files follow the latest stable release through `latest` (browser) or `latest-static`. Existing explicit `.env` values continue to take precedence: clear `RSS_IMAGE` to follow the default, or set a chosen versioned tag/digest to stay pinned. Older checkouts with versioned defaults can select `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:latest` explicitly, or `:latest-static` with their static runtime.
 
 Pull and recreate the app using the same Compose files, database and host directories:
 
