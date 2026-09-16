@@ -383,7 +383,7 @@ def main():
 
                     def database_snapshot(database):
                         result = {}
-                        for table in ('schema_version', 'feeds', 'items', 'runs'):
+                        for table in ('schema_version', 'feeds', 'items', 'runs', 'filters', 'feed_filters'):
                             query = "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM " + table + " t"
                             rows = compose_run('exec', '-T', 'postgres', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'rss_workshop', '-d', database, '-Atc', query, stdout=subprocess.PIPE).stdout
                             result[table] = json.loads(rows)

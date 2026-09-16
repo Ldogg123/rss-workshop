@@ -21,7 +21,8 @@ import backup
 ROOT = Path(__file__).resolve().parents[1]
 
 
-CURRENT_SCHEMA = 4
+CURRENT_SCHEMA = 5
+CURRENT_COUNTS = {"feeds": 1, "items": 1, "runs": 1, "filters": 1, "feed_filters": 1}
 
 
 def fixture_database(path, *, schema_version=CURRENT_SCHEMA):
@@ -41,6 +42,11 @@ def fixture_database(path, *, schema_version=CURRENT_SCHEMA):
         values.insert(7, "<p>Full article</p>")
     db.execute(f"INSERT INTO items({columns}) VALUES({','.join('?' * len(values))})", values)
     db.execute("INSERT INTO runs(feed_id,ended,status,count,error) VALUES(?,126,200,1,'')", ("fixture-feed",))
+    # Schema 5 adds library filters that feeds use by reference.
+    if schema_version >= 5:
+        rules = json.dumps({"exclude": {"op": "contains_any", "field": "title", "keywords": ["sponsored"]}})
+        db.execute("INSERT INTO filters(id,name,rules) VALUES('fixture-filter','No sponsored posts',?)", (rules,))
+        db.execute("INSERT INTO feed_filters(feed_id,filter_id,position) VALUES('fixture-feed','fixture-filter',0)")
     db.commit()
     return db
 
@@ -92,7 +98,7 @@ class BackupTests(unittest.TestCase):
                     self.assertEqual(docker.call_count, 1)
             self.assertEqual(manifest["version"], 1)
             self.assertEqual(manifest["schema_version"], CURRENT_SCHEMA)
-            self.assertEqual(manifest["counts"], {"feeds": 1, "items": 1, "runs": 1})
+            self.assertEqual(manifest["counts"], CURRENT_COUNTS)
             self.assertEqual(backup.verify_backup(root / "backup"), manifest)
             self.assertFalse((root / "backup/rss.db-wal").exists())
             with mock.patch.object(backup.os, "geteuid", return_value=0), mock.patch.object(backup.os, "fchown"):
@@ -101,6 +107,8 @@ class BackupTests(unittest.TestCase):
             with contextlib.closing(sqlite3.connect(root / "restored/rss.db")) as restored:
                 self.assertEqual(restored.execute("SELECT version FROM schema_version").fetchall(), [(CURRENT_SCHEMA,)])
                 self.assertEqual(restored.execute("SELECT diagnostics FROM runs").fetchall(), [(diagnostics,)])
+                self.assertEqual(restored.execute("SELECT f.name,l.feed_id FROM filters f JOIN feed_filters l ON l.filter_id=f.id").fetchall(),
+                                 [("No sponsored posts", "fixture-feed")])
                 self.assertEqual(restored.execute("SELECT name FROM sqlite_master WHERE type='index' "
                                                   "AND name='runs_feed_history'").fetchall(), [("runs_feed_history",)])
 
@@ -138,7 +146,7 @@ class BackupTests(unittest.TestCase):
                 self.assertEqual(backup.database_info(root / "restored/rss.db"), manifest["counts"])
 
     def test_manifest_schema_must_match_database_before_restore(self):
-        for version in (1, 2, 3, 4):
+        for version in backup.SCHEMA_VERSIONS:
             with self.subTest(schema_version=version), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
                 fixture_database(root / "source.db", schema_version=version).close()
@@ -342,7 +350,7 @@ class BackupTests(unittest.TestCase):
                 self.assertGreater((root / "source.db-wal").stat().st_size, 0)
                 make_backup(root / "source.db", root / "backup")
                 manifest = backup.verify_backup(root / "backup")
-                self.assertEqual(manifest["counts"], {"feeds": 1, "items": 1, "runs": 1})
+                self.assertEqual(manifest["counts"], CURRENT_COUNTS)
                 with contextlib.closing(sqlite3.connect(root / "backup/rss.db")) as restored:
                     self.assertEqual(restored.execute("SELECT title,published,guid FROM items").fetchone(),
                                      ("Updated in WAL", 123, "fixture-guid"))
@@ -398,7 +406,7 @@ class BackupTests(unittest.TestCase):
                 start(original, prefix + "-app")
                 saved = backup.backup_container(prefix + "-app", root / "saved")
                 self.assertTrue(backup.inspect_container(prefix + "-app")[1], "backup failed to restart the app")
-                self.assertEqual(saved["counts"], {"feeds": 1, "items": 1, "runs": 1})
+                self.assertEqual(saved["counts"], CURRENT_COUNTS)
                 restored = prefix + "-restored"
                 volumes.append(restored)
                 backup.restore_volume(root / "saved", restored, image)
@@ -406,7 +414,7 @@ class BackupTests(unittest.TestCase):
                 backup.backup_container(prefix + "-restored-app", root / "roundtrip")
                 with contextlib.closing(sqlite3.connect(root / "saved/rss.db")) as a:
                     with contextlib.closing(sqlite3.connect(root / "roundtrip/rss.db")) as b:
-                        for table in ("schema_version", *backup.TABLES):
+                        for table in ("schema_version", *backup.schema_tables(CURRENT_SCHEMA)):
                             self.assertEqual(a.execute("SELECT * FROM " + table).fetchall(),
                                              b.execute("SELECT * FROM " + table).fetchall(), table)
                 # A stopped app remains stopped; the original still exists independently.
@@ -472,7 +480,7 @@ class BackupTests(unittest.TestCase):
                 backup.backup_container(prefix + "-restored-app", root / "roundtrip")
                 with contextlib.closing(sqlite3.connect(root / "saved/rss.db")) as a:
                     with contextlib.closing(sqlite3.connect(root / "roundtrip/rss.db")) as b:
-                        for table in ("schema_version", *backup.TABLES):
+                        for table in ("schema_version", *backup.schema_tables(CURRENT_SCHEMA)):
                             self.assertEqual(a.execute("SELECT * FROM " + table).fetchall(),
                                              b.execute("SELECT * FROM " + table).fetchall(), table)
                 # Backups from bind storage retain named-volume restore

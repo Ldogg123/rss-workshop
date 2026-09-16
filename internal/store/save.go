@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,9 +14,15 @@ import (
 )
 
 type SaveOptions struct {
-	// ApplyFiltersToHistory removes saved nonmatches when editing a feed. The
-	// option applies only to this save and is never persisted in its recipe.
+	// ApplyFiltersToHistory removes saved nonmatches when editing a feed, or
+	// from every feed using an edited library filter. The option applies only
+	// to this save and is never persisted in its recipe.
 	ApplyFiltersToHistory bool
+	// Validate checks a feed with its library filters merged into the recipe,
+	// inside the save transaction. Callers pass the same validation they apply
+	// to a submitted feed, so merged rules stay within the limits a recipe
+	// export must satisfy to be imported again.
+	Validate func(model.Feed) error
 }
 
 const historyFilterTimeout = 5 * time.Second
@@ -23,9 +30,12 @@ const historyFilterTimeout = 5 * time.Second
 // SaveWithOptions updates the recipe and optional historical pruning together.
 // Updating the feed row also holds PostgreSQL's refresh/version lock until the
 // transaction ends, so an old in-flight refresh cannot restore pruned items.
+//
+// FilterIDs replaces the feed's library filters when it is non-nil. A nil list
+// keeps the current ones, so a client that predates the library, or only
+// pauses a feed, cannot unlink filters by omitting the field.
 func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveOptions) (_ string, err error) {
-	matcher, err := filter.Compile(f.Recipe.Filters)
-	if err != nil {
+	if _, err := filter.Compile(f.Recipe.Filters); err != nil {
 		return "", err
 	}
 	recipe, err := json.Marshal(f.Recipe)
@@ -33,7 +43,9 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		return "", err
 	}
 	defer s.cleanError(&err)
-	prune := f.ID != "" && options.ApplyFiltersToHistory && f.Recipe.Filters != nil && (f.Recipe.Filters.Include != nil || f.Recipe.Filters.Exclude != nil)
+	// Whether pruning happens depends on the merged rules, which are only known
+	// inside the transaction. Bound every editing save that asks for it.
+	prune := f.ID != "" && options.ApplyFiltersToHistory
 	if prune {
 		// HTTP write deadlines do not cancel request contexts. Bound the whole
 		// pruning transaction independently, including waiting for its locks.
@@ -46,6 +58,18 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		return "", err
 	}
 	defer tx.Rollback()
+	links := f.FilterIDs
+	if links == nil && f.ID != "" {
+		if f.FilterIDs, err = s.feedFilterIDs(ctx, tx, f.ID); err != nil {
+			return "", err
+		}
+	}
+	// Read (and on PostgreSQL share-lock) the library filters before the feed
+	// row, the same order a library filter edit takes its locks in.
+	effective, matcher, err := s.effective(ctx, tx, f, true, options)
+	if err != nil {
+		return "", err
+	}
 	if f.ID == "" {
 		f.ID = ID()
 		if _, err := tx.ExecContext(ctx, s.bind(`INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES(?,?,?,?,?,?,?,?)`), f.ID, ID(), readableText(f.Title), readableText(f.URL), string(recipe), f.Interval, f.Enabled, time.Now().Unix()); err != nil {
@@ -78,10 +102,27 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		if n == 0 {
 			return "", sql.ErrNoRows
 		}
-		if prune {
+		if links == nil {
+			// The links kept were read before this row was locked. If a concurrent
+			// save changed them while this one waited, the rules validated above
+			// are not the ones that would be stored, so let the operator retry.
+			current, err := s.feedFilterIDs(ctx, tx, f.ID)
+			if err != nil {
+				return "", err
+			}
+			if !slices.Equal(current, f.FilterIDs) {
+				return "", invalid(errors.New("this feed's library filters changed while saving; reload and try again"))
+			}
+		}
+		if prune && hasRules(effective.Recipe.Filters) {
 			if err := s.pruneFilteredHistory(ctx, tx, f.ID, matcher); err != nil {
 				return "", err
 			}
+		}
+	}
+	if links != nil {
+		if err := s.linkFilters(ctx, tx, f.ID, links); err != nil {
+			return "", err
 		}
 	}
 	if err := tx.Commit(); err != nil {

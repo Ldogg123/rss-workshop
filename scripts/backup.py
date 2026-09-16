@@ -25,7 +25,14 @@ import uuid
 
 FORMAT = "rss-workshop.sqlite-backup"
 TABLES = ("feeds", "items", "runs")
-SCHEMA_VERSIONS = (1, 2, 3, 4)
+SCHEMA_VERSIONS = (1, 2, 3, 4, 5)
+# Tables a later schema added, counted only in databases that have them, so
+# manifests written for earlier schemas keep verifying unchanged.
+SCHEMA_TABLES = {5: ("filters", "feed_filters")}
+
+
+def schema_tables(version):
+    return TABLES + tuple(table for since, added in sorted(SCHEMA_TABLES.items()) if version >= since for table in added)
 
 
 def docker(*args, **kwargs):
@@ -96,7 +103,8 @@ def database_info(path, immutable=False, *, include_schema=False):
         if len(versions) != 1 or type(versions[0][0]) is not int or versions[0][0] not in SCHEMA_VERSIONS:
             raise ValueError("unsupported database schema; this tool supports exactly one version row of "
                              + ", ".join(str(v) for v in SCHEMA_VERSIONS))
-        counts = {table: db.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in TABLES}
+        counts = {table: db.execute("SELECT count(*) FROM " + table).fetchone()[0]
+                  for table in schema_tables(versions[0][0])}
         return {"schema_version": versions[0][0], "counts": counts} if include_schema else counts
 
 

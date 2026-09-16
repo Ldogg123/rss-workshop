@@ -104,7 +104,12 @@ func (s *Store) opaque(value string) any {
 
 func (s *Store) Get(ctx context.Context, id string) (_ model.Feed, err error) {
 	defer s.cleanError(&err)
-	return scan(s.DB.QueryRowContext(ctx, s.bind("SELECT "+columns+" FROM feeds WHERE id=?"), id))
+	f, err := scan(s.DB.QueryRowContext(ctx, s.bind("SELECT "+columns+" FROM feeds WHERE id=?"), id))
+	if err != nil {
+		return f, err
+	}
+	f.FilterIDs, err = s.feedFilterIDs(ctx, s.DB, id)
+	return f, err
 }
 func (s *Store) List(ctx context.Context) (_ []model.Feed, err error) {
 	defer s.cleanError(&err)
@@ -121,7 +126,13 @@ func (s *Store) List(ctx context.Context) (_ []model.Feed, err error) {
 		}
 		out = append(out, f)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return out, s.attachFilterIDs(ctx, out)
 }
 func (s *Store) Save(ctx context.Context, f model.Feed) (_ string, err error) {
 	return s.SaveWithOptions(ctx, f, SaveOptions{})

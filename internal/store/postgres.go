@@ -97,7 +97,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 	if err := tx.QueryRowContext(ctx, "SELECT count(*),COALESCE(min(version),0) FROM schema_version").Scan(&count, &version); err != nil {
 		return errors.New("cannot read PostgreSQL schema version")
 	}
-	if count > 1 || (count == 1 && (version < 1 || version > 4)) {
+	if count > 1 || (count == 1 && (version < 1 || version > currentSchema)) {
 		return errors.New("unsupported PostgreSQL database schema version")
 	}
 	if count == 0 {
@@ -106,7 +106,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		if _, err := tx.ExecContext(ctx, postgresSchema); err != nil {
 			return errors.New("cannot initialize PostgreSQL tables; use an empty dedicated database with schema creation permission")
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(4)"); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(5)"); err != nil {
 			return errors.New("cannot record PostgreSQL schema version")
 		}
 	} else if version == 1 {
@@ -129,6 +129,14 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		// updating late-published images without discarding fetched content.
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE items ADD COLUMN content_full TEXT NOT NULL DEFAULT ''; UPDATE schema_version SET version=4`); err != nil {
 			return errors.New("cannot migrate PostgreSQL database from schema version 3 to 4")
+		}
+		version = 4
+	}
+	if version == 4 {
+		// Library filters are shared by reference. The version gate also stops
+		// an older application from refreshing linked feeds without their rules.
+		if _, err := tx.ExecContext(ctx, libraryFiltersPostgres+"UPDATE schema_version SET version=5"); err != nil {
+			return errors.New("cannot migrate PostgreSQL database from schema version 4 to 5")
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -162,7 +170,12 @@ func (s *Store) cleanError(err *error) {
 	if !s.postgres || *err == nil {
 		return
 	}
-	for _, sentinel := range []error{sql.ErrNoRows, ErrStale, errPostgresEncoding, context.Canceled, context.DeadlineExceeded} {
+	var bad *InvalidError
+	if errors.As(*err, &bad) {
+		*err = bad
+		return
+	}
+	for _, sentinel := range []error{sql.ErrNoRows, ErrStale, ErrFilterInUse, errPostgresEncoding, context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(*err, sentinel) {
 			*err = sentinel
 			return

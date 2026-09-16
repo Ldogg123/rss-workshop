@@ -91,7 +91,7 @@ Confirm the actual container name with your deployment's Compose `ps` command an
 
 Backup briefly stops the selected app, copies `/data` using [Docker's stopped-container copy support](https://docs.docker.com/reference/cli/docker/container/cp/), and restarts it before validating the copy. Readers and the UI are unavailable during the copy; restarting ends login sessions. A previously stopped container remains stopped. Do not start or recreate the app during this operation. After an error or interruption, check readiness; the utility attempts to restart an originally running app even if copying fails.
 
-The copied database and WAL are consolidated with the [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup). The output contains a standalone `rss.db` and `manifest.json`. Verification checks SHA-256, SQLite integrity, foreign keys, schema version 1, 2, or 3, and feed/item/run counts. Files use mode 0600 and the backup directory uses 0700.
+The copied database and WAL are consolidated with the [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup). The output contains a standalone `rss.db` and `manifest.json`. Verification checks SHA-256, SQLite integrity, foreign keys, a supported schema version, and feed/item/run counts, plus library filter and filter-link counts for schema 5. Files use mode 0600 and the backup directory uses 0700.
 
 Store an off-host copy in protected backup storage. Backups contain private URLs, content, and working reader tokens. Keep `.env`, Compose configuration, and the selected image digest separately. Allow space for the stopped copy, consolidated snapshot, and output; set the host's `TMPDIR` if needed. Checksums detect corruption, not replacement of both the database and manifest.
 
@@ -207,13 +207,14 @@ Direct upgrades are supported from every released SQLite or PostgreSQL app schem
 
 | Existing app release | Stored schema | Startup upgrade to the current app |
 | --- | --- | --- |
-| v0.1.0, v0.1.1 | 1 | 1 → 2 → 3 → 4 in one transaction |
-| v0.1.2 | 2 | 2 → 3 → 4 in one transaction |
-| v0.2.0 | 3 | 3 → 4 in one transaction |
+| v0.1.0, v0.1.1 | 1 | 1 → 2 → 3 → 4 → 5 in one transaction |
+| v0.1.2 | 2 | 2 → 3 → 4 → 5 in one transaction |
+| v0.2.0 | 3 | 3 → 4 → 5 in one transaction |
+| v1.0.0 | 4 | 4 → 5 in one transaction |
 
-Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description. **Every existing installation migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
+Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **Every existing installation migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
 
-Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1, 2, 3 and 4, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
+Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1 through 5, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
 
 For a downgrade, stop the app and restore its pre-upgrade backup into separate storage, then select the matching old image digest or executable. Older apps cannot open a newer schema than they support. Keep the original storage until recovery is verified; there is no in-place schema downgrade. Storage-layout changes, such as [moving an old named volume to a host directory](#move-an-existing-sqlite-volume-to-a-host-directory), are separate from schema upgrades.
 

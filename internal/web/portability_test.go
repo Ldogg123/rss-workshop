@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"rss-workshop/internal/auth"
 	"rss-workshop/internal/model"
 	"rss-workshop/internal/scheduler"
+	"rss-workshop/internal/store"
 )
 
 type portabilityHarness struct {
@@ -403,6 +405,31 @@ func TestImportedRecipeFitsEditRequestLimit(t *testing.T) {
 	f, err := h.app.Store.Get(ctx, imported.IDs[0])
 	if err != nil || !f.Enabled || !reflect.DeepEqual(f.Recipe, edit.Recipe) {
 		t.Fatalf("resume changed recipe or left it paused: enabled=%v, error=%v", f.Enabled, err)
+	}
+
+	// The editor also sends its library filter selection, which validate()
+	// does not count. A full selection must still reach the handler.
+	if len(store.ID()) != 48 {
+		t.Fatal("library filter ID length changed; update maxFilterIDsBytes")
+	}
+	for _, ids := range [][]string{{}, make([]string, store.MaxFiltersPerFeed)} {
+		for i := range ids {
+			ids[i] = strings.Repeat("f", 47) + strconv.FormatInt(int64(i%10), 10)
+		}
+		body := struct {
+			portableFeed
+			Enabled               bool     `json:"enabled"`
+			ApplyFiltersToHistory bool     `json:"apply_filters_to_history"`
+			FilterIDs             []string `json:"filter_ids"`
+		}{edit.portableFeed, false, false, ids}
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := h.request("PUT", "/api/feeds/"+imported.IDs[0], data)
+		if len(ids) == 0 && w.Code != http.StatusOK || len(ids) > 0 && (w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "too large")) {
+			t.Fatalf("boundary edit with %d filter IDs = %d %s", len(ids), w.Code, w.Body.String())
+		}
 	}
 }
 

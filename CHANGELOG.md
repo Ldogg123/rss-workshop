@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add a **Filter library**: save story filters once and select them in any feed. Feeds use library filters by reference, so editing one updates every feed using it, with the same optional cleanup of saved stories as a feed edit. A feed's own rules and its library filters combine, and the existing filter limits apply to the combination. Recipe exports copy the combined rules so files stay importable anywhere. This adds database schema 5; take a backup before upgrading, because v1.0.0 cannot open the upgraded database.
+
 ## v1.0.0 — 2026-09-12
 
 First stable release. RSS Workshop turns pages that publish no feed into RSS and Atom feeds you keep, and 1.0 is the point at which its upgrade path, configuration surface and reader URLs become commitments rather than implementation details. See [upgrades](docs/operations.md#upgrades) before installing over an existing deployment.

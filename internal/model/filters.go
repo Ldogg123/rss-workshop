@@ -16,6 +16,16 @@ type FilterRule struct {
 	Keywords []string     `json:"keywords,omitempty"`
 }
 
+// LibraryFilter is a named filter set that feeds use by reference. Editing it
+// changes every feed listed in FeedIDs; each feed evaluates its own rules and
+// all of its library filters together.
+type LibraryFilter struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Filters FilterSet `json:"filters"`
+	FeedIDs []string  `json:"feed_ids"`
+}
+
 type FilterExample struct {
 	Title  string `json:"title"`
 	Reason string `json:"reason"`
