@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"path"
 	"runtime/debug"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/andybalholm/cascadia"
@@ -192,6 +194,42 @@ func field(n *html.Node, typ string, f model.Field, defaultAttr string) (string,
 	}
 	return strings.TrimSpace(htmlquery.InnerText(v)), v
 }
+
+// imageAttributes are the attributes automatic detection reads first, in order,
+// and that a warning reports when none of them gave a usable address.
+var imageAttributes = []string{"data-src", "data-lazy-src", "src", "data-srcset", "srcset"}
+
+// lazyImageAttributes hold the real address for lazy-loading scripts and CDNs
+// that leave a placeholder, such as an inline SVG data: URI, in src. Detection
+// reads them only when imageAttributes gave no address, so an image that
+// already resolves keeps its address. They are listed one by one because a name
+// does not reveal an attribute's purpose: data-image-link, data-video-src and
+// data-original-title all look like image attributes. Originals come first, and
+// format variants and thumbnails last.
+var lazyImageAttributes = []string{
+	"data-original", "data-orig-src", "data-orig-file", "data-original-src", "data-lazy-original", "data-wpfc-original-src",
+	"data-lazy", "data-lazyload", "data-flickity-lazyload", "data-flickity-lazyload-src", "data-echo", "data-breeze", "nitro-lazy-src", "data-pagespeed-lazy-src", "data-cfsrc", "data-ezsrc", "data-actualsrc",
+	"data-image", "data-image-src", "data-img", "data-img-src", "data-img-url",
+	"data-webp", "data-avif", "data-thumb",
+}
+
+// lazySrcsetAttributes are the same for attributes holding a srcset list.
+var lazySrcsetAttributes = []string{"data-lazy-srcset", "data-original-srcset", "data-original-set", "data-flickity-lazyload-srcset", "data-brsrcset", "nitro-lazy-srcset"}
+
+const (
+	// maxImageAddress is the longest image address an item can publish.
+	maxImageAddress = 8192
+	// maxSrcset bounds the work a source page can demand per card. Far longer than
+	// a real list, and the end of a value is where the usable candidates are.
+	maxSrcset = 256 << 10
+	// maxLazySrcset is lower because every candidate is parsed when none is usable.
+	maxLazySrcset = 16 << 10
+)
+
+// imageURL reads the attributes images normally keep their address in. Images
+// inside a description or an article use only these: the story's own image is
+// published once in its body, and addresses read from other attributes must not
+// be able to grow a description past its limit.
 func imageURL(n *html.Node, base *url.URL) string {
 	for _, k := range []string{"data-src", "data-lazy-src", "src"} {
 		if u := URL(base, attr(n, k)); u != "" {
@@ -199,18 +237,200 @@ func imageURL(n *html.Node, base *url.URL) string {
 		}
 	}
 	for _, k := range []string{"data-srcset", "srcset"} {
-		parts := strings.Split(attr(n, k), ",")
-		for i := len(parts) - 1; i >= 0; i-- {
-			f := strings.Fields(parts[i])
-			if len(f) > 0 {
-				if u := URL(base, f[0]); u != "" {
-					return u
-				}
-			}
+		if u := srcsetURL(base, attr(n, k), false); u != "" {
+			return u
 		}
 	}
 	return ""
 }
+
+// itemImageURL returns a story's image: imageURL, then an img element's
+// lazy-loading attributes. Other elements stop at imageURL because an image
+// selector can reach them, and on them the same names hold links and streams.
+func itemImageURL(n *html.Node, base *url.URL) string {
+	if u := imageURL(n, base); u != "" || n.Data != "img" {
+		return u
+	}
+	for _, k := range lazyImageAttributes {
+		if u := lazyImageURL(base, attr(n, k)); u != "" {
+			return u
+		}
+	}
+	for _, k := range lazySrcsetAttributes {
+		if u := srcsetURL(base, attr(n, k), true); u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
+// srcsetURL returns the last usable candidate of a srcset value, which is
+// normally the largest, or of a single URL. A candidate too long to publish is
+// not usable, so it cannot fail the whole page. lazy accepts only image
+// addresses, for attributes other than the standard ones.
+func srcsetURL(base *url.URL, value string, lazy bool) string {
+	if lazy && len(value) > maxLazySrcset {
+		return ""
+	}
+	candidates := srcsetCandidates(value)
+	for i := len(candidates) - 1; i >= 0; i-- {
+		u := ""
+		if lazy {
+			u = lazyImageURL(base, candidates[i])
+		} else if u = URL(base, candidates[i]); len(u) > maxImageAddress {
+			u = ""
+		}
+		if u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
+// srcsetCandidates splits a srcset value the way browsers split it: a URL runs
+// to the next whitespace, so commas inside it, as in a data: URI or a CDN
+// transformation such as w_400,h_300, stay part of it. Descriptors run to the
+// next comma. Unlike a browser it also separates addresses joined by a bare
+// comma where joinedAddresses can tell, which sites do publish.
+func srcsetCandidates(value string) []string {
+	if len(value) > maxSrcset {
+		// The cut may fall inside a candidate, whose commas are not separators,
+		// so restart at the first comma after the run it fell in.
+		value = strings.TrimLeftFunc(value[len(value)-maxSrcset:], unicode.IsSpace)
+		if space := strings.IndexFunc(value, unicode.IsSpace); space > 0 {
+			value = value[space-1:] // The run's last byte may be its trailing comma.
+		}
+		_, value, _ = strings.Cut(value, ",")
+	}
+	var out []string
+	separator := func(r rune) bool { return r == ',' || unicode.IsSpace(r) }
+	for rest := value; ; {
+		rest = strings.TrimLeftFunc(rest, separator)
+		if rest == "" {
+			return out
+		}
+		end := strings.IndexFunc(rest, unicode.IsSpace)
+		if end < 0 {
+			end = len(rest)
+		}
+		candidate := rest[:end]
+		rest = rest[end:]
+		if trimmed := strings.TrimRight(candidate, ","); trimmed != candidate {
+			// A trailing comma ends the candidate without descriptors.
+			candidate = trimmed
+		} else if comma := strings.IndexByte(rest, ','); comma >= 0 {
+			rest = rest[comma+1:]
+		} else {
+			rest = ""
+		}
+		out = append(out, joinedAddresses(candidate)...)
+	}
+}
+
+// joinedAddresses splits /a.jpg,/b.jpg into two addresses while keeping the
+// comma of a CDN address such as /w_400,h_300/a.jpg: a comma separates only
+// when an address visibly starts after it or an image file ends before it. The
+// payload of a data: URI is never split.
+func joinedAddresses(value string) []string {
+	if len(value) >= 5 && strings.EqualFold(value[:5], "data:") {
+		return []string{value}
+	}
+	var out []string
+	start := 0
+	for i := 0; i < len(value); i++ {
+		if value[i] != ',' {
+			continue
+		}
+		before, after := value[start:i], value[i+1:]
+		if tail := len(before) - len(".jpeg"); tail > 0 {
+			before = before[tail:] // Every image extension fits, which keeps this linear.
+		}
+		if imageExtension(path.Ext(before)) || addressStart(after) {
+			out = append(out, value[start:i])
+			start = i + 1
+		}
+	}
+	return append(out, value[start:])
+}
+
+func addressStart(value string) bool {
+	if strings.HasPrefix(value, "/") {
+		return true
+	}
+	for _, scheme := range []string{"http://", "https://"} {
+		if len(value) >= len(scheme) && strings.EqualFold(value[:len(scheme)], scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+func imageExtension(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".jpg", ".jpeg", ".jfif", ".png", ".gif", ".webp", ".avif", ".heic", ".svg", ".bmp", ".tif", ".tiff":
+		return true
+	}
+	return false
+}
+
+// lazyImageURL resolves a value from a lazy-loading attribute, or returns
+// nothing when it is not a single image address short enough to publish.
+func lazyImageURL(base *url.URL, value string) string {
+	value = strings.TrimSpace(value)
+	if !imageAddress(value) {
+		return ""
+	}
+	u := URL(base, value)
+	if len(u) > maxImageAddress {
+		return ""
+	}
+	// A network path such as //::/a.jpg parses but its absolute form does not.
+	if _, err := url.Parse(u); err != nil {
+		return ""
+	}
+	return u
+}
+
+// imageAddress reports whether a lazy-loading attribute's value can be an image
+// address. It refuses flags, numbers, lists, directories and known media and
+// document types, and accepts an http(s) or path-relative URL or a bare relative
+// path to an image file. Any other extensionless address passes, as it cannot be
+// told apart from a CDN or thumbnail address, which is why the attributes
+// themselves are a fixed list.
+func imageAddress(value string) bool {
+	// Raw base64 JPEG data always starts /9j/, which looks like a path.
+	if value == "" || len(value) > maxImageAddress || strings.HasPrefix(value, "/9j/") || strings.ContainsAny(value, "{}|<>\"'") || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return false
+	}
+	if len(joinedAddresses(value)) > 1 {
+		return false
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	// Some sites end a media URL with a slash, as in /get_file/clip.mp4/.
+	file := path.Base(strings.TrimRight(u.Path, "/"))
+	ext := path.Ext(file)
+	switch strings.ToLower(ext) {
+	case ".mp4", ".m4v", ".webm", ".mov", ".ogv", ".mkv", ".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".ts", ".3gp", ".m3u8", ".mpd", ".m4s",
+		".mp3", ".m4a", ".ogg", ".oga", ".opus", ".wav", ".flac", ".aac",
+		".pdf", ".html", ".htm", ".js", ".mjs", ".css", ".json", ".xml", ".txt", ".zip":
+		return false
+	}
+	web := u.Scheme == "http" || u.Scheme == "https"
+	if !web && u.Scheme != "" {
+		return false
+	}
+	if imageExtension(ext) {
+		return file != ext // A bare extension names no file.
+	}
+	if file == "." || file == ".." || strings.HasSuffix(u.Path, "/") {
+		return false
+	}
+	return web || strings.HasPrefix(value, "/") || strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../")
+}
+
 func content(n *html.Node, base *url.URL) string {
 	// Clone before normalizing so overlapping field selectors are unaffected.
 	var b bytes.Buffer
@@ -353,11 +573,11 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			if r.Image.Attr != "" || isAttribute(im) {
 				it.Image = URL(base, raw)
 			} else {
-				it.Image = imageURL(im, base)
+				it.Image = itemImageURL(im, base)
 			}
 		} else if r.Image.Selector == "" {
 			if ns := selectNodes(n, "css", "img"); len(ns) > 0 {
-				it.Image = imageURL(ns[0], base)
+				it.Image = itemImageURL(ns[0], base)
 			}
 		}
 		if r.Image.Selector != "" && it.Image == "" {
@@ -366,7 +586,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			imageField := r.Image
 			if im != nil && imageField.Attr == "" && !isAttribute(im) {
 				raw = ""
-				for _, k := range []string{"data-src", "data-lazy-src", "src", "data-srcset", "srcset"} {
+				for _, k := range imageAttributes {
 					if v := attr(im, k); strings.TrimSpace(v) != "" {
 						raw, imageField.Attr = v, k
 						break
@@ -408,7 +628,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: date not recognized; %s; using first-seen time", i+1,
 				fieldMismatch("Date", "a date or relative age", raw, dateNode, dateField, "")))
 		}
-		if len(it.Title) > 2048 || len(it.HTML) > 256<<10 || len(it.URL) > 8192 || len(it.Image) > 8192 {
+		if len(it.Title) > 2048 || len(it.HTML) > 256<<10 || len(it.URL) > 8192 || len(it.Image) > maxImageAddress {
 			return out, fmt.Errorf("extracted item exceeds size limits; narrow content selector")
 		}
 		totalBytes += len(it.HTML) + len(it.Title)
