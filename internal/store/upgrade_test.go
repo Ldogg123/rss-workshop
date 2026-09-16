@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"rss-workshop/internal/model"
 )
 
 // sqliteFixture creates a released SQLite schema at a path the test controls.
@@ -186,9 +189,10 @@ func TestFailedUpgradeCopyLeavesDatabaseUnmigrated(t *testing.T) {
 
 func TestFailedCopyVerificationRemovesPartialCopy(t *testing.T) {
 	path, legacy := sqliteFixture(t, 4)
-	// A row violating a foreign key survives VACUUM INTO but fails the check
-	// backup.py applies, so the copy must be discarded and nothing migrated.
-	if _, err := legacy.Exec(`INSERT INTO runs(feed_id,ended,status,count,error) VALUES('missing-feed',1,200,0,'')`); err != nil {
+	// A foreign key violation that is not a deleted feed's leftover survives
+	// VACUUM INTO but fails the check backup.py applies, so the copy must be
+	// discarded and nothing migrated.
+	if _, err := legacy.Exec(`CREATE TABLE unrelated(feed_id TEXT REFERENCES feeds(id)); INSERT INTO unrelated VALUES('missing-feed')`); err != nil {
 		t.Fatal(err)
 	}
 	if s, err := Open(path, 10); s != nil || !errors.Is(err, ErrUpgradeBackup) || !strings.Contains(err.Error(), "foreign key") {
@@ -288,4 +292,92 @@ func TestCopyThatCannotFitIsRefusedBeforeWriting(t *testing.T) {
 		t.Fatal("unknown free space blocked the copy", err)
 	}
 	s.DB.Close()
+}
+
+// Earlier releases could run without foreign keys after an interrupted read,
+// so deleted feeds left rows behind. Opening removes them before the upgrade
+// copy is checked, instead of refusing to start.
+func TestOrphanedRowsFromDeletedFeedsDoNotBlockUpgrade(t *testing.T) {
+	path, legacy := sqliteFixture(t, 4)
+	for _, q := range []string{
+		`INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES('kept','token','Kept','https://example.com','{}',60,0,0)`,
+		`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES('kept','k','g','Kept story','','','','',1,1,1)`,
+		`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES('deleted','k','g2','Orphan','','','','',1,1,1)`,
+		`INSERT INTO runs(feed_id,ended,status,count,error) VALUES('deleted',1,200,0,'')`,
+	} {
+		if _, err := legacy.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Open(path, 10)
+	if err != nil {
+		t.Fatal("orphaned rows blocked the upgrade", err)
+	}
+	defer s.DB.Close()
+	names := preUpgradeBackups(t, path)
+	if len(names) != 1 {
+		t.Fatalf("copies: %v", names)
+	}
+	if counts, err := verifyCopy(filepath.Join(filepath.Dir(path), "backups", names[0], "rss.db"), 4); err != nil || counts["items"] != 1 || counts["runs"] != 0 {
+		t.Fatal("copy still holds orphaned rows", counts, err)
+	}
+	var items, runs int
+	if err := s.DB.QueryRow("SELECT (SELECT count(*) FROM items),(SELECT count(*) FROM runs)").Scan(&items, &runs); err != nil || items != 1 || runs != 0 {
+		t.Fatal("orphaned rows were not removed", items, runs, err)
+	}
+}
+
+// database/sql replaces a connection after an interrupted statement. Every
+// connection must still enforce foreign keys, or deleting a feed strands its
+// stories and filter links.
+func TestEveryConnectionEnforcesForeignKeys(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "rss.db"), 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	filterID, err := s.SaveFilter(t.Context(), model.LibraryFilter{Name: "Linked", Filters: excludeTitles("x")}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := savedRunFeed(t, s)
+	f.FilterIDs = []string{filterID}
+	if _, err := s.Save(t.Context(), f); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = s.Get(t.Context(), f.ID); err != nil {
+		t.Fatal(err)
+	}
+	items := make([]model.Item, 1500)
+	for i := range items {
+		items[i] = model.Item{Key: "k" + strconv.Itoa(i), Title: "t", URL: "https://example.com", HTML: strings.Repeat("x", 20000), Published: time.Unix(int64(i), 0)}
+	}
+	if err := s.Complete(t.Context(), f, items, "", "", 200, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Interrupt reads the way a reader disconnecting mid-response does, then
+	// also force brand-new connections outright.
+	for attempt := range 10 {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Duration(attempt%5+1)*time.Millisecond)
+		s.Items(ctx, f.ID)
+		cancel()
+	}
+	s.DB.SetMaxIdleConns(0)
+	var foreignKeys, busyTimeout int
+	if err := s.DB.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
+		t.Fatal("a replacement connection runs without foreign keys", foreignKeys, err)
+	}
+	if err := s.DB.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil || busyTimeout != 5000 {
+		t.Fatal("a replacement connection runs without the busy timeout", busyTimeout, err)
+	}
+	if err := s.Delete(t.Context(), f.ID); err != nil {
+		t.Fatal(err)
+	}
+	var orphans int
+	if err := s.DB.QueryRow("SELECT (SELECT count(*) FROM items)+(SELECT count(*) FROM runs)+(SELECT count(*) FROM feed_filters)").Scan(&orphans); err != nil || orphans != 0 {
+		t.Fatal("deleting a feed left rows behind", orphans, err)
+	}
+	if err := s.DeleteFilter(t.Context(), filterID); err != nil {
+		t.Fatal("a filter from a deleted feed could not be deleted", err)
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -44,6 +45,43 @@ func backupTables(version int) []string {
 		tables = append(tables, "filters", "feed_filters")
 	}
 	return tables
+}
+
+// removeOrphanedRows finishes feed deletions that ran without foreign key
+// enforcement, deleting the rows they should have cascaded to. Nothing else can
+// reference a deleted feed, so this only removes data the operator already
+// deleted. Other foreign key violations are left for the checks to report.
+func removeOrphanedRows(db *sql.DB, version int) error {
+	tables := []string{"items", "runs"}
+	if version >= 5 {
+		tables = append(tables, "feed_filters")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	removed := make([]any, 0, 2*len(tables))
+	for _, table := range tables {
+		result, err := tx.Exec("DELETE FROM " + table + " WHERE feed_id NOT IN (SELECT id FROM feeds)")
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			removed = append(removed, table, n)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if len(removed) > 0 {
+		slog.Warn("removed rows left behind by deleted feeds", removed...)
+	}
+	return nil
 }
 
 // storedSchema reads the version an existing SQLite database declares, or 0

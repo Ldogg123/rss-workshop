@@ -37,21 +37,29 @@ func Open(path string, maxItems int) (*Store, error) {
 // saves a verified copy beside the database, because an older release cannot
 // open the upgraded one; if that copy fails, the database is left unmigrated.
 func OpenWithOptions(path string, maxItems int, options OpenOptions) (*Store, error) {
-	db, e := sql.Open("sqlite", path)
+	// Connection settings belong in the DSN, which the driver applies to every
+	// connection it opens. Running them once is not enough: database/sql
+	// replaces a connection whose statement was interrupted, for example by a
+	// reader disconnecting mid-read, and the replacement would silently run
+	// without foreign keys, so deleting a feed would leave its rows behind.
+	db, e := sql.Open("sqlite", path+"?_foreign_keys=1&_busy_timeout=5000")
 	if e != nil {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	for _, q := range []string{"PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
-		if _, e = db.Exec(q); e != nil {
-			db.Close()
-			return nil, e
-		}
-	}
 	version, e := storedSchema(db)
 	if e != nil {
 		db.Close()
 		return nil, e
+	}
+	if version >= 1 && version <= currentSchema {
+		// Earlier releases could lose foreign key enforcement that way, so a
+		// supported database may hold rows of feeds already deleted. They would
+		// fail the copy's foreign key check below and block the upgrade.
+		if err := removeOrphanedRows(db, version); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	if version >= 1 && version < currentSchema {
 		if options.SkipUpgradeBackup {
