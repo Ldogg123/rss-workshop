@@ -177,8 +177,14 @@ func (s *Store) SaveFilter(ctx context.Context, lf model.LibraryFilter, options 
 			return "", err
 		}
 		if prune && hasRules(effective.Recipe.Filters) {
-			if err := s.pruneFilteredHistory(ctx, tx, feedID, matcher); err != nil {
+			removed, err := s.pruneFilteredHistory(ctx, tx, feedID, matcher)
+			if err != nil {
 				return "", err
+			}
+			if removed > 0 {
+				if err := s.markChanged(ctx, tx, feedID); err != nil {
+					return "", err
+				}
 			}
 		}
 	}

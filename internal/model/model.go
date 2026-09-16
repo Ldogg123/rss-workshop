@@ -35,15 +35,19 @@ type FullContent struct {
 	Browser  bool   `json:"browser,omitempty"`
 }
 type Feed struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	URL          string    `json:"url"`
-	Recipe       Recipe    `json:"recipe"`
-	Interval     int       `json:"interval"` // seconds
-	Enabled      bool      `json:"enabled"`
-	NextRun      time.Time `json:"next_run"`
-	LastAttempt  time.Time `json:"last_attempt"`
-	LastSuccess  time.Time `json:"last_success"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url"`
+	Recipe      Recipe    `json:"recipe"`
+	Interval    int       `json:"interval"` // seconds
+	Enabled     bool      `json:"enabled"`
+	NextRun     time.Time `json:"next_run"`
+	LastAttempt time.Time `json:"last_attempt"`
+	LastSuccess time.Time `json:"last_success"`
+	// LastChanged is when the published output last changed. Unlike
+	// LastSuccess it stays put across refreshes that change nothing, so it is
+	// what reader responses advertise as their modification time.
+	LastChanged  time.Time `json:"-"`
 	Error        string    `json:"error"`
 	Failures     int       `json:"failures"`
 	ETag         string    `json:"-"`
@@ -77,6 +81,9 @@ type Item struct {
 	PublishedSource    string    `json:"published_source,omitempty"`
 	FirstSeen          time.Time `json:"first_seen"`
 	LastSeen           time.Time `json:"last_seen"`
+	// LastChanged is when this story's published content last changed; zero
+	// for a row not merged since schema 5, which renders as LastSeen.
+	LastChanged time.Time `json:"-"`
 }
 type Preview struct {
 	Matches        int             `json:"matches"`

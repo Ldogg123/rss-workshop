@@ -324,9 +324,13 @@ CREATE TRIGGER prevent_version_five BEFORE UPDATE ON schema_version FOR EACH ROW
 func TestSchemaFiveMigrationMatchesFreshSchema(t *testing.T) {
 	definitions := func(s *Store) [][]any {
 		t.Helper()
-		query := `SELECT type,name,tbl_name,sql FROM sqlite_master WHERE tbl_name IN ('filters','feed_filters') ORDER BY name`
+		// The added last_changed columns cannot compare CREATE statements, since
+		// ALTER TABLE appends them, so compare their column definitions.
+		query := `SELECT type,name,tbl_name,sql FROM sqlite_master WHERE tbl_name IN ('filters','feed_filters')
+UNION ALL SELECT 'column',m.name||'.'||p.name,p.type,p."notnull"||' '||COALESCE(p.dflt_value,'') FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type='table' AND m.name IN ('feeds','items') AND p.name='last_changed'
+ORDER BY 2`
 		if s.postgres {
-			query = `SELECT table_name,column_name,data_type,COALESCE(collation_name,''),is_nullable,COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema=current_schema() AND table_name IN ('filters','feed_filters')
+			query = `SELECT table_name,column_name,data_type,COALESCE(collation_name,''),is_nullable,COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema=current_schema() AND (table_name IN ('filters','feed_filters') OR (table_name IN ('feeds','items') AND column_name='last_changed'))
 UNION ALL SELECT tablename,indexname,replace(indexdef,' ON '||current_schema()||'.',' ON '),'','','' FROM pg_indexes WHERE schemaname=current_schema() AND tablename IN ('filters','feed_filters')
 UNION ALL SELECT conrelid::regclass::text,conname,pg_get_constraintdef(oid),'','','' FROM pg_constraint WHERE conrelid IN ('filters'::regclass,'feed_filters'::regclass)
 ORDER BY 1,2,3`
@@ -351,8 +355,8 @@ ORDER BY 1,2,3`
 		if err := rows.Err(); err != nil {
 			t.Fatal(err)
 		}
-		if len(out) == 0 {
-			t.Fatal("schema 5 tables are missing")
+		if len(out) < 5 {
+			t.Fatalf("schema 5 tables or columns are missing: %v", out)
 		}
 		return out
 	}

@@ -404,7 +404,9 @@ func (a *App) rss(w http.ResponseWriter, r *http.Request) {
 		b, etag, e = feed.RenderAtom(f, items, a.BaseURL)
 	} else {
 		self := a.BaseURL + "/feeds/" + f.RSSToken + ".xml"
-		b, etag, e = feed.Render(f, items, self, "RSS Workshop "+a.version())
+		// No version here: it would change every RSS feed's bytes, and make
+		// every subscriber download a full copy, on each upgrade.
+		b, etag, e = feed.Render(f, items, self, "RSS Workshop")
 	}
 	if e != nil {
 		http.Error(w, "could not render feed", 500)
@@ -415,7 +417,13 @@ func (a *App) rss(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
 	}
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Last-Modified", f.LastSuccess.UTC().Format(http.TimeFormat))
+	// When the output last changed, not when the source was last fetched, so
+	// a refresh that changes nothing keeps answering 304.
+	modified := f.LastChanged
+	if modified.IsZero() {
+		modified = f.LastSuccess
+	}
+	w.Header().Set("Last-Modified", modified.UTC().Format(http.TimeFormat))
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	for _, tag := range strings.Split(r.Header.Get("If-None-Match"), ",") {
 		tag = strings.TrimSpace(tag)
@@ -431,7 +439,7 @@ func (a *App) rss(w http.ResponseWriter, r *http.Request) {
 	// missed, so compare strictly.
 	if r.Header.Get("If-None-Match") == "" {
 		if since, err := http.ParseTime(r.Header.Get("If-Modified-Since")); err == nil {
-			if !f.LastSuccess.UTC().Truncate(time.Second).After(since) {
+			if !modified.UTC().Truncate(time.Second).After(since) {
 				w.WriteHeader(304)
 				return
 			}

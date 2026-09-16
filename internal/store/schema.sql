@@ -5,7 +5,8 @@ CREATE TABLE feeds (
  interval INTEGER NOT NULL, enabled INTEGER NOT NULL, next_run INTEGER NOT NULL,
  last_attempt INTEGER NOT NULL DEFAULT 0, last_success INTEGER NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
- etag TEXT NOT NULL DEFAULT '', modified TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1
+ etag TEXT NOT NULL DEFAULT '', modified TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1,
+ last_changed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX feeds_due ON feeds(enabled,next_run);
 CREATE TABLE items (
@@ -13,6 +14,7 @@ CREATE TABLE items (
  guid TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL, html TEXT NOT NULL, image TEXT NOT NULL,
  content_full TEXT NOT NULL DEFAULT '',
  published INTEGER NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+ last_changed INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(feed_id,key)
 );
 CREATE TABLE runs (

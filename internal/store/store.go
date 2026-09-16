@@ -94,15 +94,15 @@ func ID() string {
 	return hex.EncodeToString(b)
 }
 
-const columns = `id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version,(SELECT count(*) FROM items WHERE feed_id=feeds.id)`
+const columns = `id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version,last_changed,(SELECT count(*) FROM items WHERE feed_id=feeds.id)`
 
 type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (model.Feed, error) {
 	var f model.Feed
 	var r string
-	var next, attempt, success int64
-	e := row.Scan(&f.ID, &f.RSSToken, &f.Title, &f.URL, &r, &f.Interval, &f.Enabled, &next, &attempt, &success, &f.Error, &f.Failures, &f.ETag, &f.LastModified, &f.Version, &f.Count)
+	var next, attempt, success, changed int64
+	e := row.Scan(&f.ID, &f.RSSToken, &f.Title, &f.URL, &r, &f.Interval, &f.Enabled, &next, &attempt, &success, &f.Error, &f.Failures, &f.ETag, &f.LastModified, &f.Version, &changed, &f.Count)
 	if e != nil {
 		return f, e
 	}
@@ -110,6 +110,7 @@ func scan(row scanner) (model.Feed, error) {
 	f.NextRun = stamp(next)
 	f.LastAttempt = stamp(attempt)
 	f.LastSuccess = stamp(success)
+	f.LastChanged = stamp(changed)
 	return f, e
 }
 func stamp(n int64) time.Time {
@@ -182,7 +183,7 @@ func (s *Store) Queue(ctx context.Context, id string) (err error) {
 }
 func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error) {
 	defer s.cleanError(&err)
-	rows, e := s.DB.QueryContext(ctx, s.bind(`SELECT key,guid,title,url,html,image,content_full,published,first_seen,last_seen FROM items WHERE feed_id=? ORDER BY published DESC,key`), id)
+	rows, e := s.DB.QueryContext(ctx, s.bind(`SELECT key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed FROM items WHERE feed_id=? ORDER BY published DESC,key`), id)
 	if e != nil {
 		return nil, e
 	}
@@ -190,13 +191,14 @@ func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error
 	out := []model.Item{}
 	for rows.Next() {
 		var it model.Item
-		var p, f, l int64
-		if e = rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &it.FullHTML, &p, &f, &l); e != nil {
+		var p, f, l, c int64
+		if e = rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &it.FullHTML, &p, &f, &l, &c); e != nil {
 			return nil, e
 		}
 		it.Published = stamp(p)
 		it.FirstSeen = stamp(f)
 		it.LastSeen = stamp(l)
+		it.LastChanged = stamp(c)
 		out = append(out, it)
 	}
 	return out, rows.Err()
@@ -219,11 +221,12 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 	}
 	defer tx.Rollback()
 	var version int
-	versionQuery := "SELECT version FROM feeds WHERE id=?"
+	var lastChanged int64
+	versionQuery := "SELECT version,last_changed FROM feeds WHERE id=?"
 	if s.postgres {
 		versionQuery += " FOR UPDATE"
 	}
-	if e = tx.QueryRowContext(ctx, s.bind(versionQuery), f.ID).Scan(&version); e != nil {
+	if e = tx.QueryRowContext(ctx, s.bind(versionQuery), f.ID).Scan(&version, &lastChanged); e != nil {
 		return e
 	}
 	if version != f.Version {
@@ -239,6 +242,13 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 		delay = min(time.Duration(1<<min(failures, 10))*time.Minute, 24*time.Hour)
 		delay = max(delay, retry)
 	} else {
+		// Output that changes gets a time strictly after the last one, so a
+		// reader holding a Last-Modified from earlier in the same second still
+		// sees the change; output that does not change keeps its time, so an
+		// unchanged refresh -- including a 304 from the source -- publishes
+		// identical bytes and headers.
+		changedAt := max(now.Unix(), lastChanged+1)
+		changed := false
 		for _, it := range items {
 			if it.Published.IsZero() {
 				it.Published = now
@@ -252,10 +262,17 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 			// preview image is picked up. content_full is only replaced when
 			// this refresh actually fetched an article body; an empty value
 			// means "not fetched this time", never "the article is empty".
-			_, e = tx.ExecContext(ctx, s.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(`+identity+`) DO UPDATE SET title=excluded.title,url=excluded.url,html=excluded.html,image=excluded.image,content_full=CASE WHEN excluded.content_full='' THEN items.content_full ELSE excluded.content_full END,last_seen=excluded.last_seen`), f.ID, s.opaque(it.Key), guid, readableText(it.Title), readableText(it.URL), readableText(it.HTML), readableText(it.Image), readableText(it.FullHTML), it.Published.Unix(), now.Unix(), now.Unix())
+			// last_changed moves only when a published field differs. A row not
+			// merged since schema 5 first takes the last_seen it was rendered
+			// with, so its published date does not move either.
+			var itemChanged int64
+			e = tx.QueryRowContext(ctx, s.bind(`INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(`+identity+`) DO UPDATE SET title=excluded.title,url=excluded.url,html=excluded.html,image=excluded.image,content_full=CASE WHEN excluded.content_full='' THEN items.content_full ELSE excluded.content_full END,last_seen=excluded.last_seen,
+last_changed=CASE WHEN items.title<>excluded.title OR items.url<>excluded.url OR items.html<>excluded.html OR items.image<>excluded.image OR (excluded.content_full<>'' AND excluded.content_full<>items.content_full) THEN excluded.last_changed WHEN items.last_changed=0 THEN items.last_seen ELSE items.last_changed END
+RETURNING last_changed`), f.ID, s.opaque(it.Key), guid, readableText(it.Title), readableText(it.URL), readableText(it.HTML), readableText(it.Image), readableText(it.FullHTML), it.Published.Unix(), now.Unix(), now.Unix(), changedAt).Scan(&itemChanged)
 			if e != nil {
 				return e
 			}
+			changed = changed || itemChanged == changedAt
 		}
 		// Retention applies to everything already stored, not only to what this
 		// refresh added, so lowering MAX_ITEMS deletes existing stories the next
@@ -265,11 +282,20 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 		if e != nil {
 			return e
 		}
-		if removed, err := pruned.RowsAffected(); err == nil && removed > 0 {
+		removed, e := pruned.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if removed > 0 {
+			changed = true
 			slog.Info("stories removed by retention", "feed", f.Title, "feed_id", f.ID,
 				"removed", removed, "max_items", s.MaxItems)
 		}
-		if _, e = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_success=?,etag=?,modified=? WHERE id=?"), now.Unix(), s.opaque(etag), s.opaque(modified), f.ID); e != nil {
+		// A first success publishes output even when every story was filtered.
+		if changed || lastChanged == 0 {
+			lastChanged = changedAt
+		}
+		if _, e = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_success=?,etag=?,modified=?,last_changed=? WHERE id=?"), now.Unix(), s.opaque(etag), s.opaque(modified), lastChanged, f.ID); e != nil {
 			return e
 		}
 	}
