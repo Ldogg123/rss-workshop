@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -324,9 +326,13 @@ CREATE TRIGGER prevent_version_five BEFORE UPDATE ON schema_version FOR EACH ROW
 func TestSchemaFiveMigrationMatchesFreshSchema(t *testing.T) {
 	definitions := func(s *Store) [][]any {
 		t.Helper()
-		query := `SELECT type,name,tbl_name,sql FROM sqlite_master WHERE tbl_name IN ('filters','feed_filters') ORDER BY name`
+		// The added last_changed columns cannot compare CREATE statements, since
+		// ALTER TABLE appends them, so compare their column definitions.
+		query := `SELECT type,name,tbl_name,sql FROM sqlite_master WHERE tbl_name IN ('filters','feed_filters')
+UNION ALL SELECT 'column',m.name||'.'||p.name,p.type,p."notnull"||' '||COALESCE(p.dflt_value,'') FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type='table' AND m.name IN ('feeds','items') AND p.name='last_changed'
+ORDER BY 2`
 		if s.postgres {
-			query = `SELECT table_name,column_name,data_type,COALESCE(collation_name,''),is_nullable,COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema=current_schema() AND table_name IN ('filters','feed_filters')
+			query = `SELECT table_name,column_name,data_type,COALESCE(collation_name,''),is_nullable,COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema=current_schema() AND (table_name IN ('filters','feed_filters') OR (table_name IN ('feeds','items') AND column_name='last_changed'))
 UNION ALL SELECT tablename,indexname,replace(indexdef,' ON '||current_schema()||'.',' ON '),'','','' FROM pg_indexes WHERE schemaname=current_schema() AND tablename IN ('filters','feed_filters')
 UNION ALL SELECT conrelid::regclass::text,conname,pg_get_constraintdef(oid),'','','' FROM pg_constraint WHERE conrelid IN ('filters'::regclass,'feed_filters'::regclass)
 ORDER BY 1,2,3`
@@ -351,8 +357,8 @@ ORDER BY 1,2,3`
 		if err := rows.Err(); err != nil {
 			t.Fatal(err)
 		}
-		if len(out) == 0 {
-			t.Fatal("schema 5 tables are missing")
+		if len(out) < 5 {
+			t.Fatalf("schema 5 tables or columns are missing: %v", out)
 		}
 		return out
 	}
@@ -599,12 +605,52 @@ func TestPostgresSaveKeepingLinksRejectsLinksChangedWhileWaiting(t *testing.T) {
 		_, err := s.Save(ctx, paused)
 		saved <- err
 	}()
-	waitBlocked("UPDATE feeds SET title")
+	waitBlocked("UPDATE feeds SET last_changed=CASE WHEN title")
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	var bad *InvalidError
 	if err := <-saved; !errors.As(err, &bad) || !strings.Contains(err.Error(), "reload") {
 		t.Fatal("a save kept links it had not validated", err)
+	}
+}
+
+// A refresh holding the feed row may be merging bodies fetched with the old
+// article selector. Clearing them before that row lock would miss those rows.
+func TestPostgresSelectorChangeClearsBodiesMergedWhileWaiting(t *testing.T) {
+	s, ctx, tx, waitBlocked := postgresRace(t)
+	f := savedRunFeed(t, s)
+	f.Recipe.Full = &model.FullContent{Selector: "div.wrong"}
+	if _, err := s.Save(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.Get(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, "SELECT id FROM feeds WHERE id=$1 FOR UPDATE", f.ID); err != nil {
+		t.Fatal(err)
+	}
+	guid := fmt.Sprintf("urn:sha256:%x", sha256.Sum256([]byte(f.ID+"\x00late")))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO items(feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen) VALUES($1,$2,$3,'Late','','','','<p>wrong block</p>',1,1,1)`, f.ID, []byte("late"), guid); err != nil {
+		t.Fatal(err)
+	}
+	saved := make(chan error, 1)
+	go func() {
+		edited := f
+		edited.Recipe.Full = &model.FullContent{Selector: "article"}
+		_, err := s.Save(ctx, edited)
+		saved <- err
+	}()
+	waitBlocked("UPDATE feeds SET last_changed=CASE WHEN title")
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-saved; err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.Items(ctx, f.ID)
+	if err != nil || len(items) != 1 || items[0].FullHTML != "" {
+		t.Fatalf("a body merged while the selector change waited survived: %+v %v", items, err)
 	}
 }

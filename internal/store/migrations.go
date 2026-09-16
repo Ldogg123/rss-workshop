@@ -62,7 +62,9 @@ UPDATE schema_version SET version=4`); err != nil {
 		if version == 4 {
 			// Library filters are shared by reference. The version gate also stops
 			// an older application from refreshing linked feeds without their rules.
-			if _, err := tx.Exec(libraryFiltersSQLite + "UPDATE schema_version SET version=5"); err != nil {
+			// last_changed records when published output last changed; see
+			// schemaFiveSQLite for why it starts where it does.
+			if _, err := tx.Exec(schemaFiveSQLite + "UPDATE schema_version SET version=5"); err != nil {
 				return fmt.Errorf("cannot migrate SQLite database from schema version 4 to 5: %w", err)
 			}
 		}
@@ -72,7 +74,17 @@ UPDATE schema_version SET version=4`); err != nil {
 
 // Keep these in step with the matching tables in schema.sql and
 // postgres_schema.sql; migration tests compare upgraded and fresh databases.
-const libraryFiltersSQLite = `CREATE TABLE filters (
+//
+// last_changed is when a feed's or story's published output last changed,
+// replacing the observation times (last_success, last_seen) that moved on
+// every refresh. A feed starts from last_success and a story from 0, which
+// renders as its last_seen, so the upgrade itself changes no published byte;
+// stories take their value lazily at their next merge rather than rewriting
+// every row, article bodies included, inside this transaction.
+const schemaFiveSQLite = `ALTER TABLE feeds ADD COLUMN last_changed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN last_changed INTEGER NOT NULL DEFAULT 0;
+UPDATE feeds SET last_changed=last_success;
+CREATE TABLE filters (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, rules TEXT NOT NULL
 );
 CREATE TABLE feed_filters (
@@ -84,7 +96,10 @@ CREATE TABLE feed_filters (
 CREATE INDEX feed_filters_filter ON feed_filters(filter_id);
 `
 
-const libraryFiltersPostgres = `CREATE TABLE filters (
+const schemaFivePostgres = `ALTER TABLE feeds ADD COLUMN last_changed BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN last_changed BIGINT NOT NULL DEFAULT 0;
+UPDATE feeds SET last_changed=last_success;
+CREATE TABLE filters (
  id TEXT COLLATE "C" PRIMARY KEY, name TEXT COLLATE "C" NOT NULL, rules TEXT NOT NULL
 );
 CREATE TABLE feed_filters (

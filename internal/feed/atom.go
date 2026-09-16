@@ -80,7 +80,8 @@ func RenderAtom(f model.Feed, items []model.Item, baseURL string) ([]byte, strin
 			{Rel: "self", Type: "application/atom+xml", Href: self},
 		},
 	}
-	updated := atomDate(f.LastSuccess)
+	feedChanged := changedAt(f)
+	updated := atomDate(feedChanged)
 	for _, it := range items {
 		id := it.GUID
 		if id == "" && it.Key != "" {
@@ -91,10 +92,11 @@ func RenderAtom(f model.Feed, items []model.Item, baseURL string) ([]byte, strin
 		if err != nil || !parsedID.IsAbs() || strings.ContainsFunc(id, unicode.IsSpace) {
 			return nil, "", fmt.Errorf("Atom entry requires an absolute, stable GUID")
 		}
-		published := atomDate(it.Published, it.FirstSeen, it.LastSeen, f.LastSuccess)
-		// The current item model records when an item was last observed, rather
-		// than a separate content modification time. Keep that distinction here.
-		entryUpdated := atomDate(it.LastSeen, it.FirstSeen, it.Published, f.LastSuccess)
+		published := atomDate(it.Published, it.FirstSeen, it.LastSeen, feedChanged)
+		// When the story's published content last changed. A row not merged
+		// since that was recorded keeps the last_seen it was already rendered
+		// with, so upgrading does not rewrite every entry.
+		entryUpdated := atomDate(it.LastChanged, it.LastSeen, it.FirstSeen, it.Published, feedChanged)
 		if published.After(entryUpdated) {
 			entryUpdated = published
 		}
@@ -136,6 +138,16 @@ func RenderAtom(f model.Feed, items []model.Item, baseURL string) ([]byte, strin
 	}
 	b = append([]byte(xml.Header), b...)
 	return b, fmt.Sprintf("\"%x\"", sha256.Sum256(b)), nil
+}
+
+// changedAt is when a feed's published output last changed. A feed without a
+// recorded change time falls back to its last successful refresh, which is
+// what earlier releases published.
+func changedAt(f model.Feed) time.Time {
+	if !f.LastChanged.IsZero() {
+		return f.LastChanged
+	}
+	return f.LastSuccess
 }
 
 func atomDate(candidates ...time.Time) time.Time {

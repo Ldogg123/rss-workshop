@@ -141,7 +141,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 	if version == 4 {
 		// Library filters are shared by reference. The version gate also stops
 		// an older application from refreshing linked feeds without their rules.
-		if _, err := tx.ExecContext(ctx, libraryFiltersPostgres+"UPDATE schema_version SET version=5"); err != nil {
+		if _, err := tx.ExecContext(ctx, schemaFivePostgres+"UPDATE schema_version SET version=5"); err != nil {
 			return errors.New("cannot migrate PostgreSQL database from schema version 4 to 5")
 		}
 	}

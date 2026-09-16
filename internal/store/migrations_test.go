@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,9 +82,13 @@ func legacyItems(t *testing.T, s *Store, feedID string) []model.Item {
 // legacyGet reads a feed the way releases before schema 5 could: they have no
 // library filter links, which the current Get reads. An upgraded feed has an
 // empty list, so the result compares equal to the current Get after migration.
+//
+// Releases before schema 5 also had no last_changed. The migration starts it
+// at last_success, so the expected feed carries that value.
 func legacyGet(t *testing.T, s *Store, id string) (model.Feed, error) {
 	t.Helper()
-	f, err := scan(s.DB.QueryRowContext(t.Context(), s.bind("SELECT "+columns+" FROM feeds WHERE id=?"), id))
+	legacyColumns := strings.Replace(columns, "version,last_changed,", "version,last_success,", 1)
+	f, err := scan(s.DB.QueryRowContext(t.Context(), s.bind("SELECT "+legacyColumns+" FROM feeds WHERE id=?"), id))
 	f.FilterIDs = []string{}
 	return f, err
 }
@@ -332,10 +337,14 @@ func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The run and feed state come from the real writer, because schema 2 is
-	// about run diagnostics. The item is inserted with the released column
-	// list: the current merge writes content_full, which schema 2 lacks.
-	if err := legacy.CompleteWithDiagnostics(ctx, f, nil, "validator", "modified", 200, nil, 0, testRunDiagnostics()); err != nil {
+	// Schema 2 is about run diagnostics, so the run and feed state are written
+	// the way a schema 2 refresh stored them, using the current encoder for the
+	// trace. The current merge writes columns schema 2 lacks.
+	now := time.Now().Unix()
+	if _, err := legacy.DB.ExecContext(ctx, legacy.bind("UPDATE feeds SET last_attempt=?,last_success=?,etag=?,modified=? WHERE id=?"), now, now, legacy.opaque("validator"), legacy.opaque("modified"), f.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.DB.ExecContext(ctx, legacy.bind("INSERT INTO runs(feed_id,ended,status,count,error,diagnostics) VALUES(?,?,?,?,?,?)"), f.ID, now, 200, 0, "", encodeDiagnostics(testRunDiagnostics())); err != nil {
 		t.Fatal(err)
 	}
 	legacyInsertItem(t, legacy, f.ID, "saved", "Saved story")

@@ -72,8 +72,10 @@ func Render(f model.Feed, items []model.Item, selfURL, generator string) ([]byte
 	if minutes := f.Interval / 60; minutes > 0 {
 		c.TTL = minutes
 	}
-	if !f.LastSuccess.IsZero() {
-		c.Updated = f.LastSuccess.UTC().Format(time.RFC1123Z)
+	// The last change to the output, not the last refresh: a refresh that
+	// changes no story must not change these bytes.
+	if updated := changedAt(f); !updated.IsZero() {
+		c.Updated = updated.UTC().Format(time.RFC1123Z)
 	}
 	for _, it := range items {
 		e := entry{

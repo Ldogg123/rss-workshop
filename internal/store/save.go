@@ -86,12 +86,14 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		if err != nil {
 			return "", err
 		}
-		if cleared {
-			if _, err := tx.ExecContext(ctx, s.bind("UPDATE items SET content_full='' WHERE feed_id=?"), f.ID); err != nil {
-				return "", err
-			}
-		}
-		result, err := tx.ExecContext(ctx, s.bind(`UPDATE feeds SET title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), readableText(f.Title), readableText(f.URL), string(recipe), f.Interval, f.Enabled, time.Now().Unix(), f.ID)
+		// Output changes an edit makes before any refresh must still move the
+		// feed's modification time, or a reader holding Last-Modified keeps
+		// getting 304 for a renamed, cleared or pruned feed that is paused. The
+		// interval is published only as whole minutes of ttl.
+		now := time.Now().Unix()
+		title, url := readableText(f.Title), readableText(f.URL)
+		result, err := tx.ExecContext(ctx, s.bind(`UPDATE feeds SET last_changed=CASE WHEN title<>? OR url<>? OR interval/60<>? THEN `+bumpChanged+` ELSE last_changed END,
+title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), title, url, f.Interval/60, now, now, title, url, string(recipe), f.Interval, f.Enabled, now, f.ID)
 		if err != nil {
 			return "", err
 		}
@@ -101,6 +103,14 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		}
 		if n == 0 {
 			return "", sql.ErrNoRows
+		}
+		// Clear only while holding the feed row. On PostgreSQL a refresh merging
+		// bodies from the old selector holds that lock; clearing before it would
+		// miss the rows it has not committed yet, and they would survive.
+		if cleared {
+			if err := s.clearArticleBodies(ctx, tx, f.ID); err != nil {
+				return "", err
+			}
 		}
 		if links == nil {
 			// The links kept were read before this row was locked. If a concurrent
@@ -115,8 +125,14 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 			}
 		}
 		if prune && hasRules(effective.Recipe.Filters) {
-			if err := s.pruneFilteredHistory(ctx, tx, f.ID, matcher); err != nil {
+			removed, err := s.pruneFilteredHistory(ctx, tx, f.ID, matcher)
+			if err != nil {
 				return "", err
+			}
+			if removed > 0 {
+				if err := s.markChanged(ctx, tx, f.ID); err != nil {
+					return "", err
+				}
 			}
 		}
 	}
@@ -159,38 +175,75 @@ func (s *Store) articleSelectorChanged(ctx context.Context, tx *sql.Tx, f model.
 	return was.Selector != now.Selector || was.Attr != now.Attr, nil
 }
 
-func (s *Store) pruneFilteredHistory(ctx context.Context, tx *sql.Tx, feedID string, matcher *filter.Matcher) error {
-	rows, err := tx.QueryContext(ctx, s.bind(`SELECT key,title,url,html FROM items WHERE feed_id=? LIMIT 10001`), feedID)
+// bumpChanged is the modification time for a feed whose output just changed:
+// now, or one second past the previous value when that is not earlier, so a
+// Last-Modified from the same second is never mistaken for the new output.
+// It takes now twice as parameters.
+const bumpChanged = `CASE WHEN last_changed>=? THEN last_changed+1 ELSE ? END`
+
+// markChanged records that an edit changed a feed's published output.
+func (s *Store) markChanged(ctx context.Context, tx *sql.Tx, feedID string) error {
+	now := time.Now().Unix()
+	_, err := tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_changed="+bumpChanged+" WHERE id=?"), now, now, feedID)
+	return err
+}
+
+// clearArticleBodies discards a feed's stored article bodies. Each cleared
+// story takes the feed's next change time rather than the clock, so its Atom
+// updated moves forward even when earlier changes in the same second already
+// pushed the feed's time ahead.
+func (s *Store) clearArticleBodies(ctx context.Context, tx *sql.Tx, feedID string) error {
+	now := time.Now().Unix()
+	var changedAt int64
+	if err := tx.QueryRowContext(ctx, s.bind("SELECT "+bumpChanged+" FROM feeds WHERE id=?"), now, now, feedID).Scan(&changedAt); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, s.bind("UPDATE items SET content_full='',last_changed=? WHERE feed_id=? AND content_full<>''"), changedAt, feedID)
 	if err != nil {
 		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_changed=? WHERE id=?"), changedAt, feedID)
+	return err
+}
+
+// pruneFilteredHistory removes stored stories the matcher rejects and reports
+// how many it removed.
+func (s *Store) pruneFilteredHistory(ctx context.Context, tx *sql.Tx, feedID string, matcher *filter.Matcher) (int, error) {
+	rows, err := tx.QueryContext(ctx, s.bind(`SELECT key,title,url,html FROM items WHERE feed_id=? LIMIT 10001`), feedID)
+	if err != nil {
+		return 0, err
 	}
 	defer rows.Close()
 	var removed []string
 	count := 0
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
-			return err
+			return 0, err
 		}
 		count++
 		if count > 10000 {
-			return errors.New("saved history exceeds 10000 items; cannot apply filters")
+			return 0, errors.New("saved history exceeds 10000 items; cannot apply filters")
 		}
 		var item model.Item
 		if err := rows.Scan(&item.Key, &item.Title, &item.URL, &item.HTML); err != nil {
-			return err
+			return 0, err
 		}
 		if !matcher.Match(item) {
 			removed = append(removed, item.Key)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return 0, err
 	}
 	// Close the cursor before mutations, and keep every query under ordinary
 	// driver parameter limits. Keys remain opaque bytes on PostgreSQL.
+	total := len(removed)
 	for len(removed) > 0 {
 		batch := removed[:min(len(removed), 250)]
 		args := make([]any, 1, len(batch)+1)
@@ -201,16 +254,16 @@ func (s *Store) pruneFilteredHistory(ctx context.Context, tx *sql.Tx, feedID str
 		query := `DELETE FROM items WHERE feed_id=? AND key IN (` + strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",") + `)`
 		result, err := tx.ExecContext(ctx, s.bind(query), args...)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		n, err := result.RowsAffected()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if n != int64(len(batch)) {
-			return errors.New("saved history changed while applying filters")
+			return 0, errors.New("saved history changed while applying filters")
 		}
 		removed = removed[len(batch):]
 	}
-	return nil
+	return total, nil
 }
