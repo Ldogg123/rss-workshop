@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Save a verified copy of an SQLite database in `backups/` inside the data directory before upgrading its schema, because an older release cannot open the upgraded database. The copy uses the backup utility's format, so `scripts/backup.py verify` and `restore` accept it. If it cannot be saved, the app stops without changing the database; `UPGRADE_BACKUP=false` skips the copy. A restart after a failed upgrade reuses an identical copy instead of saving another. PostgreSQL upgrades log a warning instead, since the app cannot run `pg_dump`.
+- `scripts/backup.py backup` now keeps only the database and its write-ahead log from the stopped container, instead of copying all of `/data` into temporary space.
 - Add a **Filter library**: save story filters once and select them in any feed. Feeds use library filters by reference, so editing one updates every feed using it, with the same optional cleanup of saved stories as a feed edit. A feed's own rules and its library filters combine, and the existing filter limits apply to the combination. Recipe exports copy the combined rules so files stay importable anywhere. This adds database schema 5; take a backup before upgrading, because v1.0.0 cannot open the upgraded database.
 
 ## v1.0.0 — 2026-09-12

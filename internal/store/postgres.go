@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -99,6 +100,11 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 	}
 	if count > 1 || (count == 1 && (version < 1 || version > currentSchema)) {
 		return errors.New("unsupported PostgreSQL database schema version")
+	}
+	if count == 1 && version < currentSchema {
+		// The app cannot run pg_dump, so unlike SQLite nothing is copied first.
+		slog.Warn("upgrading PostgreSQL database schema without an automatic backup", "from_schema", version, "to_schema", currentSchema,
+			"note", "an older release cannot open the upgraded database; keep a pg_dump from before this upgrade to roll back")
 	}
 	if count == 0 {
 		// No IF NOT EXISTS here: unrelated or partially initialized tables must

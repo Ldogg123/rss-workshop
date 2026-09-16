@@ -30,6 +30,13 @@ type Store struct {
 }
 
 func Open(path string, maxItems int) (*Store, error) {
+	return OpenWithOptions(path, maxItems, OpenOptions{})
+}
+
+// OpenWithOptions opens an SQLite database. Before upgrading an older schema it
+// saves a verified copy beside the database, because an older release cannot
+// open the upgraded one; if that copy fails, the database is left unmigrated.
+func OpenWithOptions(path string, maxItems int, options OpenOptions) (*Store, error) {
 	db, e := sql.Open("sqlite", path)
 	if e != nil {
 		return nil, e
@@ -39,6 +46,24 @@ func Open(path string, maxItems int) (*Store, error) {
 		if _, e = db.Exec(q); e != nil {
 			db.Close()
 			return nil, e
+		}
+	}
+	version, e := storedSchema(db)
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	if version >= 1 && version < currentSchema {
+		if options.SkipUpgradeBackup {
+			slog.Warn("upgrading database schema without an automatic backup", "from_schema", version, "to_schema", currentSchema)
+		} else {
+			saved, reused, err := backupBeforeUpgrade(db, path, version)
+			if err != nil {
+				db.Close()
+				return nil, upgradeBackupError(version, err)
+			}
+			slog.Info("database copied before schema upgrade", "backup", saved, "reused_identical_copy", reused, "from_schema", version, "to_schema", currentSchema,
+				"note", "an older release cannot open the upgraded database; restore this copy to roll back")
 		}
 	}
 	if e = initializeSQLite(db); e != nil {

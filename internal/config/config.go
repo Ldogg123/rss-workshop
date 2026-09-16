@@ -21,8 +21,12 @@ type Config struct {
 	LogLevel                                                     slog.Level
 	LogFormat                                                    string
 	MetricsToken                                                 string
-	Timeout                                                      time.Duration
-	FlareSolverrTimeout                                          time.Duration
+	// UpgradeBackup saves a verified copy of an SQLite database before its
+	// schema is upgraded. Turning it off is the escape hatch when the data
+	// directory cannot hold a second copy of the database.
+	UpgradeBackup       bool
+	Timeout             time.Duration
+	FlareSolverrTimeout time.Duration
 }
 
 func Load() (Config, error) {
@@ -84,6 +88,14 @@ func Load() (Config, error) {
 	c.MetricsToken = os.Getenv("METRICS_TOKEN")
 	if c.MetricsToken != "" && len(c.MetricsToken) < 16 {
 		return c, fmt.Errorf("METRICS_TOKEN must be at least 16 characters")
+	}
+	switch strings.ToLower(strings.TrimSpace(env("UPGRADE_BACKUP", "true"))) {
+	case "true":
+		c.UpgradeBackup = true
+	case "false":
+		c.UpgradeBackup = false
+	default:
+		return c, fmt.Errorf("UPGRADE_BACKUP must be true or false")
 	}
 	return c, nil
 }

@@ -89,11 +89,11 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 
 Confirm the actual container name with your deployment's Compose `ps` command and choose a new output directory for each backup. The utility refuses existing output directories and concurrent backups of the same container. It also refuses storage that overlaps another running container's mounts, including a parent directory or a named volume exposed through a bind mount. Stop any native processes using the same files too; Docker inspection cannot identify those writers. Do not use a remote Docker context for host-directory operations.
 
-Backup briefly stops the selected app, copies `/data` using [Docker's stopped-container copy support](https://docs.docker.com/reference/cli/docker/container/cp/), and restarts it before validating the copy. Readers and the UI are unavailable during the copy; restarting ends login sessions. A previously stopped container remains stopped. Do not start or recreate the app during this operation. After an error or interruption, check readiness; the utility attempts to restart an originally running app even if copying fails.
+Backup briefly stops the selected app, streams `/data` using [Docker's stopped-container copy support](https://docs.docker.com/reference/cli/docker/container/cp/) and keeps only `rss.db` and its write-ahead log, then restarts the app before validating the copy. [Automatic pre-upgrade copies](#automatic-copy-before-an-sqlite-upgrade) in `/data/backups` pass through the stream without being saved, but still add to the time the app is stopped. Readers and the UI are unavailable during the copy; restarting ends login sessions. A previously stopped container remains stopped. Do not start or recreate the app during this operation. After an error or interruption, check readiness; the utility attempts to restart an originally running app even if copying fails.
 
 The copied database and WAL are consolidated with the [SQLite backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup). The output contains a standalone `rss.db` and `manifest.json`. Verification checks SHA-256, SQLite integrity, foreign keys, a supported schema version, and feed/item/run counts, plus library filter and filter-link counts for schema 5. Files use mode 0600 and the backup directory uses 0700.
 
-Store an off-host copy in protected backup storage. Backups contain private URLs, content, and working reader tokens. Keep `.env`, Compose configuration, and the selected image digest separately. Allow space for the stopped copy, consolidated snapshot, and output; set the host's `TMPDIR` if needed. Checksums detect corruption, not replacement of both the database and manifest.
+Store an off-host copy in protected backup storage. Backups contain private URLs, content, and working reader tokens. Keep `.env`, Compose configuration, and the selected image digest separately. Allow space for the copied database, consolidated snapshot, and output; set the host's `TMPDIR` if needed. Checksums detect corruption, not replacement of both the database and manifest.
 
 ### Restore into a new host directory
 
@@ -186,7 +186,7 @@ docker compose -f compose.yaml -f compose.restore.yaml exec -T rss-workshop /rss
 
 The default image includes Chromium. For static-only operation, keep `-f compose.static.yaml` after the base file and before the storage override. An explicit `RSS_IMAGE` must match the runtime. Keep the same files and saved image for later operations. Never run two app processes against one database, and never use `docker compose down -v` to perform a storage switch.
 
-For native installations, stop the process and copy the entire `DATA_DIR`, including WAL/SHM files, into a new private directory before restarting. A live backup must use a SQLite backup API or an administrator-managed `sqlite3 .backup` command.
+For native installations, stop the process and copy `rss.db` with its WAL/SHM files from `DATA_DIR` into a new private directory before restarting; the `backups` subdirectory holds earlier automatic copies and can be left out. A live backup must use a SQLite backup API or an administrator-managed `sqlite3 .backup` command.
 
 ## Upgrades
 
@@ -212,11 +212,26 @@ Direct upgrades are supported from every released SQLite or PostgreSQL app schem
 | v0.2.0 | 3 | 3 → 4 → 5 in one transaction |
 | v1.0.0 | 4 | 4 → 5 in one transaction |
 
-Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **Every existing installation migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
+Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **Every existing installation migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. SQLite databases also get an [automatic copy](#automatic-copy-before-an-sqlite-upgrade) first. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
 
 Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1 through 5, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
 
-For a downgrade, stop the app and restore its pre-upgrade backup into separate storage, then select the matching old image digest or executable. Older apps cannot open a newer schema than they support. Keep the original storage until recovery is verified; there is no in-place schema downgrade. Storage-layout changes, such as [moving an old named volume to a host directory](#move-an-existing-sqlite-volume-to-a-host-directory), are separate from schema upgrades.
+### Automatic copy before an SQLite upgrade
+
+Before it upgrades an older SQLite schema, the app saves a copy of the database, still at its original schema, to `backups/pre-upgrade-schema-<N>-<UTC time>` inside the data directory: the `backups` directory under your `RSS_DATA_DIR` (default `./data`) with Compose, `/data/backups` inside the container, or under `DATA_DIR` for a native executable. The startup log names the copy. The copy is a consistent snapshot, including changes still in the write-ahead log. It uses the same `rss.db` and `manifest.json` format as the [backup utility](#create-and-verify-a-backup), and passes the same checks before the upgrade starts: integrity, foreign keys, schema version, row counts, and SHA-256. If the copy cannot be saved or verified, or the data directory lacks the free space it needs, the app stops before changing the database and explains why.
+
+The copy is private data like any other backup, and belongs to UID/GID 65532, so use `sudo` to read it on the host. Replace `./data` below with your `RSS_DATA_DIR` and the name with the one in your log:
+
+```sh
+sudo ls ./data/backups
+sudo python3 scripts/backup.py verify ./data/backups/pre-upgrade-schema-4-20260916T120000Z
+```
+
+It covers a failed or unwanted upgrade on this host, not a lost disk: it lives on the same storage as the database, and the backup utility saves only the live database, not these copies. The app never deletes a completed copy. Remove one once the upgraded version has been working and you have an off-host backup. If the upgrade fails and the app is restarted, an identical earlier copy is reused rather than saved again; a copy interrupted part-way, for example by stopping the container, is left in a hidden `.pre-upgrade-partial-*` directory and removed at the next start.
+
+The copy needs free space roughly equal to the database. If the data directory cannot hold it, free space and start again. Otherwise stop the app, which Compose would keep restarting (`docker compose stop rss-workshop`), take a backup elsewhere with the utility, set `UPGRADE_BACKUP=false` for one start, then remove the setting so later upgrades are copied again. It only skips the copy, which is logged as a warning; the upgrade itself is unchanged. PostgreSQL deployments get no automatic copy, because the app cannot run `pg_dump`: it logs a warning when it upgrades, so take a [logical dump](postgresql.md#backup-and-restore) first.
+
+For a downgrade, stop the app and restore its pre-upgrade backup, or the automatic copy, into separate storage with `scripts/backup.py restore`, then select the matching old image digest or executable. Older apps cannot open a newer schema than they support. Keep the original storage until recovery is verified; there is no in-place schema downgrade. Storage-layout changes, such as [moving an old named volume to a host directory](#move-an-existing-sqlite-volume-to-a-host-directory), are separate from schema upgrades.
 
 ## Scheduling and limits
 

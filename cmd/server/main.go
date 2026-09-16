@@ -186,5 +186,9 @@ func openStore(c config.Config) (*store.Store, error) {
 	if err := os.MkdirAll(c.DataDir, 0700); err != nil {
 		return nil, err
 	}
-	return store.Open(filepath.Join(c.DataDir, "rss.db"), c.MaxItems)
+	s, err := store.OpenWithOptions(filepath.Join(c.DataDir, "rss.db"), c.MaxItems, store.OpenOptions{SkipUpgradeBackup: !c.UpgradeBackup})
+	if errors.Is(err, store.ErrUpgradeBackup) {
+		return nil, fmt.Errorf("%w; fix the cause and start again, or stop the app, take your own backup, and set UPGRADE_BACKUP=false for one start", err)
+	}
+	return s, err
 }

@@ -41,6 +41,40 @@ def docker(*args, **kwargs):
     return result.stdout
 
 
+# Only the live database and its WAL are needed. /data also holds the app's
+# automatic pre-upgrade copies, each as large as the database; they pass through
+# the stream without being written to temporary space.
+DATABASE_FILES = ("rss.db", "rss.db-wal")
+
+
+def copy_database_files(container, destination):
+    """Stream /data from a stopped container and keep only the database files."""
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(["docker", "cp", container + ":/data/.", "-"],
+                                   stdout=subprocess.PIPE, stderr=errors)
+        try:
+            with tarfile.open(fileobj=process.stdout, mode="r|") as stream:
+                for member in stream:
+                    name = posixpath.normpath(member.name)
+                    if name not in DATABASE_FILES:
+                        continue
+                    if not member.isreg():
+                        raise ValueError(name + " in /data must be a regular file")
+                    source = stream.extractfile(member)
+                    fd = os.open(destination / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+                    with os.fdopen(fd, "wb") as target:
+                        shutil.copyfileobj(source, target)
+            # Read to the end so docker cp can exit rather than block on a full pipe.
+            while process.stdout.read(1024 * 1024):
+                pass
+        finally:
+            process.stdout.close()
+            status = process.wait()
+        if status != 0:
+            errors.seek(0)
+            raise subprocess.CalledProcessError(status, process.args, stderr=errors.read())
+
+
 def inspect_container(container):
     identity = docker("inspect", "--type", "container", "--format", "{{.Id}}", container).decode().strip()
     environment = json.loads(docker("inspect", "--format", "{{json .Config.Env}}", identity)) or []
@@ -187,7 +221,7 @@ def backup_locked(container, output):
             if running:
                 print("Stopping the selected container briefly to copy its data…", flush=True)
                 docker("stop", "--time", "20", identity)
-            docker("cp", identity + ":/data/.", str(copied))
+            copy_database_files(identity, copied)
         finally:
             if running:
                 docker("start", identity)

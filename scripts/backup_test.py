@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -51,6 +52,20 @@ def fixture_database(path, *, schema_version=CURRENT_SCHEMA):
     return db
 
 
+def stopped_data_stream(data, status=0):
+    """Replace `docker cp <container>:/data/. -` with a tar stream of a local directory."""
+    def popen(command, stdout, stderr):
+        assert command == ["docker", "cp", "fixture-container:/data/.", "-"], command
+        buffer = tempfile.TemporaryFile()
+        with tarfile.open(fileobj=buffer, mode="w") as bundle:
+            bundle.add(data, arcname=".")
+        buffer.seek(0)
+        process = mock.Mock(args=command, stdout=buffer)
+        process.wait.return_value = status
+        return process
+    return popen
+
+
 def make_backup(source, destination):
     destination.mkdir()
     info = backup.snapshot_database(source, destination / "rss.db", include_schema=True)
@@ -86,16 +101,12 @@ class BackupTests(unittest.TestCase):
                 db.commit()
                 self.assertGreater((source / "rss.db-wal").stat().st_size, 0)
 
-                def copy_stopped_fixture(*args):
-                    self.assertEqual(args[:2], ("cp", "fixture-container:/data/."))
-                    for path in source.iterdir():
-                        shutil.copyfile(path, Path(args[2]) / path.name)
-
                 mount = {"Type": "bind", "Source": str(source)}
                 with mock.patch.object(backup, "inspect_container", return_value=("fixture-container", False, mount)), \
-                        mock.patch.object(backup, "docker", side_effect=copy_stopped_fixture) as docker:
+                        mock.patch.object(backup, "docker") as docker, \
+                        mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(source)):
                     manifest = backup.backup_locked("fixture-container", root / "backup")
-                    self.assertEqual(docker.call_count, 1)
+                    docker.assert_not_called()
             self.assertEqual(manifest["version"], 1)
             self.assertEqual(manifest["schema_version"], CURRENT_SCHEMA)
             self.assertEqual(manifest["counts"], CURRENT_COUNTS)
@@ -111,6 +122,37 @@ class BackupTests(unittest.TestCase):
                                  [("No sponsored posts", "fixture-feed")])
                 self.assertEqual(restored.execute("SELECT name FROM sqlite_master WHERE type='index' "
                                                   "AND name='runs_feed_history'").fetchall(), [("runs_feed_history",)])
+
+    def test_backup_copies_only_the_database_from_data(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            data = root / "data"
+            copy = data / "backups/pre-upgrade-schema-4-20260101T000000Z"
+            copy.mkdir(parents=True)
+            (copy / "rss.db").write_bytes(b"automatic copy" * 4096)
+            (copy / "manifest.json").write_text("{}")
+            (data / "rss.db").write_bytes(b"live database")
+            (data / "rss.db-wal").write_bytes(b"write-ahead log")
+            (data / "rss.db-shm").write_bytes(b"shared memory")
+            copied = root / "copied"
+            copied.mkdir()
+            with mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(data)):
+                backup.copy_database_files("fixture-container", copied)
+            self.assertEqual(sorted(path.name for path in copied.iterdir()), ["rss.db", "rss.db-wal"])
+            self.assertEqual((copied / "rss.db-wal").read_bytes(), b"write-ahead log")
+
+            # A symlinked database is refused, and a failed docker cp is reported.
+            (data / "rss.db").unlink()
+            (data / "rss.db").symlink_to("rss.db-wal")
+            with mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(data)), \
+                    self.assertRaisesRegex(ValueError, "regular file"):
+                backup.copy_database_files("fixture-container", root / "unused")
+            (data / "rss.db").unlink()
+            failed = root / "failed"
+            failed.mkdir()
+            with mock.patch.object(backup.subprocess, "Popen", side_effect=stopped_data_stream(data, status=1)), \
+                    self.assertRaises(backup.subprocess.CalledProcessError):
+                backup.copy_database_files("fixture-container", failed)
 
     def test_schema_one_backup_verifies_and_restores_without_migration(self):
         with tempfile.TemporaryDirectory() as work:
@@ -464,11 +506,18 @@ class BackupTests(unittest.TestCase):
         try:
             with contextlib.nullcontext(temporary.name) as work:
                 root = Path(work)
-                fixture_database(root / "source.db").close()
+                # Start from the previous schema: the app copies it into
+                # /data/backups before upgrading, and the backup below must
+                # stream past that copy and save only the upgraded database.
+                fixture_database(root / "source.db", schema_version=CURRENT_SCHEMA - 1).close()
                 make_backup(root / "source.db", root / "seed")
                 backup.restore_directory(root / "seed", root / "original")
                 start(root / "original", prefix + "-app")
+                copies = list((root / "original/backups").glob("pre-upgrade-schema-%d-*" % (CURRENT_SCHEMA - 1)))
+                self.assertEqual(len(copies), 1, "app did not save one copy before upgrading")
+                self.assertEqual(backup.verify_backup(copies[0])["schema_version"], CURRENT_SCHEMA - 1)
                 saved = backup.backup_container(prefix + "-app", root / "saved")
+                self.assertEqual(saved["schema_version"], CURRENT_SCHEMA)
                 self.assertTrue(backup.inspect_container(prefix + "-app")[1])
                 self.assertEqual(saved["source_directory"], str(root / "original"))
                 self.assertNotIn("source_volume", saved)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the compiled server and local fixture using only Python's standard library."""
+import contextlib
 import datetime
 import http.cookiejar
 import http.server
@@ -11,7 +12,9 @@ import secrets
 import shlex
 import shutil
 import socket
+import sqlite3
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -22,6 +25,10 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+# The backup tool verifies the copy the app saves before a schema upgrade. Do
+# not leave import caches in the checkout used for development checks.
+sys.dont_write_bytecode = True
+import backup  # noqa: E402
 fixture = (ROOT / 'testdata/cards.html').read_bytes()
 state = {'body': fixture, 'requests': 0}
 ATOM_NS = '{http://www.w3.org/2005/Atom}'
@@ -255,10 +262,22 @@ def main():
                 assert code == 200, (code, body)
                 csrf = json.loads(body)['csrf']
 
+            # Native SQLite runs start from the previous release's schema, so they
+            # also exercise the startup upgrade; Compose runs keep creating a new
+            # database. Tables stay empty, as the rest of the smoke run expects.
+            upgrade_smoke = not compose and not postgres_mode
             try:
                 if compose:
                     prepare_storage()
+                if upgrade_smoke:
+                    with contextlib.closing(sqlite3.connect(pathlib.Path(env['DATA_DIR']) / 'rss.db')) as seed:
+                        seed.executescript((ROOT / 'internal/store/testdata/schema_v4.sql').read_text())
                 start()
+                if upgrade_smoke:
+                    copies = sorted((pathlib.Path(env['DATA_DIR']) / 'backups').glob('pre-upgrade-schema-4-*'))
+                    assert len(copies) == 1, 'Startup did not save one copy before upgrading schema 4: %r' % copies
+                    manifest = backup.verify_backup(copies[0])
+                    assert manifest['schema_version'] == 4 and manifest['counts'] == {'feeds': 0, 'items': 0, 'runs': 0}, manifest
                 subprocess.run((compose + ['exec', '-T', 'rss-workshop', '/rss-workshop', '-healthcheck']) if compose else [str(ROOT / 'bin/rss-workshop'), '-healthcheck'], env=env, check=True)
                 assert request('/')[0] == 200
                 assert request('/assets/app.js')[0] == 200
