@@ -57,15 +57,19 @@ Reader requests serve saved stories and never fetch the source, so a slow or bro
 To subscribe to everything at once, choose **Export OPML** and import the file into your reader. It contains every feed link, so keep it private.
 
 <details>
-<summary>See the visual editor, story filters, and full article content</summary>
+<summary>See the visual editor, story filters, the filter library, and full article content</summary>
 
 Choose elements visually and refine CSS or XPath beside the highlighted source page:
 
 ![Visual selector editor with live matching highlights](docs/screenshots/visual-selector.png)
 
-Combine include and exclude groups, and paste long keyword lists:
+Combine include and exclude groups, paste long keyword lists, and add filters saved in the library:
 
-![Story filter editor with a 100-phrase condition and optional history cleanup](docs/screenshots/filters.png)
+![Story filter editor with a selected library filter, a 100-phrase condition and optional history cleanup](docs/screenshots/filters.png)
+
+Save a filter once in the filter library and use it in any feed; editing it updates every feed that uses it:
+
+![Filter library dialog editing a filter used by one feed](docs/screenshots/filter-library.png)
 
 Follow each story’s link and publish the article body rather than the teaser:
 
@@ -90,13 +94,14 @@ See [diagnostics and retention](docs/operations.md#feed-diagnostics) and [log de
 
 ## Updates
 
-After making a [verified backup](docs/operations.md#backup-and-restore), run the same command you installed with:
+After making a [verified backup](docs/operations.md#backup-and-restore), update your checkout, then run the same command you installed with:
 
 ```sh
+git pull
 docker compose up -d --pull always --wait
 ```
 
-Use the same Compose overrides as your installation. Every released database schema upgrades directly to the current one, in a single transaction, and an older release will refuse to open a newer database — so take the backup first. See [upgrade compatibility and rollback](docs/operations.md#upgrades).
+Use the same Compose overrides as your installation. Every released database schema upgrades directly to the current one, in a single transaction, and an older release will refuse to open a newer database — so take the backup first. SQLite installs also get an automatic copy in `backups/` inside the data directory before a schema upgrade. See [upgrade compatibility and rollback](docs/operations.md#upgrades).
 
 ## Other ways to run
 
@@ -123,7 +128,7 @@ Every option is an override applied after `compose.yaml`, for example `docker co
 From 1.0 these are commitments for the 1.x line:
 
 - **Every released database schema upgrades directly to the current one**, in a single transaction, with a rollback if any step fails. You never need to install an intermediate version.
-- **There is no in-place downgrade.** An older release refuses to open a newer database rather than damaging it, so rolling back means restoring a backup taken before the upgrade. Take one before every upgrade.
+- **There is no in-place downgrade.** An older release refuses to open a newer database rather than damaging it, so rolling back means restoring a backup taken before the upgrade. Take one before every upgrade; SQLite installs also save a verified copy automatically before a schema upgrade.
 - **Environment variable names do not change.** `STATIC_WORKERS` keeps its name for the life of 1.x even though it governs all refresh and preview slots, not only static ones.
 - **Reader URLs stay stable and private.** Item identities and publication dates never change once a story is first seen, so subscribers never see duplicates or reordering across upgrades.
 - **Reader requests never fetch the source**, and a failed or empty refresh keeps the last good output.
