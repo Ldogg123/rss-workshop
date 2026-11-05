@@ -32,6 +32,14 @@ func OpenPostgres(ctx context.Context, databaseURL string, maxItems int) (*Store
 	if err != nil || u == nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" || strings.Trim(u.Path, "/") == "" || u.Fragment != "" {
 		return nil, errors.New("invalid PostgreSQL connection URL")
 	}
+	// pgx ends the credentials at the first @, as PostgreSQL's client library
+	// does, while net/url ends them at the last. An unencoded @ in a user name or
+	// password therefore names a host that cannot exist, and startup would blame
+	// the server instead of the URL.
+	_, rest, _ := strings.Cut(databaseURL, "://")
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 && strings.Count(rest[:end], "@") > 1 {
+		return nil, errors.New("invalid PostgreSQL connection URL: percent-encode @ in the user name or password as %40")
+	}
 	config, err := pgx.ParseConfig(databaseURL)
 	if err != nil {
 		// ParseConfig errors can contain the complete URL, including passwords.

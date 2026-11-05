@@ -2,10 +2,12 @@ package feed
 
 import (
 	"encoding/xml"
+	"html"
 	"strings"
 	"testing"
 	"time"
 
+	"rss-workshop/internal/extract"
 	"rss-workshop/internal/model"
 )
 
@@ -85,6 +87,39 @@ func TestTheImageIsNotPublishedTwice(t *testing.T) {
 	out := renderRSS(t, []model.Item{withArticle()})
 	if n := strings.Count(out, "lead.jpg"); n != 3 {
 		t.Errorf("lead.jpg appears %d times; want description, content:encoded and media:content", n)
+	}
+}
+
+// The article body is sanitized markup, so an address the body contains appears
+// there escaped. Both bodies come from the real extractor, which is what escapes
+// them, and the item's own image is the raw address the list page gave.
+func TestAnEscapedImageAddressIsNotPublishedTwice(t *testing.T) {
+	recipe := model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"},
+		Link: model.Field{Selector: "a"}, Full: &model.FullContent{Selector: "main"}}
+	for _, c := range []struct{ src, attr string }{
+		{"https://cdn.example.com/lead.jpg?w=640&q=75", "src"},
+		{"https://cdn.example.com/o'neil.jpg", "src"},
+		// A lazy thumbnail found through the fallback, beside the same address in data-src.
+		{"https://cdn.example.com/x.jpg?w=800&h=450", "data-original"},
+	} {
+		src, escaped := c.src, html.EscapeString(c.src)
+		list := `<article><h2>Story</h2><a href="/1">Read</a><img ` + c.attr + `="` + escaped + `"></article>`
+		if c.attr != "src" {
+			list = strings.Replace(list, "<img ", `<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" `, 1)
+		}
+		page, err := extract.Run([]byte(list), "https://e.com/", recipe)
+		if err != nil || len(page.Items) != 1 || page.Items[0].Image != src {
+			t.Fatalf("%s: list page gave %+v, %v", src, page.Items, err)
+		}
+		body, err := extract.Article([]byte(`<main><img data-src="`+escaped+`"><p>Body.</p></main>`), "https://e.com/1", recipe)
+		if err != nil || !strings.Contains(body, escaped) {
+			t.Fatalf("%s: article gave %q, %v", src, body, err)
+		}
+		it := page.Items[0]
+		it.FullHTML = body
+		if n := strings.Count(itemContent(it), "<img"); n != 1 {
+			t.Errorf("%s: the published body shows %d images: %q", src, n, itemContent(it))
+		}
 	}
 }
 

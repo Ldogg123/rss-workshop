@@ -159,7 +159,7 @@ Named-volume restore remains available for existing deployments and accepts back
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image ghcr.io/ldogg123/rss-workshop:v1.1.0-browser
+  --image ghcr.io/ldogg123/rss-workshop:v1.1.1-browser
 ```
 
 This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; backups of every schema the utility supports, including [automatic pre-upgrade copies](#automatic-copy-before-an-sqlite-upgrade), remain usable with the current utility. Select an app version that supports the restored database schema.
@@ -192,7 +192,7 @@ For native installations, stop the process and copy `rss.db` with its WAL/SHM fi
 
 ## Upgrades
 
-Back up the database and retain the current configuration and image digest. Update your checkout of this repository first (`git pull`): the Compose files pass new settings such as `UPGRADE_BACKUP` into the container only in their current form, and an older `scripts/backup.py` cannot read a newer schema. With `RSS_IMAGE` blank, the current Compose files follow the latest stable release through `latest` (browser) or `latest-static`. Existing explicit `.env` values continue to take precedence: clear `RSS_IMAGE` to follow the default, or set a chosen versioned tag/digest to stay pinned. Older checkouts with versioned defaults can select `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:latest` explicitly, or `:latest-static` with their static runtime.
+Back up the database and retain the current configuration and image digest. Update your checkout of this repository first (`git pull`): the Compose files pass new settings such as `UPGRADE_BACKUP` into the container only in their current form, and an older `scripts/backup.py` cannot read a newer schema. With `RSS_IMAGE` blank, the current Compose files follow the latest stable release through `latest` (browser) or `latest-static`. Existing explicit `.env` values continue to take precedence: clear `RSS_IMAGE` to follow the default, or set a chosen versioned tag/digest to stay pinned. Older checkouts with versioned defaults can select `RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:latest` explicitly, or `:latest-static` with their static runtime. With PostgreSQL, check that `DATABASE_URL` percent-encodes its user name, password and query values as [PostgreSQL setup](postgresql.md#existing-postgresql-server) describes; the [changelog](../CHANGELOG.md) names each release's upgrade steps.
 
 Pull and recreate the app using the same Compose files, database and host directories:
 
@@ -213,8 +213,9 @@ Direct upgrades are supported from every released SQLite or PostgreSQL app schem
 | v0.1.2 | 2 | 2 → 3 → 4 → 5 in one transaction |
 | v0.2.0 | 3 | 3 → 4 → 5 in one transaction |
 | v1.0.0 | 4 | 4 → 5 in one transaction |
+| v1.1.0 | 5 | None; opened as it is |
 
-Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **Every existing installation migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. SQLite databases also get an [automatic copy](#automatic-copy-before-an-sqlite-upgrade) first. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
+Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **An installation older than v1.1.0 migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. SQLite databases also get an [automatic copy](#automatic-copy-before-an-sqlite-upgrade) first. A v1.1.0 database is already at schema 5, so it is opened unchanged, without a copy, and v1.1.0 can still open it. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
 
 Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1 through 5, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
 
