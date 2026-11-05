@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"rss-workshop/internal/extract"
 	"rss-workshop/internal/model"
 )
 
@@ -81,6 +82,35 @@ func TestRunHistoryAccessAndReadOnly(t *testing.T) {
 	h.app.Store.DB.Close()
 	if closed := h.request("GET", path, nil); closed.Code != 500 || strings.Contains(closed.Body.String(), "sql:") {
 		t.Fatalf("storage failure: %d %s", closed.Code, closed.Body.String())
+	}
+}
+
+// Without a recover net/http aborts the connection and logs the panic's value,
+// which quotes the page, so the editor sees a network error instead of a reason.
+func TestPreviewReportsSelectorPanicAsAFailedPreview(t *testing.T) {
+	h := newPortabilityHarness(t)
+	h.fetcher.body = []byte(`<article data-score="https://source.example/private?token=secret"><h2>Story</h2></article>`)
+	f := model.Feed{Title: "Draft", URL: "https://example.com", Interval: 60, Recipe: model.Recipe{Mode: "static", Type: "xpath", Items: "//article[@data-score > 1]", Title: model.Field{Selector: ".//h2"}}}
+	data, _ := json.Marshal(f)
+	w := h.request("POST", "/api/preview", data)
+	if w.Code != 422 {
+		t.Fatalf("preview: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "source.example") {
+		t.Fatalf("the response quotes the page: %s", w.Body.String())
+	}
+	var reply struct {
+		Error       string                `json:"error"`
+		Diagnostics *model.RunDiagnostics `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reply.Error, extract.ErrSelectorFailed.Error()) {
+		t.Fatalf("error: %q", reply.Error)
+	}
+	if reply.Diagnostics == nil || len(reply.Diagnostics.Attempts) != 1 || reply.Diagnostics.Attempts[0].Outcome != "failed" {
+		t.Fatalf("trace: %+v", reply.Diagnostics)
 	}
 }
 

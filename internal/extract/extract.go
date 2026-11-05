@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -21,6 +23,15 @@ import (
 )
 
 var ErrNoItems = errors.New("no valid items")
+
+// ErrSelectorFailed reports that extraction stopped because a selector library
+// panicked, which antchfx/xpath does on ordinary page content. It is not
+// ErrNoItems: rendering the page would not make the selector work.
+var ErrSelectorFailed = errors.New("selector evaluation failed")
+
+// maxPanicStack bounds what one failure writes to the log. A page can cause one
+// per article on every refresh, and the frames naming the failure come first.
+const maxPanicStack = 4 << 10
 
 var policy = bluemonday.UGCPolicy()
 
@@ -236,10 +247,31 @@ func Run(body []byte, effective string, r model.Recipe) (model.Preview, error) {
 	return RunAt(body, effective, r, time.Now())
 }
 
+// selectorFailure turns a recovered panic into the error a refresh or preview
+// reports. The value stays out of that error and the log because it quotes the
+// page: xpath's is strconv.ParseFloat: parsing "<attribute>", and attributes hold
+// URLs. The selector stays out because it can hold one too. A stack prints
+// function names and addresses, so with the value's type it still identifies the
+// library bug.
+func selectorFailure(selector string, v any) error {
+	stack := debug.Stack()
+	slog.Error("selector library panicked", "selector", selector, "panic_type", fmt.Sprintf("%T", v), "stack", string(stack[:min(len(stack), maxPanicStack)]))
+	return fmt.Errorf("%w on the %s selector; check its comparisons and string functions against this page", ErrSelectorFailed, selector)
+}
+
 // RunAt uses one observation time for every relative date in a fetched page.
 // A supplied reference also makes relative-date extraction deterministic.
-func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) (model.Preview, error) {
-	out := model.Preview{Items: []model.Item{}, Warnings: []string{}}
+func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) (out model.Preview, err error) {
+	out = model.Preview{Items: []model.Item{}, Warnings: []string{}}
+	// Refreshes run on bare goroutines, where a panic stops the whole server, so
+	// every selector this page evaluates stays inside this recover.
+	selector := "Items"
+	defer func() {
+		if v := recover(); v != nil {
+			out.Items = []model.Item{}
+			err = fmt.Errorf("%w; saved history is retained", selectorFailure(selector, v))
+		}
+	}()
 	if observedAt.IsZero() || observedAt.UTC().Year() < 1 || observedAt.UTC().Year() > 9999 {
 		return out, fmt.Errorf("invalid page observation time")
 	}
@@ -278,7 +310,9 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		if r.Type == "xpath" {
 			n = clone(n)
 		}
+		selector = "Title"
 		title, titleNode := field(n, r.Type, r.Title, "")
+		selector = "Link"
 		rawLink, linkNode := field(n, r.Type, r.Link, "href")
 		link := URL(base, rawLink)
 		if title == "" {
@@ -300,6 +334,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		}
 		seen[key] = true
 		it := model.Item{Key: key, Title: title, URL: link}
+		selector = "Content"
 		rawContent, cn := field(n, r.Type, r.Content, "")
 		if cn != nil {
 			if r.Content.Attr != "" || isAttribute(cn) {
@@ -312,6 +347,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: %s; content omitted", i+1,
 				fieldMismatch("Content", "text or safe HTML", rawContent, cn, r.Content, "")))
 		}
+		selector = "Image"
 		raw, im := field(n, r.Type, r.Image, "")
 		if im != nil {
 			if r.Image.Attr != "" || isAttribute(im) {
@@ -346,6 +382,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		if it.Image != "" {
 			it.HTML = "<p><img src=\"" + html.EscapeString(it.Image) + "\" alt=\"\"></p>" + it.HTML
 		}
+		selector = "Date"
 		raw, dateNode := field(n, r.Type, r.Date, "")
 		// A selected element can display a relative age while retaining an exact
 		// machine-readable datetime. Explicit attributes and XPath text/attribute
