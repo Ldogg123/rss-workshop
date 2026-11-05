@@ -34,6 +34,7 @@ type Pool struct {
 	stop                        context.CancelFunc
 	active, completed, restarts int
 	closed                      bool
+	testFlags                   []chromedp.ExecAllocatorOption // tests only: applied after the standard flags
 }
 
 func New(path string, capacity int, timeout time.Duration, policy *fetch.Client) (*Pool, error) {
@@ -92,13 +93,16 @@ func (p *Pool) startLocked() error {
 		chromedp.Flag("no-sandbox", false), chromedp.Flag("disable-dev-shm-usage", false),
 		chromedp.Flag("disable-background-networking", true), chromedp.Flag("disable-extensions", true), chromedp.Flag("disable-sync", true),
 		chromedp.Flag("disable-quic", true), chromedp.Flag("disable-features", "MediaRouter,OptimizationHints,Translate"),
+		// Chrome reads the first switch and the headless library only the second. Chromium
+		// silently ignores a switch its build lacks, so a browser test proves this took effect.
+		chromedp.Flag("webrtc-ip-handling-policy", "disable_non_proxied_udp"),
 		chromedp.Flag("force-webrtc-ip-handling-policy", "disable_non_proxied_udp"),
 		chromedp.Flag("proxy-server", p.proxy.URL()), chromedp.Flag("proxy-bypass-list", "<-loopback>"),
 		chromedp.Flag("host-resolver-rules", "MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"),
 		chromedp.Flag("disable-popup-blocking", false), chromedp.Flag("renderer-process-limit", strconv.Itoa(cap(p.slots)*2+1)),
 		chromedp.WSURLReadTimeout(10 * time.Second),
 	}
-	alloc, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	alloc, allocCancel := chromedp.NewExecAllocator(context.Background(), append(opts, p.testFlags...)...)
 	root, rootCancel := chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
 	// A watchdog bounds initialization without making the reusable root itself expire.
 	timer := time.AfterFunc(15*time.Second, rootCancel)
@@ -192,9 +196,10 @@ func (p *Pool) Render(ctx context.Context, raw, waitSelector string, settleMS in
 			}()
 		}
 	})
+	// No pattern stops a WebSocket here, so ws and wss are not listed; the proxy confines them.
 	err := chromedp.Run(tab,
 		network.Enable(), network.SetBypassServiceWorker(true), network.SetCacheDisabled(true),
-		network.SetBlockedURLs().WithURLPatterns([]*network.BlockPattern{{URLPattern: "ws://*", Block: true}, {URLPattern: "wss://*", Block: true}, {URLPattern: "file://*", Block: true}, {URLPattern: "ftp://*", Block: true}}),
+		network.SetBlockedURLs().WithURLPatterns([]*network.BlockPattern{{URLPattern: "file://*", Block: true}, {URLPattern: "ftp://*", Block: true}}),
 		cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorDeny).WithBrowserContextID(browserID),
 		chromedp.Navigate(raw),
 	)
