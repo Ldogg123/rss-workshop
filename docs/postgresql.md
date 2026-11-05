@@ -35,7 +35,13 @@ The app creates its tables and indexes in the selected database. Use a database 
 DATABASE_URL='postgresql://rss_workshop:ENCODED_PASSWORD@db.example.net:5432/rss_workshop?sslmode=verify-full'
 ```
 
-Replace the host, database, and password with your values. Percent-encode reserved characters in URI credentials, including `@`, `:`, `/`, `%`, `?`, and `#`; PostgreSQL documents [connection URI encoding](https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNSTRING). Single quotes keep literal dollar signs from being expanded by Compose. A randomly generated hexadecimal password needs no URI encoding.
+Replace the host, database, and password with your values. Percent-encode reserved characters in the user name and password, including `@`, `:`, `/`, `%`, `?`, `#`, and spaces. The URI is read the way PostgreSQL's own client library reads it, which ends the credentials at the first `@`, so an unencoded one stops startup with `percent-encode @ in the user name or password as %40`. Python can encode a password without echoing it as you type; keep `safe=""`, because the default leaves `/` unencoded:
+
+```sh
+python3 -c 'import getpass, urllib.parse; print(urllib.parse.quote(getpass.getpass("Password: "), safe=""))'
+```
+
+Query parameters follow the same rules: write each one as `key=value`, and percent-encode `=`, `&`, `#`, `%`, and spaces inside a value, as in `sslrootcert=/run/secrets/db%20ca.pem`. A `+` is a literal plus rather than a space, and a parameter given twice takes its last value. A malformed parameter stops startup with `invalid PostgreSQL connection configuration`. PostgreSQL documents [connection URI encoding](https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNSTRING). Single quotes keep literal dollar signs from being expanded by Compose. A randomly generated hexadecimal password needs no URI encoding.
 
 Use verified TLS for a remote server. If it uses a private certificate authority, mount its CA certificate read-only into the app and add the appropriate `sslrootcert` path to the URI. Database access uses ordinary administrator-configured networking; `ALLOW_CIDRS` governs scraped source pages and does not authorize database connections. Check the server's access rules and firewall separately.
 
@@ -100,7 +106,7 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
-The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.0.0 database moves from schema 4 to schema 5 the first time this version runs; retain a pre-upgrade dump to roll back, because an older release cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates. See [upgrade compatibility](operations.md#upgrades).
+The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.0.0 database moves from schema 4 to schema 5 the first time this version runs, while a v1.1.0 database is already at schema 5 and opens unchanged; retain a pre-upgrade dump to roll back, because an older release cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates. See [upgrade compatibility](operations.md#upgrades).
 
 For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 

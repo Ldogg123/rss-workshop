@@ -60,10 +60,10 @@ The default Compose files follow stable releases. These moving tags point to the
 | `ghcr.io/ldogg123/rss-workshop:latest-browser` | Explicit alias for the same browser image |
 | `ghcr.io/ldogg123/rss-workshop:latest-static` | Static default |
 
-To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.1.0-browser` and `v1.1.0-static` remain available unchanged; for example:
+To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.1.1-browser` and `v1.1.1-static` remain available unchanged; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.1.0-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.1.1-browser
 ```
 
 Recreate the app with the same runtime and other overrides used by your installation:
@@ -146,7 +146,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `UPGRADE_BACKUP` | `true` | `true` saves a verified copy of an SQLite database in `backups/` before upgrading its schema; `false` upgrades without one. See [automatic copy](operations.md#automatic-copy-before-an-sqlite-upgrade) |
 | `METRICS_TOKEN` | empty | Enables `/metrics` and is required to scrape it; blank returns 404. See [metrics](operations.md#metrics) |
 
-Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters inside connection-URI passwords. Recreate the container after environment changes; restarting the process invalidates login sessions.
+Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters in a connection URI's user name, password and query values, as [PostgreSQL setup](postgresql.md#existing-postgresql-server) shows. Recreate the container after environment changes; restarting the process invalidates login sessions.
 
 Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chromium proxy check destinations before dialing; environment HTTP proxies are ignored. FlareSolverr has a separate remote network boundary, and its private service endpoint does not require a source allowlist exception.
 
@@ -154,14 +154,14 @@ Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chro
 
 Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For example, download and verify `v1.1.0` for Linux x86-64 in an empty directory:
+For example, download and verify `v1.1.1` for Linux x86-64 in an empty directory:
 
 ```sh
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.1.0/rss-workshop-v1.1.0-linux-amd64.tar.gz
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.1.0/rss-workshop-v1.1.0-linux-amd64.tar.gz.sha256
-sha256sum -c rss-workshop-v1.1.0-linux-amd64.tar.gz.sha256
-tar -xzf rss-workshop-v1.1.0-linux-amd64.tar.gz
-cd rss-workshop-v1.1.0-linux-amd64
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.1.1/rss-workshop-v1.1.1-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.1.1/rss-workshop-v1.1.1-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v1.1.1-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v1.1.1-linux-amd64.tar.gz
+cd rss-workshop-v1.1.1-linux-amd64
 ./rss-workshop -version
 ```
 

@@ -140,6 +140,31 @@ func TestPostgresConfigurationErrorsAreSafe(t *testing.T) {
 	}
 }
 
+// The PostgreSQL driver ends the credentials at the first @. Without this check
+// an unencoded one reported an unreachable server, which sends an operator
+// looking at the database instead of the URL.
+func TestAnUnencodedAtInPostgresCredentialsIsNamed(t *testing.T) {
+	secret := "secret-that-must-not-leak"
+	for _, raw := range []string{
+		"postgres://admin:p@" + secret + "@127.0.0.1:1/rss",
+		"postgres://ad@min:" + secret + "@127.0.0.1:1/rss",
+		"postgresql://admin:" + secret + "@@127.0.0.1:1/rss?sslmode=disable",
+	} {
+		s, err := OpenPostgres(t.Context(), raw, 10)
+		if s != nil || err == nil || !strings.Contains(err.Error(), "percent-encode @") || strings.Contains(err.Error(), secret) {
+			t.Errorf("an unencoded @ was not named safely: %v", err)
+		}
+	}
+	// Encoded, the same credentials reach the connection attempt.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, raw := range []string{"postgres://admin:p%40" + secret + "@127.0.0.1:1/rss", "postgres://admin:pw@127.0.0.1:1/rss?application_name=a@b"} {
+		if _, err := OpenPostgres(ctx, raw, 10); err == nil || strings.Contains(err.Error(), "percent-encode") {
+			t.Errorf("a correctly written URL was refused as unencoded: %v", err)
+		}
+	}
+}
+
 func TestPostgresConcurrentRecipeInvalidation(t *testing.T) {
 	for _, mutation := range []string{"edit", "delete", "cancel"} {
 		t.Run(mutation, func(t *testing.T) {

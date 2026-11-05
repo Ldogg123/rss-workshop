@@ -18,12 +18,14 @@ import (
 //
 // Article pages usually include the lead image inside the body they mark up, so
 // prepending unconditionally showed it twice in every reader. Prepend only when
-// the body does not already reference it.
+// the body does not already reference it. The body is sanitized markup, which
+// writes an address's & as &amp; and ' as &#39;, so the escaped form counts too;
+// otherwise every CDN address with a query showed twice.
 func itemContent(it model.Item) string {
 	if it.FullHTML == "" {
 		return it.HTML
 	}
-	if it.Image == "" || strings.Contains(it.FullHTML, it.Image) {
+	if it.Image == "" || strings.Contains(it.FullHTML, it.Image) || strings.Contains(it.FullHTML, html.EscapeString(it.Image)) {
 		return it.FullHTML
 	}
 	return imageTag(it.Image) + it.FullHTML
