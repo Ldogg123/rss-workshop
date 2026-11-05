@@ -5,6 +5,8 @@
 - Update Go to 1.27.3 and the Go modules the app uses, fixing 15 reachable vulnerabilities reported by `govulncheck`: in the standard library's HTTP/1, HTTP/2, TLS, certificate, MIME and `html/template` code, and in HTML parsing and rendering in `golang.org/x/net`.
 - If PostgreSQL's `DATABASE_URL` has an unencoded reserved character such as `@` in its password, percent-encode it before upgrading: the newer driver reads the first `@` as the end of the credentials, so such a URL that used to work now fails at startup. A `+` in a query value is now literal, and a repeated parameter takes its last value. URLs written as [the PostgreSQL guide](docs/postgresql.md) describes are unaffected.
 - Update the browser image to Chromium 156 and a current Debian base. Debian had removed the previously pinned Chromium, so that image could no longer be built from source.
+- Stop pages rendered in browser mode from sending WebRTC UDP past the proxy. The switch meant to disable it is not in Chromium's regular build, which ignores switches it does not know, so a rendered page could send STUN packets carrying text of its choosing to any routable address and port, including ones the outbound policy rejects. The switch Chromium reads is now set as well.
+- Correct the browser guide, which said WebSocket URLs were blocked through DevTools. They never were: a rendered page can open a WebSocket, and it is confined by the proxy's rule of validated destinations on port 443 and its limits, which held throughout. The patterns that had no effect are removed.
 
 ## v1.1.0 — 2026-09-16
 

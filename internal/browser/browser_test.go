@@ -1,7 +1,9 @@
 package browser
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -164,5 +166,207 @@ bounded:
 	render("/js", "article")
 	if pool.Stats().Active != 0 || pool.Stats().Restarts < 2 {
 		t.Fatal("browser recovery failed", pool.Stats())
+	}
+}
+
+// webRTCUsername is the ICE username fragment the page chooses for itself.
+const webRTCUsername = "PageChosenText"
+
+// webRTCPage offers its sink as a STUN server and as a remote ICE candidate,
+// which is all a page needs to send UDP without passing through the proxy.
+const webRTCPage = `<html><body><script>
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => {
+  const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:%[1]s:%[2]d'}]});
+  pc.createDataChannel('probe');
+  const complete = new Promise(r => { pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') r() } });
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await pc.setRemoteDescription({type: 'answer', sdp: offer.sdp
+    .replace(/a=ice-ufrag:.*/g, 'a=ice-ufrag:%[3]s')
+    .replace(/a=ice-pwd:.*/g, 'a=ice-pwd:aaaaaaaaaaaaaaaaaaaaaaaa')
+    .replace(/a=setup:actpass/g, 'a=setup:active')});
+  await pc.addIceCandidate({candidate: 'candidate:1 1 udp 2130706431 %[1]s %[2]d typ host', sdpMid: '0', sdpMLineIndex: 0});
+  await Promise.race([complete, sleep(3000)]);
+  await sleep(2000);
+  document.body.innerHTML = '<article>' + pc.iceGatheringState + '</article>';
+})().catch(e => { document.body.innerHTML = '<article>' + e + '</article>' });
+</script></body></html>`
+
+func TestChromiumSendsNoWebRTCUDP(t *testing.T) {
+	if os.Getenv("RSS_BROWSER_TEST") != "1" {
+		t.Skip("run the browser-tests Docker target for real Chromium integration tests")
+	}
+	path := os.Getenv("CHROMIUM_PATH")
+	if path == "" {
+		t.Fatal("CHROMIUM_PATH required")
+	}
+	var address net.IP
+	addrs, e := net.InterfaceAddrs()
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
+			address = n.IP
+			break
+		}
+	}
+	if address == nil {
+		t.Fatal("no non-loopback IPv4 interface: a loopback-only network produces no ICE activity, so this test could prove nothing")
+	}
+	// Each run gets its own sink, so a late packet from one cannot count against the next.
+	probe := func(flags ...chromedp.ExecAllocatorOption) (packets, chosen int32, page string) {
+		t.Helper()
+		sink, e := net.ListenUDP("udp4", &net.UDPAddr{IP: address})
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer sink.Close()
+		var received, withUsername atomic.Int32
+		go func() {
+			buf := make([]byte, 2048)
+			for {
+				n, _, e := sink.ReadFromUDP(buf)
+				if e != nil {
+					return
+				}
+				received.Add(1)
+				if bytes.Contains(buf[:n], []byte(webRTCUsername)) {
+					withUsername.Add(1)
+				}
+			}
+		}()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, webRTCPage, address, sink.LocalAddr().(*net.UDPAddr).Port, webRTCUsername)
+		}))
+		defer srv.Close()
+		policy, e := fetch.New(10*time.Second, "127.0.0.1/32")
+		if e != nil {
+			t.Fatal(e)
+		}
+		pool, e := New(path, 1, 20*time.Second, policy)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer pool.Close()
+		pool.testFlags = flags
+		r, e := pool.Render(context.Background(), srv.URL, "article", 0)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return received.Load(), withUsername.Load(), string(r.Body)
+	}
+	// Without a policy the same page must reach the sink, or finding nothing below means nothing.
+	if packets, chosen, _ := probe(chromedp.Flag("webrtc-ip-handling-policy", false), chromedp.Flag("force-webrtc-ip-handling-policy", false)); packets == 0 || chosen == 0 {
+		t.Fatalf("control sent %d packets, %d with the page's username; this environment cannot show the leak", packets, chosen)
+	}
+	packets, _, page := probe()
+	if packets != 0 {
+		t.Fatalf("page sent %d UDP packets past the proxy", packets)
+	}
+	if !strings.Contains(page, "<article>complete</article>") {
+		t.Fatal("ICE gathering did not complete, so the page may not have tried: ", page)
+	}
+}
+
+// connSink records each connection to one address and the first byte sent on
+// it, which is 'G' for a ws:// handshake and 0x16 for a wss:// TLS ClientHello.
+type connSink struct {
+	mu    sync.Mutex
+	conns int
+	first []byte
+}
+
+func (s *connSink) listen(t *testing.T, address string) int {
+	t.Helper()
+	l, e := net.Listen("tcp", address)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, e := l.Accept()
+			if e != nil {
+				return
+			}
+			s.mu.Lock()
+			s.conns++
+			s.mu.Unlock()
+			go func() {
+				defer c.Close()
+				buf := make([]byte, 1)
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				if _, e := c.Read(buf); e == nil {
+					s.mu.Lock()
+					s.first = append(s.first, buf[0])
+					s.mu.Unlock()
+				}
+			}()
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func (s *connSink) seen() (int, []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conns, append([]byte(nil), s.first...)
+}
+
+// DevTools URL blocking does not stop WebSockets, so the proxy's CONNECT rule
+// is what confines them. Binding port 443 relies on Docker's default
+// ip_unprivileged_port_start.
+func TestChromiumWebSocketsStayWithinProxyPolicy(t *testing.T) {
+	if os.Getenv("RSS_BROWSER_TEST") != "1" {
+		t.Skip("run the browser-tests Docker target for real Chromium integration tests")
+	}
+	path := os.Getenv("CHROMIUM_PATH")
+	if path == "" {
+		t.Fatal("CHROMIUM_PATH required")
+	}
+	var allowed, otherPort, rejected connSink
+	allowed.listen(t, "127.0.0.1:443")
+	rejected.listen(t, "127.0.0.2:443")
+	port := otherPort.listen(t, "127.0.0.1:0")
+	urls, e := json.Marshal([]string{
+		"ws://127.0.0.1:443/", "wss://127.0.0.1:443/",
+		fmt.Sprintf("ws://127.0.0.1:%d/", port), fmt.Sprintf("wss://127.0.0.1:%d/", port),
+		"ws://127.0.0.2:443/", "wss://127.0.0.2:443/",
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><body><script>
+const open = u => new Promise(r => { const s = new WebSocket(u); s.onopen = s.onerror = s.onclose = r; setTimeout(r, 5000) });
+(async () => { for (const u of %s) await open(u); document.body.innerHTML = '<article>done</article>' })();
+</script></body></html>`, urls)
+	}))
+	defer srv.Close()
+	policy, e := fetch.New(10*time.Second, "127.0.0.1/32")
+	if e != nil {
+		t.Fatal(e)
+	}
+	pool, e := New(path, 1, 30*time.Second, policy)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer pool.Close()
+	if _, e := pool.Render(context.Background(), srv.URL, "article", 0); e != nil {
+		t.Fatal(e)
+	}
+	// Both schemes reach an allowed destination on 443, which also shows the sockets below were tried.
+	if _, first := allowed.seen(); !bytes.Contains(first, []byte("G")) || !bytes.Contains(first, []byte{0x16}) {
+		t.Fatalf("allowed destination on 443 saw first bytes %q, want a ws and a wss connection", first)
+	}
+	if n, _ := otherPort.seen(); n != 0 {
+		t.Fatalf("%d WebSocket connections reached a port other than 443", n)
+	}
+	if n, _ := rejected.seen(); n != 0 {
+		t.Fatalf("%d WebSocket connections reached a destination the policy rejects", n)
 	}
 }
