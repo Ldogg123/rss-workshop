@@ -18,7 +18,14 @@ const MaxArticleBytes = 256 << 10
 // CSS/XPath Type and the same sanitization, URL absolutization and <base>
 // handling as list-page content. It deliberately returns only the content: an
 // article page must never be able to change an item's identity, date or link.
-func Article(body []byte, effective string, r model.Recipe) (string, error) {
+func Article(body []byte, effective string, r model.Recipe) (out string, err error) {
+	// Article pages are extracted on the article workers' own goroutines, so a
+	// panic here stops the server even from a preview.
+	defer func() {
+		if v := recover(); v != nil {
+			out, err = "", selectorFailure("article", v)
+		}
+	}()
 	if r.Full == nil || r.Full.Selector == "" {
 		return "", fmt.Errorf("no article selector configured")
 	}
@@ -44,7 +51,6 @@ func Article(body []byte, effective string, r model.Recipe) (string, error) {
 	// Only the first match is used. A selector matching several blocks is a
 	// recipe problem the operator should see in diagnostics, not something to
 	// paper over by concatenating unrelated sections of the page.
-	out := ""
 	if r.Full.Attr != "" {
 		out = policy.Sanitize(attr(nodes[0], r.Full.Attr))
 	} else {

@@ -21,11 +21,13 @@ The dashboard reports saved items, refresh status, due feeds, and fetch capacity
 | `debug` | Everything below, plus scheduler activity when feeds are due |
 | `info` (default) | Startup configuration, sign-ins, shutdown, and each completed refresh |
 | `warn` | Only problems: failed refreshes with their reason, and rejected sign-ins |
-| `error` | Only failures: the server stopping, and the database errors that abort a scheduler tick or discard a completed refresh |
+| `error` | Only failures: the server stopping, the database errors that abort a scheduler tick or discard a completed refresh, and selector library failures |
 
 The startup line summarizes the running deployment — version, commit, database backend, worker count, whether Chromium, FlareSolverr and metrics are enabled — which is the quickest way to confirm a container is running the configuration you intended.
 
 A failed refresh logs the feed title, its consecutive failure count, and the reason; a successful one logs the item count, HTTP status, and duration. Feed titles appear because they are your own labels, but source URLs, reader links, passwords and session cookies are never logged. A run of `login rejected` lines with a remote address is worth investigating.
+
+`selector library panicked` means the CSS or XPath library failed on a page; see [the visual selector limits](visual-selector.md#limits). The refresh fails like any other, and the line names the field, the type of failure and a short stack for a bug report. It leaves out the page value that caused it and the selector, because either can hold a URL.
 
 `LOG_FORMAT=json` emits one JSON object per line for a log collector such as Loki or Elasticsearch. The default `text` stays easier to read directly.
 
