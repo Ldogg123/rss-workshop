@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"rss-workshop/internal/auth"
@@ -39,23 +40,31 @@ func TestRejectedLoginsCannotFloodTheLog(t *testing.T) {
 	defer slog.SetDefault(restore)
 	slog.SetDefault(slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelWarn})))
 
+	// The limiter reads time.Now. Its ten password checks are bcrypt comparisons,
+	// which under the race detector on a loaded machine have outlasted the
+	// one-minute window, so the window reopened partway through and the count
+	// depended on machine speed. Inside a synctest bubble the clock advances
+	// only while every goroutine in the bubble is blocked, never during CPU
+	// work, so every attempt falls in one window however slowly it runs.
 	const attempts = 500
-	for i := 0; i < attempts; i++ {
-		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Origin", app.BaseURL)
-		r.RemoteAddr = "203.0.113.7:40000"
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		if w.Code != 401 {
-			t.Fatalf("attempt %d returned %d", i, w.Code)
+	synctest.Test(t, func(t *testing.T) {
+		for i := 0; i < attempts; i++ {
+			r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Origin", app.BaseURL)
+			r.RemoteAddr = "203.0.113.7:40000"
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != 401 {
+				t.Fatalf("attempt %d returned %d", i, w.Code)
+			}
 		}
-	}
+	})
 
 	warnings := strings.Count(out.String(), `msg="login rejected"`)
 	// The limiter allows ten password checks per minute; everything beyond that
-	// is throttled and must not reach warn.
-	if warnings > 11 {
+	// in the same window is throttled and must not reach warn.
+	if warnings > 10 {
 		t.Errorf("%d rejected logins produced %d warnings; an unauthenticated client can flood the log", attempts, warnings)
 	}
 	if warnings == 0 {
