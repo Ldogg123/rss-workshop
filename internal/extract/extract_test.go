@@ -94,3 +94,21 @@ func TestXPathCannotEscapeCard(t *testing.T) {
 		t.Fatal(p, e)
 	}
 }
+
+// A story's identity comes from the first node its selectors return, so a
+// library update that changes the order of matches silently gives existing
+// stories new GUIDs and can merge two cards into one. antchfx/xpath v1.3.9
+// returns document order for a predicate, where earlier versions group matches
+// by parent: moving to it is a deliberate change that rewrites feeds and needs a
+// release note, not routine maintenance.
+func TestXPathFirstMatchStaysStable(t *testing.T) {
+	page := `<article><div><a href="/tag/harbour">Harbour</a></div><h2>Story</h2><a href="/stories/ferry">Read</a></article>`
+	r := model.Recipe{Type: "xpath", Items: "//article", Title: model.Field{Selector: ".//h2"}, Link: model.Field{Selector: ".//a[@href]"}}
+	p, err := Run([]byte(page), "https://example.com/", r)
+	if err != nil || len(p.Items) != 1 {
+		t.Fatalf("items %+v, err %v", p.Items, err)
+	}
+	if p.Items[0].URL != "https://example.com/stories/ferry" {
+		t.Fatalf("first match of .//a[@href] is %q", p.Items[0].URL)
+	}
+}

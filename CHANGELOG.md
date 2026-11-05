@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Update Go to 1.27.3 and the Go modules the app uses, fixing 15 reachable vulnerabilities reported by `govulncheck`: in the standard library's HTTP/1, HTTP/2, TLS, certificate, MIME and `html/template` code, and in HTML parsing and rendering in `golang.org/x/net`.
+- If PostgreSQL's `DATABASE_URL` has an unencoded reserved character such as `@` in its password, percent-encode it before upgrading: the newer driver reads the first `@` as the end of the credentials, so such a URL that used to work now fails at startup. A `+` in a query value is now literal, and a repeated parameter takes its last value. URLs written as [the PostgreSQL guide](docs/postgresql.md) describes are unaffected.
+- Update the browser image to Chromium 156 and a current Debian base. Debian had removed the previously pinned Chromium, so that image could no longer be built from source.
+
 ## v1.1.0 — 2026-09-16
 
 Reusable filters, safer upgrades, and feeds that stop changing when nothing in them has. See [upgrades](docs/operations.md#upgrades) before installing over an existing deployment.

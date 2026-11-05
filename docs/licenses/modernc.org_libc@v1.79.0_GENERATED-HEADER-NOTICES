@@ -1,6 +1,6 @@
-Supplementary notices preserved from modernc.org/libc v1.75.6.
+Supplementary notices preserved from modernc.org/libc v1.79.0.
 These are verbatim comment blocks from generated Linux/amd64 and Linux/arm64 header declarations.
-Source: https://gitlab.com/cznic/libc/-/tree/v1.75.6
+Source: https://gitlab.com/cznic/libc/-/tree/v1.79.0
 See ../licensing.md for scope and the accompanying LGPL/GPL/exception texts.
 
 Source files: uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_arm64.go

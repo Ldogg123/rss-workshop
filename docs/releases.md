@@ -66,7 +66,7 @@ Equivalent local commands, from the repository root:
 
 ```sh
 make check
-go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/... ./internal/...
 make compose-test
 make check-containers
 ```
