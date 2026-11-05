@@ -92,7 +92,7 @@ jobs:
       - name: Verify modules and reachable vulnerabilities
         run: |
           go mod verify
-          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/... ./internal/...
       - name: Run checks and the native workflow with the release executable
         run: make check
       - name: Package and verify the same tested executable
@@ -161,7 +161,7 @@ jobs:
                   summary.write(f"Application commit: `{os.environ['COMMIT']}`; packaging workflow: `{os.environ['TOOLING_COMMIT']}`.\n")
           PY
       - name: Transfer the verified archive and checksum
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-binary-${{ matrix.arch }}
           path: ${{ runner.temp }}/native-assets/
@@ -182,7 +182,7 @@ jobs:
       RELEASE_ID: ${{ needs.metadata.outputs.release_id }}
       RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-binary-*
           path: ${{ runner.temp }}/native-assets
