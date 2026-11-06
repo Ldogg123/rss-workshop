@@ -72,7 +72,7 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 	}
 
 	workers := articleWorkers
-	if f.Recipe.Full.Browser && f.Recipe.Mode == "flaresolverr" {
+	if articlesUseSolver(f) {
 		// A FlareSolverr job is admitted for one solver slot (see solverFree).
 		// Fetching its articles in parallel would take the slots of jobs
 		// admitted after it, which then wait inside their own deadlines.
@@ -110,6 +110,13 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 	close(queue)
 	wg.Wait()
 	return warnings
+}
+
+// articlesUseSolver reports whether a feed fetches its article pages through
+// FlareSolverr. Otherwise a FlareSolverr job is done with the solver once its
+// list page is solved, and gives its admission back before any article.
+func articlesUseSolver(f model.Feed) bool {
+	return f.Recipe.Mode == "flaresolverr" && f.Recipe.Full != nil && f.Recipe.Full.Selector != "" && f.Recipe.Full.Browser
 }
 
 // article fetches and extracts one item page. It uses the plain guarded fetcher

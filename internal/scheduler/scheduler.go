@@ -52,12 +52,13 @@ type Scheduler struct {
 	slots   chan struct{}
 	mu      sync.Mutex
 	active  map[string]bool
-	// solving counts admitted jobs that use FlareSolverr: refreshes, previews
-	// and page loads in that mode. The solver serves only a few requests at a
-	// time, and a job that waits for one does so inside its own deadline, so a
-	// burst of due feeds would time out and back off for nothing more than
-	// queueing. Admission instead keeps this count within the free slots.
-	solving int
+	// solving holds the admitted jobs that still have FlareSolverr requests
+	// to make: refreshes, previews and page loads in that mode, until their
+	// last page through the solver. The solver serves only a few requests at
+	// a time, and a job that waits for one does so inside its own deadline, so
+	// a burst of due feeds would time out and back off for nothing more than
+	// queueing. Admission instead keeps their number within the free slots.
+	solving map[string]bool
 	// held records feeds whose result could not be persisted. The usual backoff
 	// lives in the feeds row, so a failed write leaves nothing behind to slow
 	// the feed down: its schedule rolls back with the rest of the transaction
@@ -78,7 +79,7 @@ type hold struct {
 }
 
 func New(s *store.Store, f fetch.Fetcher, workers int, timeout time.Duration) *Scheduler {
-	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, held: map[string]hold{}, finished: map[string]time.Time{}}
+	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, solving: map[string]bool{}, held: map[string]hold{}, finished: map[string]time.Time{}}
 }
 func (s *Scheduler) Stats() (int, int) { return len(s.slots), cap(s.slots) }
 func (s *Scheduler) timeout(mode string) time.Duration {
@@ -112,37 +113,48 @@ func (s *Scheduler) reserve(id string, solver bool, listed time.Time) error {
 	s.slots <- struct{}{} // cannot block: only reserve sends, and it holds mu
 	s.active[id] = true
 	if solver {
-		s.solving++
+		s.solving[id] = true
 	}
 	return nil
 }
-func (s *Scheduler) release(id string, solver bool) {
+
+// release ends a job, with its FlareSolverr admission if it still holds one.
+func (s *Scheduler) release(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.active, id)
-	if solver {
-		s.solving--
-	}
+	delete(s.solving, id)
 	<-s.slots
 }
 
 // finish releases a refresh, after its result was saved or given up.
-func (s *Scheduler) finish(id string, solver bool) {
+func (s *Scheduler) finish(id string) {
 	s.mu.Lock()
 	s.finished[id] = time.Now()
 	s.mu.Unlock()
-	s.release(id, solver)
+	s.release(id)
+}
+
+// doneWithSolver gives back a job's FlareSolverr admission once the job has
+// no more requests to make through the solver, as when a refresh fetches its
+// article pages as plain HTML. The slot it used then goes to the next
+// FlareSolverr job instead of idling until this one ends.
+func (s *Scheduler) doneWithSolver(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.solving, id)
 }
 
 // solverFree reports, with mu held, whether one more FlareSolverr job can
 // start without waiting for a slot. A job holds at most one at a time: a
-// refresh fetches its list page and then its article pages one by one. Slots
+// refresh fetches its list page and then any article pages it renders there
+// one by one, and gives its admission back after its last such page. Slots
 // still held after an interrupted request are not free until they are let
 // go, so admitted jobs plus those can never exceed the capacity. Stats is
 // checked as well, so nothing using a slot is overlooked.
 func (s *Scheduler) solverFree() bool {
 	active, capacity := s.FlareSolverr.Stats()
-	return max(active, s.solving+s.FlareSolverr.Cooling()) < capacity
+	return max(active, len(s.solving)+s.FlareSolverr.Cooling()) < capacity
 }
 
 // hold backs a feed off after its result could not be stored, and reports how
@@ -229,10 +241,13 @@ func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, e
 	if err := s.reserve(id, solver, time.Time{}); err != nil {
 		return model.Preview{}, err
 	}
-	defer s.release(id, solver)
+	defer s.release(id)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(f.Recipe.Mode))
 	defer cancel()
 	_, p, e := s.extract(ctx, f, true)
+	if e != nil || !articlesUseSolver(f) {
+		s.doneWithSolver(id)
+	}
 	if e == nil {
 		// A preview fetches a sample rather than every article: it runs while an
 		// operator waits, and it must not become a way to fan out hundreds of
@@ -261,7 +276,7 @@ func (s *Scheduler) Snapshot(ctx context.Context, rawURL string, r model.Recipe)
 	if err := s.reserve(id, solver, time.Time{}); err != nil {
 		return fetch.Result{}, err
 	}
-	defer s.release(id, solver)
+	defer s.release(id)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(r.Mode))
 	defer cancel()
 	if r.Mode == "flaresolverr" {
@@ -338,12 +353,11 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 		// A feed that cannot start, because it is already running or its
 		// fetcher is busy, stays due: a later tick takes it, oldest first,
 		// without recording a failure or backing it off.
-		solver := s.usesSolver(f.Recipe.Mode)
-		if s.reserve(f.ID, solver, listed) != nil {
+		if s.reserve(f.ID, s.usesSolver(f.Recipe.Mode), listed) != nil {
 			continue
 		}
 		s.wg.Add(1)
-		go func(f model.Feed) { defer s.wg.Done(); defer s.finish(f.ID, solver); s.refresh(ctx, f) }(f)
+		go func(f model.Feed) { defer s.wg.Done(); defer s.finish(f.ID); s.refresh(ctx, f) }(f)
 	}
 }
 func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
@@ -359,6 +373,12 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	if e == nil {
 		f.Recipe = recipe
 		r, p, e = s.extract(ctx, f, false)
+	}
+	// Past its list page, a FlareSolverr refresh uses the solver only for
+	// article pages it renders there. Plain articles and the save leave the
+	// slot to the next FlareSolverr job.
+	if e != nil || !articlesUseSolver(f) {
+		s.doneWithSolver(f.ID)
 	}
 	items := p.Items
 	if e == nil && f.Recipe.Full != nil {

@@ -142,7 +142,7 @@ func (s *Scheduler) admitted() (ids map[string]bool, solving int) {
 	for id := range s.active {
 		ids[id] = true
 	}
-	return ids, s.solving
+	return ids, len(s.solving)
 }
 
 // Six FlareSolverr feeds fall due at once with one solver slot, as after a
@@ -291,6 +291,11 @@ func TestFlareSolverrArticlesLeaveRoomForListRefreshes(t *testing.T) {
 	}
 	jobs.tick(ctx)
 	<-articleStarted
+	// Its articles still need the solver, so it keeps its admission between
+	// them; Stats alone would show the slot free in those gaps.
+	if _, solving := jobs.admitted(); solving != 1 {
+		t.Fatalf("a feed rendering its articles through FlareSolverr holds %d admissions", solving)
+	}
 
 	quick := solverFeed()
 	quick.Title, quick.URL = "Quick list", "https://example.com/quick"
@@ -470,5 +475,89 @@ func TestRefreshIsNotRestartedFromAListReadBeforeItEnded(t *testing.T) {
 	jobs.mu.Unlock()
 	if fetcher.calls.Load() != 1 || remembered != 0 {
 		t.Fatalf("fetches=%d, end times kept=%d", fetcher.calls.Load(), remembered)
+	}
+}
+
+// A FlareSolverr feed whose article pages are plain HTML, the default, is done
+// with the solver once its list page is solved. While those articles load,
+// the slot it used must go to another FlareSolverr feed, preview or page
+// load: the solver is idle, so refusing them as busy would contradict the
+// dashboard and only delay them.
+func TestFlareSolverrStaticArticlesFreeTheSolver(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	svc := &solverService{pages: map[string]string{
+		"https://example.com/long":  `<article><h2>Long</h2><a href="https://example.com/long/story">l</a></article>`,
+		"https://example.com/quick": `<article><h2>Quick story</h2></article>`,
+	}, delay: func(string) time.Duration { return 10 * time.Millisecond }}
+	solver := startSolver(t, 1, svc)
+	articles := &gateFetcher{release: make(chan struct{})}
+	jobs := New(s, articles, 16, time.Second)
+	jobs.FlareSolverr = solver
+	jobs.FlareSolverrTimeout = 4 * time.Second
+
+	long := solverFeed()
+	long.Title, long.URL = "Long articles", "https://example.com/long"
+	long.Recipe.Link = model.Field{Selector: "a"}
+	long.Recipe.Full = &model.FullContent{Selector: ".body"}
+	quick := solverFeed()
+	quick.Title, quick.URL = "Quick list", "https://example.com/quick"
+	waitForArticle := func(n int32) {
+		t.Helper()
+		for deadline := time.Now().Add(2 * time.Second); articles.active.Load() != n; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("article fetch did not start")
+			}
+		}
+	}
+
+	longID, err := s.Save(ctx, long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs.tick(ctx)
+	waitForArticle(1)
+	if _, err := jobs.Preview(ctx, quick); err != nil {
+		t.Fatalf("preview while another feed fetches static articles: %v", err)
+	}
+	// Previewing the long feed holds its own article fetch open as well.
+	previewed := make(chan error, 1)
+	go func() { _, err := jobs.Preview(ctx, long); previewed <- err }()
+	waitForArticle(2)
+	if _, err := jobs.Snapshot(ctx, quick.URL, quick.Recipe); err != nil {
+		t.Fatalf("page load while two jobs fetch static articles: %v", err)
+	}
+	quickID, err := s.Save(ctx, quick)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if f, err := s.Get(ctx, quickID); err == nil && (!f.LastSuccess.IsZero() || f.Failures > 0) {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(articles.release)
+			jobs.Wait()
+			t.Fatal("a FlareSolverr feed waited for another feed's static articles")
+		}
+		jobs.tick(ctx)
+	}
+	close(articles.release)
+	jobs.Wait()
+	if err := <-previewed; err != nil {
+		t.Fatalf("preview with static articles: %v", err)
+	}
+	for _, id := range []string{longID, quickID} {
+		f, err := s.Get(ctx, id)
+		if err != nil || f.Failures != 0 || f.LastSuccess.IsZero() {
+			t.Fatalf("%s: failures=%d error=%q, %v", f.Title, f.Failures, f.Error, err)
+		}
+	}
+	if _, solving := jobs.admitted(); solving != 0 || svc.peakOf("*") != 1 {
+		t.Fatalf("FlareSolverr jobs left admitted: %d; solver peak %d", solving, svc.peakOf("*"))
 	}
 }

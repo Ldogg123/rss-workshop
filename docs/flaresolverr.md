@@ -40,7 +40,7 @@ The integration makes stateless `request.get` calls. It does not retain sessions
 
 ## Capacity
 
-Each FlareSolverr job holds one slot at a time, and RSS Workshop starts only as many as there are free slots. A feed that renders its [article pages](atom.md#full-article-content) through FlareSolverr fetches them one by one within the same job.
+RSS Workshop starts a FlareSolverr job only when a slot is free, and each job uses one slot at a time. A refresh needs FlareSolverr for its list page and, if it renders its [article pages](atom.md#full-article-content) there, for those as well, one by one. Article pages fetched as plain HTML, the default, do not use FlareSolverr: once the list page is solved, the slot goes to the next job while the refresh fetches them.
 
 When more FlareSolverr feeds are due than there are slots, as after a restart, an outage or an import, the rest stay due and start oldest first as slots free up. Waiting for a slot is not a failure: it records no error and does not back a feed off. Feeds in other fetch modes are not held back.
 
