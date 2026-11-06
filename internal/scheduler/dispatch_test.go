@@ -561,3 +561,83 @@ func TestFlareSolverrStaticArticlesFreeTheSolver(t *testing.T) {
 		t.Fatalf("FlareSolverr jobs left admitted: %d; solver peak %d", solving, svc.peakOf("*"))
 	}
 }
+
+// pendingSolver counts a request in Stats only once it holds a slot. The
+// real client first checks the source URL, which can mean a DNS lookup, so an
+// admitted job can be invisible to Stats for a while.
+type pendingSolver struct {
+	cooling, running, calls atomic.Int32
+	capacity                int
+	gate                    chan struct{}
+}
+
+func (c *pendingSolver) Fetch(ctx context.Context, u, _, _ string) (fetch.Result, error) {
+	c.calls.Add(1)
+	select {
+	case <-c.gate:
+	case <-ctx.Done():
+		return fetch.Result{}, ctx.Err()
+	}
+	c.running.Add(1)
+	defer c.running.Add(-1)
+	return fetch.Result{Body: []byte(`<article><h2>Solved</h2></article>`), URL: u, Status: 200}, nil
+}
+func (c *pendingSolver) Stats() (int, int) {
+	return int(c.cooling.Load() + c.running.Load()), c.capacity
+}
+func (c *pendingSolver) Cooling() int { return int(c.cooling.Load()) }
+
+// Of two slots, one is still held after an interrupted request, and Stats
+// cannot tell it from a request in progress. Two feeds fall due while the
+// first one admitted has not reached the solver yet: counting only Stats, or
+// only admitted jobs, both look like one slot in use and would start the
+// second as well, to wait for a slot inside its deadline. Admission counts the
+// cooling slot beside the admitted job, so the second stays due until a slot
+// is really free.
+func TestFlareSolverrCoolingSlotsCountBesideAdmittedJobs(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	solver := &pendingSolver{capacity: 2, gate: make(chan struct{})}
+	solver.cooling.Store(1)
+	jobs := New(s, &staticFetcher{}, 16, time.Second)
+	jobs.FlareSolverr = solver
+	jobs.FlareSolverrTimeout = 4 * time.Second
+	now := time.Now()
+	var ids []string
+	for i := range 2 {
+		f := solverFeed()
+		f.Title, f.URL = fmt.Sprintf("Protected %d", i), fmt.Sprintf("https://example.com/protected-%d", i)
+		id, err := s.Save(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setNextRun(t, s, id, now.Add(time.Duration(i-10)*time.Second))
+		ids = append(ids, id)
+	}
+	for range 3 {
+		jobs.tick(ctx)
+		if admitted, solving := jobs.admitted(); solving != 1 || len(admitted) != 1 || !admitted[ids[0]] {
+			close(solver.gate)
+			jobs.Wait()
+			t.Fatalf("admitted %v with %d FlareSolverr jobs beside a cooling slot; want only the oldest feed", admitted, solving)
+		}
+	}
+	close(solver.gate)
+	tickUntil(t, jobs, 5*time.Second, func() bool {
+		for _, id := range ids {
+			if f, err := s.Get(ctx, id); err != nil || f.LastSuccess.IsZero() && f.Failures == 0 {
+				return false
+			}
+		}
+		return true
+	})
+	for _, id := range ids {
+		if f, err := s.Get(ctx, id); err != nil || f.Failures != 0 || f.LastSuccess.IsZero() {
+			t.Fatalf("%s: failures=%d error=%q, %v", f.Title, f.Failures, f.Error, err)
+		}
+	}
+}
