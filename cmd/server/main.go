@@ -103,6 +103,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
+	f.UserAgent = c.FetchUserAgent
 	jobs := scheduler.New(s, f, c.Workers, c.Timeout)
 	requestTimeout := c.Timeout
 	if c.FlareSolverrURL != "" {
@@ -137,7 +138,8 @@ func run() error {
 			"version", version, "commit", commit, "built", buildDate,
 			"database", databaseKind(c), "workers", c.Workers, "max_items", c.MaxItems,
 			"browser", browsers != nil, "flaresolverr", jobs.FlareSolverr != nil,
-			"metrics", c.MetricsToken != "", "log_level", c.LogLevel.String())
+			"metrics", c.MetricsToken != "", "custom_user_agent", c.FetchUserAgent != "",
+			"log_level", c.LogLevel.String())
 		done <- srv.ListenAndServe()
 	}()
 	select {

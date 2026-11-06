@@ -16,6 +16,11 @@ import (
 
 const MaxBody = 4 << 20
 
+// DefaultUserAgent names the project to sources. It carries no version, so an
+// upgrade alone never changes what a source sees, and an instance does not
+// advertise which release it runs. Chromium and FlareSolverr send their own.
+const DefaultUserAgent = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)"
+
 type Result struct {
 	// Body is UTF-8 when the page declares an encoding Fetch can decode; see
 	// toUTF8. Rendered pages are always UTF-8.
@@ -35,10 +40,13 @@ type Fetcher interface {
 	Fetch(context.Context, string, string, string) (Result, error)
 }
 type Client struct {
-	client  *http.Client
-	allow   []netip.Prefix
-	mu      sync.Mutex
-	origins map[string]*origin
+	// UserAgent replaces DefaultUserAgent when it is not blank. Set it before
+	// the client is shared; config.Load has already validated it.
+	UserAgent string
+	client    *http.Client
+	allow     []netip.Prefix
+	mu        sync.Mutex
+	origins   map[string]*origin
 }
 type origin struct {
 	sem   chan struct{}
@@ -178,7 +186,11 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	if e != nil {
 		return out, fmt.Errorf("invalid source URL")
 	}
-	req.Header.Set("User-Agent", "GoRSS/0.1 (+self-hosted feed builder)")
+	ua := c.UserAgent
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "text/html, application/xhtml+xml")
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)

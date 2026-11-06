@@ -88,3 +88,34 @@ func TestFetchValidationLimitsAnd304(t *testing.T) {
 		}
 	}
 }
+
+// Sources see the product's name with no version, so an upgrade alone never
+// changes what they receive. A redirect keeps it, and an operator's
+// FETCH_USER_AGENT replaces it on every request, conditional ones included.
+func TestUserAgent(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.UserAgent())
+		if r.URL.Path == "/moved" {
+			http.Redirect(w, r, "/page", http.StatusFound)
+			return
+		}
+		w.Write([]byte("page"))
+	}))
+	defer srv.Close()
+	c, _ := New(time.Second, "127.0.0.1/32")
+	for _, path := range []string{"/page", "/moved"} {
+		if _, err := c.Fetch(context.Background(), srv.URL+path, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.UserAgent = "GoRSS/0.1 (+self-hosted feed builder)"
+	if _, err := c.Fetch(context.Background(), srv.URL+"/page", `"tag"`, "Mon, 02 Jan 2006 15:04:05 GMT"); err != nil {
+		t.Fatal(err)
+	}
+	const name = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)"
+	want := []string{name, name, name, "GoRSS/0.1 (+self-hosted feed builder)"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("sources saw %q, want %q", got, want)
+	}
+}

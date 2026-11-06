@@ -52,7 +52,7 @@ FlareSolverr cannot cancel a request. When one is interrupted after reaching the
 
 The endpoint is a trusted administrator-configured service, separate from a feed's source URL. A private FlareSolverr endpoint does not need an `ALLOW_CIDRS` exception. Keep that service reachable only by trusted clients, consistent with [upstream deployment guidance](https://github.com/FlareSolverr/FlareSolverr#docker).
 
-RSS Workshop checks the initial source URL and the final URL returned by FlareSolverr against its source destination policy. It cannot enforce its local Chromium proxy policy inside the remote browser. Intermediate redirects, subresources, DNS resolution, and actual network connections are controlled by the FlareSolverr deployment. Apply network restrictions there when the browser must be prevented from reaching internal services; app-side URL checks do not provide that remote isolation.
+Sources see FlareSolverr's browser and its User-Agent, not RSS Workshop's, and `FETCH_USER_AGENT` does not change it. RSS Workshop checks the initial source URL and the final URL returned by FlareSolverr against its source destination policy. It cannot enforce its local Chromium proxy policy inside the remote browser. Intermediate redirects, subresources, DNS resolution, and actual network connections are controlled by the FlareSolverr deployment. Apply network restrictions there when the browser must be prevented from reaching internal services; app-side URL checks do not provide that remote isolation.
 
 ## Troubleshooting
 

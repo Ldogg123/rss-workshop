@@ -8,7 +8,7 @@ import (
 )
 
 func TestAdminPasswordConfig(t *testing.T) {
-	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL"} {
+	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL", "FETCH_USER_AGENT"} {
 		t.Setenv(key, "")
 	}
 	for _, tc := range []struct {
@@ -37,7 +37,7 @@ func TestAdminPasswordConfig(t *testing.T) {
 }
 
 func TestFlareSolverrConfig(t *testing.T) {
-	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL"} {
+	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL", "FETCH_USER_AGENT"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("ADMIN_PASSWORD", "config-test-password")
@@ -66,7 +66,7 @@ func TestFlareSolverrConfig(t *testing.T) {
 }
 
 func TestDatabaseConfig(t *testing.T) {
-	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL"} {
+	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL", "FETCH_USER_AGENT"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("ADMIN_PASSWORD", "config-test-password")
@@ -109,7 +109,7 @@ func TestLoggingAndMetricsConfig(t *testing.T) {
 		for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL",
 			"FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS",
 			"STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL",
-			"LOG_LEVEL", "LOG_FORMAT", "METRICS_TOKEN", "UPGRADE_BACKUP"} {
+			"LOG_LEVEL", "LOG_FORMAT", "METRICS_TOKEN", "UPGRADE_BACKUP", "FETCH_USER_AGENT"} {
 			t.Setenv(key, "")
 		}
 		t.Setenv("ADMIN_PASSWORD", "long-test-password")
@@ -205,4 +205,40 @@ func TestLoggingAndMetricsConfig(t *testing.T) {
 			t.Fatal("accepted a 5-character metrics token")
 		}
 	})
+}
+
+// FETCH_USER_AGENT goes into a request header as it is. A line break would let
+// it add headers of its own, and Go refuses one at request time, failing every
+// static fetch, so an unusable value stops startup instead. The error does not
+// repeat the value.
+func TestFetchUserAgentConfig(t *testing.T) {
+	for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL", "FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS", "STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL", "FETCH_USER_AGENT"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("ADMIN_PASSWORD", "config-test-password")
+	for value, want := range map[string]string{
+		"":    "",
+		"   ": "",
+		" GoRSS/0.1 (+self-hosted feed builder)\n": "GoRSS/0.1 (+self-hosted feed builder)",
+		"Reader/2 (+mailto:ops@example.net; ~x)":   "Reader/2 (+mailto:ops@example.net; ~x)",
+		strings.Repeat("a", 256):                   strings.Repeat("a", 256),
+	} {
+		t.Setenv("FETCH_USER_AGENT", value)
+		c, err := Load()
+		if err != nil || c.FetchUserAgent != want {
+			t.Errorf("FETCH_USER_AGENT=%q gave %q (%v), want %q", value, c.FetchUserAgent, err, want)
+		}
+	}
+	for _, value := range []string{
+		"secret-agent\r\nX-Injected: 1", "secret-agent\nX-Injected: 1", "secret\tagent",
+		"secret-agent\x1b[0m", "secret-agent\x7f", "secret-agenté", "secret-agent\xff",
+		strings.Repeat("a", 257),
+	} {
+		t.Setenv("FETCH_USER_AGENT", value)
+		if _, err := Load(); err == nil {
+			t.Errorf("accepted FETCH_USER_AGENT=%q", value)
+		} else if strings.Contains(err.Error(), "secret") {
+			t.Errorf("the error repeats the value: %v", err)
+		}
+	}
 }

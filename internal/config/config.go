@@ -21,6 +21,9 @@ type Config struct {
 	LogLevel                                                     slog.Level
 	LogFormat                                                    string
 	MetricsToken                                                 string
+	// FetchUserAgent replaces the static fetcher's User-Agent. Blank keeps
+	// fetch.DefaultUserAgent.
+	FetchUserAgent string
 	// UpgradeBackup saves a verified copy of an SQLite database before its
 	// schema is upgraded. Turning it off is the escape hatch when the data
 	// directory cannot hold a second copy of the database.
@@ -61,6 +64,13 @@ func Load() (Config, error) {
 	c.Timeout, e = time.ParseDuration(env("FETCH_TIMEOUT", "30s"))
 	if e != nil || c.Timeout < time.Second || c.Timeout > 2*time.Minute {
 		return c, fmt.Errorf("FETCH_TIMEOUT must be between 1s and 2m")
+	}
+	// A header value cannot hold a line break, which would let it add headers of
+	// its own, and Go refuses one at request time, failing every static fetch.
+	// Refuse anything else unprintable too, at startup, where it is visible.
+	c.FetchUserAgent = strings.TrimSpace(os.Getenv("FETCH_USER_AGENT"))
+	if len(c.FetchUserAgent) > 256 || strings.ContainsFunc(c.FetchUserAgent, func(r rune) bool { return r < ' ' || r > '~' }) {
+		return c, fmt.Errorf("FETCH_USER_AGENT must be at most 256 printable ASCII characters")
 	}
 	c.FlareSolverrTimeout, e = time.ParseDuration(env("FLARESOLVERR_TIMEOUT", "60s"))
 	if e != nil || c.FlareSolverrTimeout < 5*time.Second || c.FlareSolverrTimeout > 2*time.Minute {

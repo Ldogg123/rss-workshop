@@ -11,6 +11,9 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
+# The value that restores the old User-Agent, with the spaces and parentheses
+# an operator's .env would carry.
+FIXTURE_USER_AGENT = 'GoRSS/0.1 (+self-hosted feed builder)'
 
 
 class ComposeConfigurationTests(unittest.TestCase):
@@ -25,7 +28,7 @@ class ComposeConfigurationTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
 
-    def resolve(self, *overrides, image='', postgres=False):
+    def resolve(self, *overrides, image='', postgres=False, user_agent=FIXTURE_USER_AGENT):
         # Pass every fixture value through --env-file, including when DOCKER
         # invokes sudo and the child process does not retain environment values.
         values = {
@@ -42,6 +45,8 @@ class ComposeConfigurationTests(unittest.TestCase):
         }
         if image is not None:
             values['RSS_IMAGE'] = image
+        if user_agent is not None:
+            values['FETCH_USER_AGENT'] = user_agent
         env_file = self.directory / 'fixture.env'
         env_file.write_text(''.join(f"{key}='{value}'\n" for key, value in values.items()))
         # An allowlist also excludes COMPOSE_FILE, COMPOSE_ENV_FILES and Docker
@@ -113,6 +118,10 @@ class ComposeConfigurationTests(unittest.TestCase):
         self.assertEqual(app['cap_drop'], ['ALL'])
         self.assertIn('no-new-privileges:true', app['security_opt'])
         self.assertEqual(app['environment']['DATA_DIR'], '/data')
+        # Compose passes only the variables compose.yaml lists, and no runtime
+        # or override may clear this one: it is the operator's way back to the
+        # old User-Agent if a source reacts to the new one.
+        self.assertEqual(app['environment']['FETCH_USER_AGENT'], FIXTURE_USER_AGENT)
         mount = next(volume for volume in app['volumes'] if volume['target'] == '/data')
         self.assertEqual(mount['type'], 'bind')
         self.assertEqual(mount['source'], str(self.directory / 'sqlite'))
@@ -181,6 +190,12 @@ class ComposeConfigurationTests(unittest.TestCase):
                 self.assert_operator_image(config, True)
                 self.assert_runtime(config, True)
 
+    def test_unset_user_agent_leaves_the_built_in_default(self):
+        for overrides in ((), ('compose.static.yaml',)):
+            with self.subTest(overrides=overrides):
+                app = self.resolve(*overrides, user_agent=None)['services']['rss-workshop']
+                self.assertEqual(app['environment']['FETCH_USER_AGENT'], '')
+
     def test_unset_and_blank_image_choose_the_same_published_default(self):
         for overrides in ((), ('compose.static.yaml',)):
             with self.subTest(overrides=overrides):
@@ -235,6 +250,7 @@ class ComposeConfigurationTests(unittest.TestCase):
                 'POSTGRES_DATA_DIR': '/operator/postgres',
                 'CHROMIUM_PATH': '/operator/chromium',
                 'BROWSER_SLOTS': '99',
+                'FETCH_USER_AGENT': 'operator-agent',
                 'GLUETUN_CONTAINER': 'operator-vpn',
                 'PUBLIC_BASE_URL': 'https://operator.invalid',
         }):
