@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -80,6 +81,15 @@ func TestBrowserUIDocumentation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		// The second feed shows a quiet one: still refreshing, but with
+		// nothing new published for a few weeks.
+		if i == 1 {
+			for _, query := range []string{"UPDATE feeds SET last_changed=%d WHERE id='%s'", "UPDATE items SET last_changed=%d WHERE feed_id='%s'"} {
+				if _, err := s.DB.Exec(fmt.Sprintf(query, time.Now().Add(-23*24*time.Hour).Unix(), id)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 	}
 	app := &App{Store: s, Scheduler: jobs, Auth: a, Version: "0.2 preview"}
 	server := httptest.NewServer(app.Handler())
@@ -101,7 +111,8 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	}
 	must(chromedp.EmulateViewport(1440, 1100), chromedp.Navigate(server.URL), chromedp.WaitVisible("#login-form"),
 		chromedp.SendKeys("#password", "documentation-fixture-only"), chromedp.Click("#login-form button"), chromedp.WaitVisible(".feed-card"),
-		chromedp.Evaluate(`if(document.documentElement.dataset.theme!=='dark')document.querySelector('#theme-toggle').click()`, nil))
+		chromedp.Evaluate(`if(document.documentElement.dataset.theme!=='dark')document.querySelector('#theme-toggle').click()`, nil),
+		chromedp.Poll(`document.querySelectorAll('.feed-card .badge')[1]?.textContent==='Quiet'`, nil))
 	captureTrial(t, tab, "docs-dashboard")
 	must(chromedp.Evaluate(`document.querySelectorAll('.feed-card')[0].querySelector('button').click()`, nil),
 		chromedp.Click("#visual-button"), chromedp.WaitVisible("#selector-frame"), chromedp.Poll(`document.querySelector('#selector-matches').dataset.items==='3'`, nil),
