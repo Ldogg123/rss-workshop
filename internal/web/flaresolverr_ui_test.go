@@ -11,8 +11,18 @@ func testFlareSolverrSelector(t *testing.T, tab context.Context, static *fixture
 	t.Helper()
 	staticBefore, solverBefore := static.calls.Load(), solver.calls.Load()
 	var correct bool
+	// A server without FlareSolverr points to the setup guide, whose advice
+	// holds for Compose, native and shared-network installs alike.
 	err := chromedp.Run(tab,
 		chromedp.Evaluate(`(()=>{const mode=document.querySelector('#recipe-form [name="mode"]');mode.value='flaresolverr';mode.dispatchEvent(new Event('change',{bubbles:true}))})()`, nil),
+		chromedp.Evaluate(`(()=>{const tip=document.querySelector('#fetch-mode-help');flaresolverrAvailable=false;renderHelp();
+		 const missing=tip.classList.contains('diagnostic')&&tip.textContent.includes('FLARESOLVERR_URL')&&tip.textContent.includes('docs/flaresolverr.md');
+		 flaresolverrAvailable=true;renderHelp();return missing&&!tip.classList.contains('diagnostic')})()`, &correct),
+	)
+	if err != nil || !correct {
+		t.Fatal("unconfigured FlareSolverr hint does not point to its setup guide", correct, err)
+	}
+	err = chromedp.Run(tab,
 		chromedp.Click("#visual-button"), chromedp.WaitVisible("#selector-frame"),
 		chromedp.Poll(`document.querySelector('#selector-status').textContent.startsWith('1.')&&document.querySelector('#selector-matches').dataset.items==='2'`, nil),
 		chromedp.Evaluate(`document.querySelector('#selector-mode').value==='flaresolverr'&&!document.querySelector('#selector-mode option[value="flaresolverr"]').disabled&&document.querySelector('#selector-mode option[value="browser"]').disabled`, &correct),

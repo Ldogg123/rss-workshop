@@ -90,7 +90,7 @@ function renderHelp(){
  const mode=form.elements.mode.value, localBrowser=mode==='browser'||mode==='auto', tip=$('#fetch-mode-help');
  $('#render-settings').hidden=!localBrowser;
  tip.classList.toggle('diagnostic',localBrowser&&!browserAvailable||mode==='flaresolverr'&&!flaresolverrAvailable);
- if(mode==='flaresolverr')tip.textContent=flaresolverrAvailable?'Uses the configured external browser for Cloudflare challenge pages. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. Set FLARESOLVERR_URL before previewing or refreshing in this mode.';
+ if(mode==='flaresolverr')tip.textContent=flaresolverrAvailable?'Uses the configured external browser for Cloudflare challenge pages. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. Set FLARESOLVERR_URL to an address the server can reach, in .env for Docker Compose or exported for a native run, then restart the server with the same Compose files or command. See docs/flaresolverr.md.';
  else if(localBrowser&&!browserAvailable)tip.textContent='Chromium is not configured on this server. Enable the browser deployment before using this mode.';
  else if(mode==='auto')tip.textContent='Tries static HTML first, then Chromium if no items are found. Access blocks do not trigger a retry.';
  else tip.textContent=mode==='browser'?'Renders the page with the server’s Chromium browser before extracting items.':'Fetches the page’s HTML without running JavaScript.';

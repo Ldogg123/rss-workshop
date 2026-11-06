@@ -4,7 +4,7 @@ RSS Workshop can fetch selected feeds through an existing FlareSolverr service. 
 
 ## Configuration
 
-Add these settings to the app's `.env`, using an address reachable from the app container:
+FlareSolverr is configured on the server, in the environment RSS Workshop starts with:
 
 ```dotenv
 FLARESOLVERR_URL=http://flaresolverr:8191
@@ -12,17 +12,19 @@ FLARESOLVERR_TIMEOUT=60s
 FLARESOLVERR_SLOTS=1
 ```
 
-`FLARESOLVERR_URL` accepts the HTTP(S) base URL or the `/v1` endpoint. Blank disables this integration. Use your existing service's hostname or LAN address; `localhost` inside the RSS Workshop container refers to that container. The example hostname assumes both services share a Docker network.
+With Docker Compose, put these lines in the app's `.env`. A [native executable](deployment.md#run-a-prebuilt-executable) does not read `.env`: export them in the shell or service definition that starts it.
+
+`FLARESOLVERR_URL` accepts the HTTP(S) base URL or the `/v1` endpoint. Blank disables this integration. Use an address that RSS Workshop itself can reach: your existing service's hostname or LAN address. The example hostname assumes both containers share a Docker network. `localhost` or `127.0.0.1` inside the RSS Workshop container refers to that container, with one exception: when RSS Workshop and FlareSolverr both [share Gluetun's network](gluetun.md#postgresql-and-flaresolverr), `http://127.0.0.1:8191` is the correct address. A native executable on the host that runs FlareSolverr can likewise use `127.0.0.1` with the port FlareSolverr publishes.
 
 `FLARESOLVERR_TIMEOUT` permits 5 seconds through 2 minutes and defaults to 60 seconds. It is independent of `FETCH_TIMEOUT`; jobs have an additional 10 seconds for transport and cleanup. `FLARESOLVERR_SLOTS` permits 1–4 concurrent requests and defaults to 1. These requests also occupy the app's existing shared refresh/preview slots. A low concurrency limit is useful because the browser work runs on the FlareSolverr machine; see [capacity](#capacity).
 
-Recreate the app container after changing its environment, keeping the already-local image for this configuration change:
+The settings are read once at startup. After changing them, recreate the app container, keeping the already-local image for this configuration change:
 
 ```sh
 docker compose up -d --no-build --pull never --wait
 ```
 
-Use the same Compose files as your original installation; add `sudo` if Docker access requires it. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `-f compose.yaml -f compose.static.yaml`. With `RSS_IMAGE` blank, that override selects the matching published static image. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.
+Use the same `-f` Compose files as your original installation, in the same order; add `sudo` if Docker access requires it. For a native executable, stop it and start it again with the new values exported. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `-f compose.yaml -f compose.static.yaml`. With `RSS_IMAGE` blank, that override selects the matching published static image. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.
 
 ## Using it
 
@@ -60,6 +62,7 @@ To test the service from the app, open **Choose elements visually** with **Page 
 
 | Message begins with | What to check |
 | --- | --- |
+| `FlareSolverr is not configured on this server` | `FLARESOLVERR_URL` is blank in the environment the server started with. Set it as described under [configuration](#configuration) and restart the server. |
 | `FlareSolverr DNS lookup failed` | The host name does not resolve where RSS Workshop runs. A Compose service name resolves only for containers on the same Docker network; otherwise use a LAN address or a name your DNS knows. |
 | `FlareSolverr connection refused` | The host answered but nothing listens on that port: FlareSolverr is stopped, still starting, or on another port (8191 by default). Inside a container, `localhost` is RSS Workshop's own container unless both share Gluetun's network. |
 | `FlareSolverr connection timed out` | Nothing answered at that address: a wrong IP address, a host that is down, or a firewall dropping the connection, such as Gluetun's outbound firewall without a `FIREWALL_OUTBOUND_SUBNETS` exception. |
