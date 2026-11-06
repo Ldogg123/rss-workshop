@@ -431,11 +431,22 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 			}
 		}
 	}
+	if e != nil && parent.Err() != nil {
+		// The server is stopping, so the failure describes the shutdown rather
+		// than the source. Storing it would count a failure the source never
+		// had, back the feed off and, at the threshold, send a failing alert
+		// for a healthy feed. Nothing is written, so the feed is still due and
+		// refreshes when the server starts again. A result that succeeded
+		// before the shutdown is stored as usual.
+		slog.Info("refresh discarded", "feed", f.Title, "feed_id", f.ID, "reason", "server stopping", "duration", time.Since(start))
+		return
+	}
 	var he *fetch.HTTPError
 	if errors.As(e, &he) {
 		r.RetryAfter = he.RetryAfter
 	}
-	// Use a short independent context to record a timed-out or canceled job.
+	// Use a short independent context to record a timed-out job, or one that
+	// finished as the server began to stop.
 	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	switch err := s.Store.CompleteWithDiagnostics(saveCtx, f, items, r.ETag, r.LastModified, r.Status, e, r.RetryAfter, p.Diagnostics); {
