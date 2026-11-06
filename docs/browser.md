@@ -25,7 +25,7 @@ For native installations, set `CHROMIUM_PATH` to an installed Chromium executabl
 
 ## Recipe settings
 
-- **Static HTTP:** fetch and extract HTML without JavaScript.
+- **Static HTTP:** fetch and extract HTML without JavaScript. A page in another encoding, such as windows-1252, Shift_JIS or UTF-16, is decoded to UTF-8 as a browser decodes it: from a byte order mark, else the `charset` in its `Content-Type` header, else a `<meta>` charset within its first 1,024 bytes. A page that declares none, or names an encoding browsers do not support, is read as UTF-8, as is a page that declares a legacy encoding but whose non-ASCII text is mostly valid UTF-8, which usually means the site moved to UTF-8 and kept the old declaration. A few invalid bytes, such as a character cut in half by an excerpt, do not change that. List pages, article pages and the visual selector's static snapshot are decoded the same way.
 - **Chromium:** always render, then extract the resulting DOM.
 - **Auto:** try static first. Render once only when a successful HTTP response yields zero valid items. HTTP failures, access blocks, and invalid selectors do not trigger browser retries.
 - **FlareSolverr (Cloudflare):** use a separately configured external browser service for challenge pages. This mode does not require local Chromium and is never an Auto fallback. Some CAPTCHAs remain unsupported. See [FlareSolverr setup and network limits](flaresolverr.md).
@@ -42,7 +42,7 @@ Changing fetch settings invalidates source validators and in-flight results. Bro
 
 The existing `FETCH_TIMEOUT` bounds each refresh/preview, including readiness and settling. Browser initialization has its own 15-second watchdog. Tabs and contexts are disposed on success, error, cancellation, and timeout. A crashed process fails its active jobs and is recreated for later jobs. The process recycles after 100 completed renders when no renders are active. Downloads are denied and popup targets are closed.
 
-Rendered snapshots are limited to 4 MiB before the regular extraction limits apply. The proxy caps active connections at 64, ordinary HTTP response streams at 16 MiB, and each direction of CONNECT tunnels at 32 MiB with a two-minute lifetime. These limits may reject resource-heavy sites. The browser container limits memory to 2 GiB and process count to 256, with 256 MiB shared memory and 256 MiB temporary storage.
+Rendered snapshots are limited to 4 MiB before the regular extraction limits apply, like static pages, whose limit applies to both the response and the page once decoded to UTF-8. The proxy caps active connections at 64, ordinary HTTP response streams at 16 MiB, and each direction of CONNECT tunnels at 32 MiB with a two-minute lifetime. These limits may reject resource-heavy sites. The browser container limits memory to 2 GiB and process count to 256, with 256 MiB shared memory and 256 MiB temporary storage.
 
 ## Sandbox and outbound policy
 

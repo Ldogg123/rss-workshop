@@ -65,7 +65,7 @@ These examples use the default published browser image, or the matching image se
 
 ### Feed diagnostics
 
-Choose **Diagnostics** on a saved feed to see its latest refresh results, newest first. Expand a run for the requested fetch mode, recipe version, source HTTP status, duration, response size, matched elements, valid stories, included/filtered counts, and field warnings. Auto records both static and Chromium attempts when it falls back, so the initial matching failure remains visible. A failed request without an HTTP response shows no recorded status; a `304` means the source reported no changes and saved items were kept.
+Choose **Diagnostics** on a saved feed to see its latest refresh results, newest first. Expand a run for the requested fetch mode, recipe version, source HTTP status, duration, response size (for a rendered page, the rendered HTML, and for a static page decoded from another encoding, its size in UTF-8), matched elements, valid stories, included/filtered counts, and field warnings. Auto records both static and Chromium attempts when it falls back, so the initial matching failure remains visible. A failed request without an HTTP response shows no recorded status; a `304` means the source reported no changes and saved items were kept.
 
 **Reload history** only rereads the database. To fetch the source again, use the feed's **Refresh** action. The authenticated history API is `GET /api/feeds/{id}/runs`. Older run records still show their summary; detailed traces are available for refreshes performed after upgrading.
 
@@ -243,7 +243,7 @@ For a downgrade, stop the app and restore its pre-upgrade backup, or the automat
 
 Reader requests serialize saved data without fetching sources. Failed or empty extraction preserves the last successful output. Editing a recipe invalidates source validators and in-flight results. Due jobs remain in the selected database, with bounded refresh slots, one active refresh per feed, and error backoff capped at 24 hours.
 
-Source bodies are limited to 4 MiB and extraction to 1,000 cards, 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
+Source bodies are limited to 4 MiB, both as received and once decoded to UTF-8, and extraction to 1,000 cards, 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
 
 ### Pausing and resuming
 

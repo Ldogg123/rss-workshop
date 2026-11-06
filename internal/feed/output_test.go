@@ -123,6 +123,60 @@ func TestAnEscapedImageAddressIsNotPublishedTwice(t *testing.T) {
 	}
 }
 
+// A content selector covering the card's image puts that image in the
+// list-page description, which is the whole body when no article is fetched.
+// It must still show once, and still be offered to readers as media.
+func TestAListPageDescriptionShowingTheImageIsNotPublishedTwice(t *testing.T) {
+	recipe := model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"},
+		Link: model.Field{Selector: "a"}, Content: model.Field{Selector: ".card"}}
+	list := `<article><h2>Story</h2><a href="/1">Read</a><div class="card"><img src="/lead.jpg?w=640&amp;q=75"><p>Teaser.</p></div></article>`
+	page, err := extract.Run([]byte(list), "https://e.com/", recipe)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Image != "https://e.com/lead.jpg?w=640&q=75" {
+		t.Fatalf("list page gave %+v, %v", page.Items, err)
+	}
+	it := page.Items[0]
+	it.GUID = "urn:sha256:cc"
+	var rss struct {
+		Description string `xml:"channel>item>description"`
+		Media       struct {
+			URL string `xml:"url,attr"`
+		} `xml:"channel>item>content"`
+	}
+	if err := xml.Unmarshal([]byte(renderRSS(t, []model.Item{it})), &rss); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(rss.Description, "<img"); n != 1 || !strings.Contains(rss.Description, "Teaser.") {
+		t.Errorf("RSS description shows %d images: %q", n, rss.Description)
+	}
+	if rss.Media.URL != it.Image {
+		t.Errorf("media:content is %q, want %q", rss.Media.URL, it.Image)
+	}
+	b, _, err := RenderAtom(outputFeed(), []model.Item{it}, "https://e.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var atom struct {
+		Content string `xml:"entry>content"`
+		Links   []struct {
+			Rel  string `xml:"rel,attr"`
+			Href string `xml:"href,attr"`
+		} `xml:"entry>link"`
+	}
+	if err := xml.Unmarshal(b, &atom); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(atom.Content, "<img"); n != 1 {
+		t.Errorf("Atom content shows %d images: %q", n, atom.Content)
+	}
+	enclosed := false
+	for _, l := range atom.Links {
+		enclosed = enclosed || l.Rel == "enclosure" && l.Href == it.Image
+	}
+	if !enclosed {
+		t.Errorf("Atom offers no enclosure for the image: %+v", atom.Links)
+	}
+}
+
 // A source that publishes its preview image after the story goes live is the
 // reason the list page is re-extracted every refresh; that image must still
 // reach the reader when the fetched article does not contain it.
