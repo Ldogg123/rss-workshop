@@ -17,6 +17,8 @@ import (
 const MaxBody = 4 << 20
 
 type Result struct {
+	// Body is UTF-8 when the page declares an encoding Fetch can decode; see
+	// toUTF8. Rendered pages are always UTF-8.
 	Body                    []byte
 	URL, ETag, LastModified string
 	Status                  int
@@ -212,6 +214,11 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	}
 	if len(out.Body) > MaxBody {
 		return out, fmt.Errorf("source exceeds 4 MiB limit")
+	}
+	// List pages, article pages and the visual selector all arrive here, so
+	// they decode a page the same way.
+	if out.Body, e = toUTF8(out.Body, resp.Header.Get("Content-Type")); e != nil {
+		return out, e
 	}
 	return out, nil
 }

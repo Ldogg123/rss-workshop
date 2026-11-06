@@ -240,7 +240,7 @@ For a downgrade, stop the app and restore its pre-upgrade backup, or the automat
 
 Reader requests serialize saved data without fetching sources. Failed or empty extraction preserves the last successful output. Editing a recipe invalidates source validators and in-flight results. Due jobs remain in the selected database, with bounded refresh slots, one active refresh per feed, and error backoff capped at 24 hours.
 
-Source bodies are limited to 4 MiB and extraction to 1,000 cards, 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
+Source bodies are limited to 4 MiB, both as received and once decoded to UTF-8, and extraction to 1,000 cards, 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
 
 ## Optional VPN routing
 
