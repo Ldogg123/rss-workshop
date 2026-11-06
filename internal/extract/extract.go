@@ -611,7 +611,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			it.Published = parseAbsoluteDate(attr(dateNode, "datetime"), "", loc)
 		}
 		if it.Published.IsZero() && raw != "" {
-			it.Published = parseAbsoluteDate(raw, r.DateLayout, loc)
+			it.Published = parseDateText(raw, r.DateLayout, loc)
 			if it.Published.IsZero() {
 				it.Published = parseRelativeDate(raw, observedAt, loc)
 				if !it.Published.IsZero() {

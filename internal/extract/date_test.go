@@ -178,3 +178,154 @@ func TestParseRelativeDateBounds(t *testing.T) {
 		t.Errorf("valid bounded calendar subtraction failed: %v", got)
 	}
 }
+
+func TestParseAbsoluteDateZoneNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, layout, zone, want string
+	}{
+		// RFC 5322 names when the recipe has no zone of its own.
+		{"EST", "Thu, 05 Nov 2026 10:00:00 EST", "", "", "2026-11-05T15:00:00Z"},
+		{"EDT", "Thu, 05 Nov 2026 10:00:00 EDT", "", "", "2026-11-05T14:00:00Z"},
+		{"CST", "Thu, 05 Nov 2026 10:00:00 CST", "", "", "2026-11-05T16:00:00Z"},
+		{"CDT", "Thu, 05 Nov 2026 10:00:00 CDT", "", "", "2026-11-05T15:00:00Z"},
+		{"MST", "Thu, 05 Nov 2026 10:00:00 MST", "", "", "2026-11-05T17:00:00Z"},
+		{"MDT", "Thu, 05 Nov 2026 10:00:00 MDT", "", "", "2026-11-05T16:00:00Z"},
+		{"PST", "Thu, 05 Nov 2026 10:00:00 PST", "", "", "2026-11-05T18:00:00Z"},
+		{"PDT", "Thu, 05 Nov 2026 10:00:00 PDT", "", "", "2026-11-05T17:00:00Z"},
+		{"GMT", "Thu, 05 Nov 2026 10:00:00 GMT", "", "", "2026-11-05T10:00:00Z"},
+		{"UT", "Thu, 05 Nov 2026 10:00:00 UT", "", "", "2026-11-05T10:00:00Z"},
+		{"UTC in another zone", "Thu, 05 Nov 2026 10:00:00 UTC", "", "Asia/Tokyo", "2026-11-05T10:00:00Z"},
+		{"one-digit day", "Thu, 5 Nov 2026 10:00:00 GMT", "", "", "2026-11-05T10:00:00Z"},
+		{"no seconds", "Thu, 5 Nov 2026 10:00 EST", "", "", "2026-11-05T15:00:00Z"},
+		{"no seconds two-digit day", "Thu, 05 Nov 2026 10:00 PDT", "", "", "2026-11-05T17:00:00Z"},
+		{"one-digit day offset", "Thu, 5 Nov 2026 10:00:00 -0500", "", "", "2026-11-05T15:00:00Z"},
+		{"no seconds offset", "Thu, 5 Nov 2026 10:00 +0100", "", "", "2026-11-05T09:00:00Z"},
+		// Go reads the hours of GMT+3 but would leave the clock as UTC.
+		{"GMT plus hours", "Thu, 05 Nov 2026 10:00:00 GMT+3", "", "", "2026-11-05T07:00:00Z"},
+		{"GMT minus hours", "Thu, 05 Nov 2026 10:00:00 GMT-5", "", "", "2026-11-05T15:00:00Z"},
+		// The recipe's zone gives a name its meaning first.
+		{"China Standard Time", "Thu, 05 Nov 2026 10:00:00 CST", "", "Asia/Shanghai", "2026-11-05T02:00:00Z"},
+		{"Philippine Standard Time", "Thu, 05 Nov 2026 10:00:00 PST", "", "Asia/Manila", "2026-11-05T02:00:00Z"},
+		{"Cuba Standard Time", "Thu, 05 Nov 2026 10:00:00 CST", "", "America/Havana", "2026-11-05T15:00:00Z"},
+		{"India Standard Time", "Thu, 05 Nov 2026 10:00:00 IST", "", "Asia/Kolkata", "2026-11-05T04:30:00Z"},
+		{"Central European Time", "Thu, 05 Nov 2026 10:00:00 CET", "", "Europe/Paris", "2026-11-05T09:00:00Z"},
+		{"US Central in Chicago", "Thu, 05 Nov 2026 10:00:00 CST", "", "America/Chicago", "2026-11-05T16:00:00Z"},
+		{"zone's own name", "Thu, 05 Nov 2026 10:00:00 EST", "", "America/New_York", "2026-11-05T15:00:00Z"},
+		{"name the zone lacks", "Thu, 05 Nov 2026 10:00:00 PST", "", "America/New_York", "2026-11-05T18:00:00Z"},
+		{"GMT where the zone lacks it", "Thu, 05 Nov 2026 10:00:00 GMT", "", "America/New_York", "2026-11-05T10:00:00Z"},
+		// A name stated out of season keeps the zone's current meaning, not
+		// the first historical one Go would choose (Dublin's 1916 +00:34:39).
+		{"daylight name in winter", "Thu, 05 Nov 2026 10:00:00 EDT", "", "America/New_York", "2026-11-05T14:00:00Z"},
+		{"standard name in summer", "Thu, 02 Jul 2026 10:00:00 EST", "", "America/New_York", "2026-07-02T15:00:00Z"},
+		{"Irish Standard Time in summer", "Thu, 02 Jul 2026 10:00:00 IST", "", "Europe/Dublin", "2026-07-02T09:00:00Z"},
+		{"Irish Standard Time in winter", "Thu, 05 Nov 2026 10:00:00 IST", "", "Europe/Dublin", "2026-11-05T09:00:00Z"},
+		{"GMT in a London summer", "Thu, 02 Jul 2026 10:00:00 GMT", "", "Europe/London", "2026-07-02T10:00:00Z"},
+		{"New Zealand standard in summer", "Thu, 01 Jan 2026 10:00:00 NZST", "", "Pacific/Auckland", "2025-12-31T22:00:00Z"},
+		// An operator's layout follows the same rules.
+		{"layout with a name", "05/11/2026 10:00 EST", "02/01/2006 15:04 MST", "", "2026-11-05T15:00:00Z"},
+		{"layout name in recipe zone", "05/11/2026 10:00 CST", "02/01/2006 15:04 MST", "Asia/Shanghai", "2026-11-05T02:00:00Z"},
+		{"layout offset beside a name", "05/11/2026 10:00 +0100 XYZ", "02/01/2006 15:04 -0700 MST", "", "2026-11-05T09:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			zone := time.UTC
+			if tc.zone != "" {
+				zone = dateZone(t, tc.zone)
+			}
+			got := parseAbsoluteDate(tc.raw, tc.layout, zone)
+			if !got.Equal(dateTime(t, tc.want)) || got.Location() != time.UTC {
+				t.Fatalf("got %v, want UTC %s", got, tc.want)
+			}
+		})
+	}
+	// Go gives a name it cannot resolve an invented zero offset. Publishing
+	// that as UTC would be hours wrong, so the date is not recognized.
+	for _, tc := range []struct{ raw, layout, zone string }{
+		{"Thu, 05 Nov 2026 10:00:00 XYZ", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 CET", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 IST", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 +03", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 CET", "", "America/New_York"},
+		{"Thu, 05 Nov 2026 10:00 AEST", "", "Europe/Paris"},
+		{"05/11/2026 10:00 XYZ", "02/01/2006 15:04 MST", ""},
+		{"Fri, 31 Dec 9999 23:00:00 EST", "", ""},
+		{"Mon, 1 Jan 0001 01:00:00 GMT+3", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 UTC UT", "", ""},
+	} {
+		zone := time.UTC
+		if tc.zone != "" {
+			zone = dateZone(t, tc.zone)
+		}
+		if got := parseAbsoluteDate(tc.raw, tc.layout, zone); !got.IsZero() {
+			t.Errorf("accepted %q (layout %q, zone %q) as %v", tc.raw, tc.layout, tc.zone, got)
+		}
+	}
+}
+
+func TestParseMonthNameDate(t *testing.T) {
+	zone := dateZone(t, "America/New_York")
+	for _, tc := range []struct{ raw, want string }{
+		{"5 November 2026", "2026-11-05T05:00:00Z"},
+		{"November 5, 2026", "2026-11-05T05:00:00Z"},
+		{"Nov 5, 2026", "2026-11-05T05:00:00Z"},
+		{"5 Nov 2026", "2026-11-05T05:00:00Z"},
+		{"Nov. 5 2026", "2026-11-05T05:00:00Z"},
+		{"NOVEMBER 5TH, 2026", "2026-11-05T05:00:00Z"},
+		{"1st May 2026", "2026-05-01T04:00:00Z"},
+		{"Sept. 22nd, 2026", "2026-09-22T04:00:00Z"},
+		{"sept 3 2026", "2026-09-03T04:00:00Z"},
+		{"29 February 2024", "2024-02-29T05:00:00Z"},
+		{" Nov 5,\n  2026\t", "2026-11-05T05:00:00Z"},
+		{"Thursday, 5th November 2026 at 3:04 pm", "2026-11-05T20:04:00Z"},
+		{"Thu, Nov 5, 2026, 3:04 PM", "2026-11-05T20:04:00Z"},
+		{"thu. 5 nov. 2026 at 3:04:05 p.m.", "2026-11-05T20:04:05Z"},
+		{"November 5, 2026, at 9:30am", "2026-11-05T14:30:00Z"},
+		{"5 Nov 2026 15:04", "2026-11-05T20:04:00Z"},
+		{"5 Nov 2026 12:00 am", "2026-11-05T05:00:00Z"},
+		{"5 Nov 2026 12:30 PM", "2026-11-05T17:30:00Z"},
+		{"5 Nov 2026 10:00 EST", "2026-11-05T15:00:00Z"},
+		{"5 Nov 2026 10:00 PST", "2026-11-05T18:00:00Z"},
+		{"Nov 5, 2026 10:00 AM GMT", "2026-11-05T10:00:00Z"},
+		{"5 Nov 2026 10:00 UTC", "2026-11-05T10:00:00Z"},
+		{"5 Nov 2026 10:00 UT", "2026-11-05T10:00:00Z"},
+		{"5 Nov 2026 10:00 +0100", "2026-11-05T09:00:00Z"},
+		{"5 Nov 2026 10:00:30 -05:30", "2026-11-05T15:30:30Z"},
+		// Examples in docs/dates.md.
+		{"5th Nov. 2026", "2026-11-05T05:00:00Z"},
+		{"Nov 5 2026", "2026-11-05T05:00:00Z"},
+		{"Thu, Nov 5, 2026, 15:04", "2026-11-05T20:04:00Z"},
+		{"Nov 5, 2026 10:00:30 AM +01:00", "2026-11-05T09:00:30Z"},
+		{"Mon, 7 Sep 2026 14:28 EDT", "2026-09-07T18:28:00Z"},
+		{"Mon, 07 Sep 2026 14:28:00 -0400", "2026-09-07T18:28:00Z"},
+		{"2026-09-07 14:28:00+02:00", "2026-09-07T12:28:00Z"},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			got := parseDateText(tc.raw, "", zone)
+			if !got.Equal(dateTime(t, tc.want)) || got.Location() != time.UTC {
+				t.Fatalf("got %v, want UTC %s", got, tc.want)
+			}
+		})
+	}
+	if got := parseDateText("5 Nov 2026 10:00 CST", "", dateZone(t, "Asia/Shanghai")); !got.Equal(dateTime(t, "2026-11-05T02:00:00Z")) {
+		t.Errorf("recipe zone must give CST its meaning first: %v", got)
+	}
+	if got := parseDateText("5 November 2026", "", nil); !got.Equal(dateTime(t, "2026-11-05T00:00:00Z")) {
+		t.Errorf("nil zone must default to UTC: %v", got)
+	}
+	for _, raw := range []string{
+		"31 February 2026", "29 February 2026", "Nov 31, 2026", "0 Nov 2026", "32 Nov 2026", "5 Nov 0000",
+		"Monday, November 5, 2026", "Mon, 5 Nov 2026", "Nov 5, 26", "5 Nov 26", "Nov 5", "November 2026", "5 Nov, 2026",
+		"Updated Nov 5, 2026", "Posted on 5 November 2026", "Nov 5, 2026.", "Nov 5, 2026 by Staff", "5 Novembre 2026",
+		"5 Nov 2026 13:00 pm", "5 Nov 2026 0:30 am", "5 Nov 2026 24:00", "5 Nov 2026 10:60", "5 Nov 2026 10:00:60",
+		"5 Nov 2026 10", "5 Nov 2026 3 pm", "5 Nov 2026 EST", "5 Nov 2026 10:00 XYZ", "5 Nov 2026 10:00 CET", "5 Nov 2026 10:00 +2500",
+		"31 Dec 9999 23:00 EST", "ſept 5, 2026", strings.Repeat(" ", 256) + "5 Nov 2026",
+	} {
+		if got := parseDateText(raw, "", zone); !got.IsZero() {
+			t.Errorf("accepted unsupported month-name date %q: %v", raw, got)
+		}
+	}
+	// Month names are for text; automatically read datetime attributes keep
+	// the standard machine formats.
+	if got := parseAbsoluteDate("5 November 2026", "", zone); !got.IsZero() {
+		t.Errorf("standard formats accepted a month-name date: %v", got)
+	}
+}

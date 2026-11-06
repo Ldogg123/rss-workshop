@@ -27,6 +27,14 @@ func TestDateExtractionPrecedenceAndEstimates(t *testing.T) {
 		{name: "XPath text respects selection", typ: "xpath", selector: ".//time/text()", markup: `<time datetime="2026-09-06">2 minutes ago</time>`, want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
 		{name: "XPath attribute respects selection", typ: "xpath", selector: ".//time/@data-age", markup: `<time datetime="2026-09-06" data-age="2 minutes ago">1 month ago</time>`, want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
 		{name: "XPath exact attribute", typ: "xpath", selector: ".//time/@datetime", markup: `<time datetime="2026-09-06">2 minutes ago</time>`, want: "2026-09-06T00:00:00Z"},
+		{name: "month name text", typ: "css", selector: "time", markup: `<time>Thursday, 5th November 2026 at 3:04 pm</time>`, want: "2026-11-05T15:04:00Z"},
+		{name: "month name explicit attribute", typ: "css", selector: "time", attr: "title", markup: `<time title="Nov 5, 2026">yesterday</time>`, want: "2026-11-05T00:00:00Z"},
+		{name: "XPath month name text", typ: "xpath", selector: ".//time/text()", markup: `<time datetime="2026-09-06">5 November 2026</time>`, want: "2026-11-05T00:00:00Z"},
+		{name: "machine datetime wins over month name", typ: "css", selector: "time", markup: `<time datetime="2026-09-06T09:10:00Z">5 November 2026 at 3:04 pm</time>`, want: "2026-09-06T09:10:00Z"},
+		{name: "custom layout wins over month name", typ: "css", selector: "time", markup: `<time>5 November 2026 10:05</time>`, layout: "2 January 2006 04:15", want: "2026-11-05T05:10:00Z"},
+		{name: "month name datetime attribute is not machine-readable", typ: "css", selector: "time", markup: `<time datetime="5 November 2026">2 minutes ago</time>`, want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
+		{name: "US zone name", typ: "css", selector: "time", markup: `<time>Thu, 05 Nov 2026 10:00:00 EST</time>`, want: "2026-11-05T15:00:00Z"},
+		{name: "unknown zone name", typ: "css", selector: "time", markup: `<time>Thu, 05 Nov 2026 10:00:00 XYZ</time>`, warning: true},
 		{name: "unknown date", typ: "css", selector: "time", markup: `<time>recently-ish</time>`, warning: true},
 		{name: "unsupported future date", typ: "css", selector: "time", markup: `<time>in 2 minutes</time>`, warning: true},
 		{name: "no date selector stays unset", typ: "css", markup: `<time datetime="2026-09-06">2 minutes ago</time>`},
@@ -84,5 +92,24 @@ func TestRelativeDatesShareOnePageReference(t *testing.T) {
 	}
 	if _, err := RunAt([]byte(body), "https://example.com", r, time.Time{}); err == nil {
 		t.Fatal("zero reference accepted")
+	}
+}
+
+func TestUnresolvedZoneNameUsesFirstSeenTime(t *testing.T) {
+	r := recipe("css")
+	r.Items = "article"
+	r.Date = model.Field{Selector: "time"}
+	r.Content, r.Image = model.Field{}, model.Field{}
+	body := []byte(`<article><h2>Story</h2><a href="/story">Read</a><time>Thu, 05 Nov 2026 10:00:00 CET</time></article>`)
+	p, err := RunAt(body, "https://example.com", r, time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Items) != 1 || !p.Items[0].Published.IsZero() || p.Items[0].PublishedEstimated {
+		t.Fatalf("a zone name without a known offset must leave the date to the store: %+v", p.Items)
+	}
+	want := `Match 1: date not recognized; Date expected a date or relative age but received "Thu, 05 Nov 2026 10:00:00 CET"; using first-seen time`
+	if len(p.Warnings) != 1 || p.Warnings[0] != want {
+		t.Fatalf("warnings = %q, want %q", p.Warnings, want)
 	}
 }
