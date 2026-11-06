@@ -254,16 +254,6 @@ func clientAddr(r *http.Request) string {
 	return host
 }
 
-// listedFeed is a feed as the library shows it, with state that lives in the
-// scheduler's memory rather than the database.
-type listedFeed struct {
-	model.Feed
-	// Held marks an enabled feed waiting to retry a refresh whose result the
-	// database could not store. Its stored schedule says it is due, so without
-	// this the card would show a past next refresh and no reason.
-	Held bool `json:"held"`
-}
-
 func (a *App) list(w http.ResponseWriter, r *http.Request) {
 	fs, e := a.Store.List(r.Context())
 	if e != nil {
@@ -271,20 +261,21 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	due := 0
-	listed := make([]listedFeed, len(fs))
 	for i := range fs {
 		a.readerLinks(&fs[i])
 		if fs[i].Enabled && !fs[i].NextRun.After(time.Now()) {
 			due++
 		}
-		listed[i] = listedFeed{Feed: fs[i], Held: fs[i].Enabled && a.Scheduler.Held(fs[i].ID)}
+		// A held feed's stored schedule says it is due, so without this the
+		// card would show a past next refresh and no reason.
+		fs[i].Held = fs[i].Enabled && a.Scheduler.Held(fs[i].ID)
 	}
 	active, limit := a.Scheduler.Stats()
 	solverActive, solverLimit := 0, 0
 	if a.Scheduler.FlareSolverr != nil {
 		solverActive, solverLimit = a.Scheduler.FlareSolverr.Stats()
 	}
-	reply(w, 200, map[string]any{"feeds": listed, "active": active, "capacity": limit, "due": due, "browser": a.browserStats(), "flaresolverr": map[string]int{"active": solverActive, "capacity": solverLimit}})
+	reply(w, 200, map[string]any{"feeds": fs, "active": active, "capacity": limit, "due": due, "browser": a.browserStats(), "flaresolverr": map[string]int{"active": solverActive, "capacity": solverLimit}})
 }
 func validate(f model.Feed) error {
 	if strings.TrimSpace(f.Title) == "" || len(f.Title) > 200 {

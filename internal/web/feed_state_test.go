@@ -30,14 +30,14 @@ func jsonBody(t *testing.T, v any) []byte {
 	return data
 }
 
-func (h *portabilityHarness) listed(t *testing.T, id string) listedFeed {
+func (h *portabilityHarness) listed(t *testing.T, id string) model.Feed {
 	t.Helper()
 	w := h.request("GET", "/api/feeds", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("listing = %d %s", w.Code, w.Body.String())
 	}
 	var out struct {
-		Feeds []listedFeed `json:"feeds"`
+		Feeds []model.Feed `json:"feeds"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func (h *portabilityHarness) listed(t *testing.T, id string) listedFeed {
 		}
 	}
 	t.Fatalf("feed %s is not listed", id)
-	return listedFeed{}
+	return model.Feed{}
 }
 
 // Pause and Resume used to send the card's whole copy of the feed through the
@@ -216,6 +216,54 @@ func TestEditorSaveKeepsAPauseMadeWhileItWasOpen(t *testing.T) {
 	}
 }
 
+// Before the enabled route, a script paused or resumed a feed by sending its
+// object from the listing back as a save. Every key the listing adds must stay
+// one that saves and previews accept and ignore, or that round trip breaks.
+func TestListedFeedCanBeSentBack(t *testing.T) {
+	ctx := context.Background()
+	h := newPortabilityHarness(t)
+	h.fetcher.body = []byte(`<article><h2>One</h2><a href="/one">Read</a></article>`)
+	recipe := model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"}, Link: model.Field{Selector: "a"}}
+	id, err := h.app.Store.Save(ctx, model.Feed{Title: "Scripted", URL: "https://example.com/news", Interval: 3600, Enabled: true, Recipe: recipe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := func() map[string]json.RawMessage {
+		t.Helper()
+		w := h.request("GET", "/api/feeds", nil)
+		var out struct {
+			Feeds []map[string]json.RawMessage `json:"feeds"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("listing = %d %s: %v", w.Code, w.Body.String(), err)
+		}
+		for _, f := range out.Feeds {
+			if string(f["id"]) == strconv.Quote(id) {
+				if _, ok := f["held"]; !ok {
+					t.Fatal("the listing no longer reports held; this test no longer covers it")
+				}
+				return f
+			}
+		}
+		t.Fatalf("feed %s is not listed", id)
+		return nil
+	}
+	for _, enabled := range []bool{false, true} {
+		f := listed()
+		f["enabled"] = json.RawMessage(strconv.FormatBool(enabled))
+		if w := h.request("PUT", "/api/feeds/"+id, jsonBody(t, f)); w.Code != http.StatusOK {
+			t.Fatalf("saving the listed feed with enabled=%v = %d %s", enabled, w.Code, w.Body.String())
+		}
+		got, err := h.app.Store.Get(ctx, id)
+		if err != nil || got.Enabled != enabled || got.Title != "Scripted" || !reflect.DeepEqual(got.Recipe, recipe) {
+			t.Fatalf("after saving the listed feed with enabled=%v: %+v, %v", enabled, got, err)
+		}
+	}
+	if w := h.request("POST", "/api/preview", jsonBody(t, listed())); w.Code != http.StatusOK {
+		t.Fatalf("previewing the listed feed = %d %s", w.Code, w.Body.String())
+	}
+}
+
 // A held feed waits out a failed database write in memory, so its stored
 // schedule says it is overdue. The library and metrics must say why it is not
 // refreshing, and Refresh, Resume and an editor save, which each just wrote to
@@ -238,7 +286,7 @@ func TestHeldFeedIsReportedAndRetriedOnRequest(t *testing.T) {
 	defer func() { cancel(); h.app.Scheduler.Wait() }()
 
 	// The scheduler ticks once a second, so each retry completes within a few.
-	waitFor := func(what string, done func(listedFeed) bool) listedFeed {
+	waitFor := func(what string, done func(model.Feed) bool) model.Feed {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -254,7 +302,7 @@ func TestHeldFeedIsReportedAndRetriedOnRequest(t *testing.T) {
 	}
 	fetchedAndHeld := func(what string, fetches int32) {
 		t.Helper()
-		waitFor(what, func(f listedFeed) bool { return h.fetcher.calls.Load() >= fetches && f.Held })
+		waitFor(what, func(f model.Feed) bool { return h.fetcher.calls.Load() >= fetches && f.Held })
 		if got := h.fetcher.calls.Load(); got != fetches {
 			t.Fatalf("%s: %d fetches, want %d", what, got, fetches)
 		}
@@ -289,7 +337,7 @@ func TestHeldFeedIsReportedAndRetriedOnRequest(t *testing.T) {
 	if w := h.request("PUT", "/api/feeds/"+id, jsonBody(t, feed)); w.Code != http.StatusOK {
 		t.Fatalf("editor save = %d %s", w.Code, w.Body.String())
 	}
-	waitFor("an editor save to retry the feed", func(f listedFeed) bool { return !f.Held && f.Count == 1 })
+	waitFor("an editor save to retry the feed", func(f model.Feed) bool { return !f.Held && f.Count == 1 })
 	if m := metrics(); m["rss_workshop_feeds_held"] != "0" {
 		t.Fatalf("a stored feed is still counted as held: %s", m["rss_workshop_feeds_held"])
 	}
