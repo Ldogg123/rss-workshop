@@ -42,7 +42,11 @@ type Scheduler struct {
 	// keeps that backoff in memory, where a failing database cannot erase it.
 	// Retry lifts a hold early without forgetting its failures.
 	held map[string]hold
-	wg   sync.WaitGroup
+	// finished records when each refresh ended, until the next tick. A list
+	// read before then can still show the feed due, because its new schedule
+	// was saved after the read, and would start it again straight away.
+	finished map[string]time.Time
+	wg       sync.WaitGroup
 }
 
 type hold struct {
@@ -51,7 +55,7 @@ type hold struct {
 }
 
 func New(s *store.Store, f fetch.Fetcher, workers int, timeout time.Duration) *Scheduler {
-	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, held: map[string]hold{}}
+	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, held: map[string]hold{}, finished: map[string]time.Time{}}
 }
 func (s *Scheduler) Stats() (int, int) { return len(s.slots), cap(s.slots) }
 func (s *Scheduler) timeout(mode string) time.Duration {
@@ -60,10 +64,16 @@ func (s *Scheduler) timeout(mode string) time.Duration {
 	}
 	return s.Timeout
 }
-func (s *Scheduler) reserve(id string) bool {
+
+// reserve admits a job to one of the shared slots. A refresh passes the time
+// its feed list was read, and is refused if the feed finished since then.
+func (s *Scheduler) reserve(id string, listed time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.active[id] {
+		return false
+	}
+	if done, ok := s.finished[id]; ok && !listed.IsZero() && !done.Before(listed) {
 		return false
 	}
 	select {
@@ -75,6 +85,14 @@ func (s *Scheduler) reserve(id string) bool {
 	}
 }
 func (s *Scheduler) release(id string) { s.mu.Lock(); delete(s.active, id); <-s.slots; s.mu.Unlock() }
+
+// finish releases a refresh, after its result was saved or given up.
+func (s *Scheduler) finish(id string) {
+	s.mu.Lock()
+	s.finished[id] = time.Now()
+	s.mu.Unlock()
+	s.release(id)
+}
 
 // hold backs a feed off after its result could not be stored, and reports how
 // long until it is tried again. The delay doubles per consecutive failure from
@@ -143,9 +161,21 @@ func (s *Scheduler) forgetHolds(fs []model.Feed) {
 		}
 	}
 }
+
+// forgetFinished drops end times a list read at listed already reflects: a
+// refresh saves its result before it ends.
+func (s *Scheduler) forgetFinished(listed time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, done := range s.finished {
+		if done.Before(listed) {
+			delete(s.finished, id)
+		}
+	}
+}
 func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, error) {
 	id := store.ID()
-	if !s.reserve(id) {
+	if !s.reserve(id, time.Time{}) {
 		return model.Preview{}, ErrBusy
 	}
 	defer s.release(id)
@@ -177,7 +207,7 @@ func (s *Scheduler) Snapshot(ctx context.Context, rawURL string, r model.Recipe)
 		return fetch.Result{}, errors.New("choose static, browser, or flaresolverr for the page preview")
 	}
 	id := store.ID()
-	if !s.reserve(id) {
+	if !s.reserve(id, time.Time{}) {
 		return fetch.Result{}, ErrBusy
 	}
 	defer s.release(id)
@@ -212,6 +242,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 func (s *Scheduler) Wait() { s.wg.Wait() }
 func (s *Scheduler) tick(ctx context.Context) {
+	listed := time.Now()
 	fs, e := s.Store.List(ctx)
 	if e != nil {
 		if ctx.Err() == nil {
@@ -222,6 +253,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 		return
 	}
+	s.dispatch(ctx, fs, listed)
+}
+
+// dispatch starts the due feeds in a list read at listed.
+func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.Time) {
 	// Oldest due first prevents a permanently busy queue starving later feeds.
 	sortFeeds(fs)
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
@@ -237,6 +273,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 	}
 	s.forgetHolds(fs)
+	s.forgetFinished(listed)
 	for _, f := range fs {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
 			continue
@@ -247,11 +284,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if !s.reserve(f.ID) {
+		if !s.reserve(f.ID, listed) {
 			continue
 		}
 		s.wg.Add(1)
-		go func(f model.Feed) { defer s.wg.Done(); defer s.release(f.ID); s.refresh(ctx, f) }(f)
+		go func(f model.Feed) { defer s.wg.Done(); defer s.finish(f.ID); s.refresh(ctx, f) }(f)
 	}
 }
 func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
