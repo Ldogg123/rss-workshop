@@ -159,7 +159,7 @@ Any `2xx` answer counts as delivered, and only its first 4 KiB is read. Each att
 
 #### Privacy
 
-A message carries feed titles, failure counts, the error a card shows with URLs removed, and `PUBLIC_BASE_URL`; never source URLs, reader links or tokens, story text, or diagnostics samples. Titles can still reveal what you follow, and they go to whoever runs the notification service, so prefer one you host yourself. Treat `NOTIFY_URL` and `NOTIFY_TOKEN` as passwords: a topic on a public ntfy server works as one, since anyone who knows its name can read it, and webhook URLs often embed a token. `docker compose config` prints both.
+A message carries feed titles and, in JSON, each feed's ID, failure counts, the error a card shows with URLs removed, and `PUBLIC_BASE_URL` as the link to the library, which ntfy also receives in its `Click` header; the test message carries that link too. It never carries source URLs, reader links or tokens, story text, or diagnostics samples; a feed ID is not a credential, because a reader link also needs its token. Titles and the address can still reveal what you follow and where you run it, and they go to whoever runs the notification service, so prefer one you host yourself. Treat `NOTIFY_URL` and `NOTIFY_TOKEN` as passwords: a topic on a public ntfy server works as one, since anyone who knows its name can read it, and webhook URLs often embed a token. `docker compose config` prints both.
 
 #### Troubleshooting
 

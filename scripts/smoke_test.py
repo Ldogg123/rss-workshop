@@ -41,6 +41,14 @@ class SmokeEnvironmentTests(unittest.TestCase):
                 self.assertEqual(env['NOTIFY_URL'], '')
                 self.assertEqual(env['NOTIFY_TOKEN'], '')
 
+    def test_log_checks_never_follow_an_operator_log_setting(self):
+        # The run checks for info lines in the text format.
+        with mock.patch.dict(os.environ, {'LOG_LEVEL': 'warn', 'LOG_FORMAT': 'json'}):
+            for compose in (False, True):
+                env = smoke.smoke_environment('/tmp/fixture', 'fixture-password', 'http://localhost:1234', 1234, False, compose)
+                self.assertEqual(env['LOG_LEVEL'], 'info')
+                self.assertEqual(env['LOG_FORMAT'], 'text')
+
     def test_only_explicit_native_postgres_mode_uses_test_database(self):
         with mock.patch.dict(os.environ, {'DATABASE_URL': 'postgres://production/private',
                                          'RSS_TEST_POSTGRES_URL': 'postgres://test/disposable'}):

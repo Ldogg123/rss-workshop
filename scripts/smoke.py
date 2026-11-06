@@ -116,6 +116,9 @@ def smoke_environment(tmp, password, base, port, postgres_mode, compose_mode):
                 DATABASE_URL=database_url, PUBLIC_BASE_URL=base, LISTEN_ADDR=f'127.0.0.1:{port}',
                 ALLOW_CIDRS='127.0.0.1/32', STATIC_WORKERS='2', FETCH_TIMEOUT='5s',
                 FETCH_USER_AGENT=USER_AGENT,
+                # The checks read info lines in the text format, whatever an
+                # operator's shell exports.
+                LOG_LEVEL='info', LOG_FORMAT='text',
                 # Never an operator's notification service; main() points these
                 # at its own receiver.
                 NOTIFY_URL='', NOTIFY_TOKEN='', NOTIFY_FORMAT='json', NOTIFY_AFTER_FAILURES='1')
@@ -183,7 +186,7 @@ def main():
             override.write_text('services:\n  rss-workshop:\n    image: ' + image + '\n    pull_policy: never\n    ports: !override\n      - "127.0.0.1:' + str(port) + ':8080"\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n')
             env_file = pathlib.Path(tmp) / 'compose.env'
             env_keys = ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_HASH', 'PUBLIC_BASE_URL', 'ALLOW_CIDRS', 'STATIC_WORKERS', 'FETCH_TIMEOUT', 'FETCH_USER_AGENT', 'DATABASE_URL', 'RSS_DATA_DIR', 'POSTGRES_DATA_DIR',
-                        'NOTIFY_URL', 'NOTIFY_TOKEN', 'NOTIFY_FORMAT', 'NOTIFY_AFTER_FAILURES']
+                        'LOG_LEVEL', 'LOG_FORMAT', 'NOTIFY_URL', 'NOTIFY_TOKEN', 'NOTIFY_FORMAT', 'NOTIFY_AFTER_FAILURES']
             if postgres_mode:
                 env['POSTGRES_PASSWORD'] = secrets.token_hex(24)
                 env['DATABASE_URL'] = 'postgres://rss_workshop:' + env['POSTGRES_PASSWORD'] + '@postgres:5432/rss_workshop?sslmode=disable'
