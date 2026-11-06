@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -210,9 +211,10 @@ func TestDiscardedRefreshesRaiseNoEvent(t *testing.T) {
 	}
 }
 
-// A database that refuses one result usually refuses them all, so the first
-// hold of a streak reports it, at most once an hour across every feed.
-func TestNotSavedReportsTheFirstHoldAtMostHourly(t *testing.T) {
+// A database that refuses one result usually refuses them all, so not_saved
+// goes out at most once an hour across every feed, and again while results
+// are still refused, whichever feed's hold that is.
+func TestNotSavedIsReportedAtMostHourlyWhileItLasts(t *testing.T) {
 	ctx := context.Background()
 	s, err := openTestStore(t, 50)
 	if err != nil {
@@ -221,8 +223,10 @@ func TestNotSavedReportsTheFirstHoldAtMostHourly(t *testing.T) {
 	defer s.DB.Close()
 	jobs := New(s, newPageFetcher(listPage(1), nil), 1, 10*time.Second)
 	h, clock := alerting(jobs, 3)
+	captureLog(t)
 	a, b, c := namedFeed(t, s, "Alpha"), namedFeed(t, s, "Beta"), namedFeed(t, s, "Gamma")
 	restore := blockItemWrites(t, s)
+	defer restore()
 
 	jobs.refresh(ctx, a)
 	events := h.take()
@@ -237,33 +241,89 @@ func TestNotSavedReportsTheFirstHoldAtMostHourly(t *testing.T) {
 	if events := h.take(); len(events) != 0 {
 		t.Fatalf("a second feed within the hour: %v", kinds(events))
 	}
-	clock.advance(2 * time.Hour)
-	// Alpha's second hold continues its streak: Retry keeps the count.
+	// Retry keeps Alpha's hold count, so this is its second hold in a row.
 	jobs.Retry(a.ID)
 	jobs.refresh(ctx, a)
 	if events := h.take(); len(events) != 0 {
-		t.Fatalf("a held feed failing again: %v", kinds(events))
-	}
-	jobs.refresh(ctx, c)
-	if events := h.take(); len(events) != 1 || events[0].Feed != "Gamma" {
-		t.Fatalf("a new streak after the hour: %+v", events)
+		t.Fatalf("a held feed failing again within the hour: %v", kinds(events))
 	}
 
-	// A stored result ends the streak; the next hold starts a new one, which
-	// is still subject to the hour.
-	restore()
+	clock.advance(50 * time.Minute)
+	jobs.Retry(a.ID)
 	jobs.refresh(ctx, a)
-	restore = blockItemWrites(t, s)
-	defer restore()
-	clock.advance(time.Minute)
-	jobs.refresh(ctx, a)
+	if events := h.take(); len(events) != 1 || events[0].Kind != notify.NotSaved || events[0].Feed != "Alpha" {
+		t.Fatalf("a held feed failing again an hour on: %+v", events)
+	}
+	jobs.refresh(ctx, c)
 	if events := h.take(); len(events) != 0 {
-		t.Fatalf("within the hour of the last alert: %v", kinds(events))
+		t.Fatalf("a third feed within the hour of that: %v", kinds(events))
 	}
 	clock.advance(time.Hour)
+	jobs.Retry(b.ID)
 	jobs.refresh(ctx, b)
-	if events := h.take(); len(events) != 0 {
-		t.Fatalf("Beta is still in its first streak: %v", kinds(events))
+	if events := h.take(); len(events) != 1 || events[0].Feed != "Beta" {
+		t.Fatalf("another feed's hold an hour on: %+v", events)
+	}
+}
+
+// A disk that fills again soon after space was freed starts a second outage
+// inside the hour of the first one's alert. The hourly limit may delay that
+// report, but must not lose it: reads still work, so db_unavailable stays
+// silent, and nothing is stored, so no failure count moves towards failing.
+func TestNotSavedSoonAfterAnOutageIsReportedOnceTheHourPasses(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	jobs := New(s, newPageFetcher(listPage(1), nil), 1, 10*time.Second)
+	h, clock := alerting(jobs, 3)
+	captureLog(t)
+	a, b := namedFeed(t, s, "Alpha"), namedFeed(t, s, "Beta")
+	restore := blockItemWrites(t, s)
+	jobs.refresh(ctx, a)
+	if events := h.take(); len(events) != 1 || events[0].Kind != notify.NotSaved {
+		t.Fatalf("first outage: %+v", events)
+	}
+
+	// Space is freed, and Alpha's next try is stored.
+	clock.advance(5 * time.Minute)
+	restore()
+	jobs.Retry(a.ID)
+	jobs.refresh(ctx, reload(t, s, a.ID))
+	if jobs.Held(a.ID) {
+		t.Fatal("a stored result left Alpha held")
+	}
+
+	// The disk fills again and stays full. Each round retries both feeds ten
+	// minutes apart, which is how a library on short intervals keeps meeting
+	// the refusal.
+	restore = blockItemWrites(t, s)
+	defer restore()
+	clock.advance(15 * time.Minute)
+	start := clock.now
+	var reported []time.Duration
+	for range 13 {
+		for _, f := range []model.Feed{a, b} {
+			jobs.Retry(f.ID)
+			jobs.refresh(ctx, reload(t, s, f.ID))
+			if !jobs.Held(f.ID) {
+				t.Fatalf("%s was not held, so the round tested nothing", f.Title)
+			}
+		}
+		for _, e := range h.take() {
+			if e.Kind != notify.NotSaved {
+				t.Fatalf("unexpected %s event", e.Kind)
+			}
+			reported = append(reported, clock.now.Sub(start))
+		}
+		clock.advance(10 * time.Minute)
+	}
+	// The first alert went out 20 minutes before the second outage began, so
+	// its report waits 40 minutes, and repeats hourly while the outage lasts.
+	if want := []time.Duration{40 * time.Minute, 100 * time.Minute}; !slices.Equal(reported, want) {
+		t.Fatalf("a second outage over two hours was reported at %v; want %v", reported, want)
 	}
 }
 

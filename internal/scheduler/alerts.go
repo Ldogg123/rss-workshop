@@ -71,11 +71,16 @@ func (s *Scheduler) alertRefresh(f model.Feed, runErr error) {
 	}
 }
 
-// alertNotSaved reports the first hold of a streak, at most once an hour
+// alertNotSaved reports a result the database refused, at most once an hour
 // across every feed: a database that refuses one result usually refuses them
-// all.
-func (s *Scheduler) alertNotSaved(f model.Feed, streak int, err error) {
-	if s.Notifier == nil || streak != 1 {
+// all. Like db_unavailable it repeats while refusals continue, whichever feed
+// meets one. Following each feed's first hold instead would miss an outage
+// that begins within the hour of an earlier alert, as when a disk fills again
+// soon after space was freed: every first hold falls inside the hour, and
+// nothing else reports it, since reads still work and a failure that was not
+// stored moves no failure count.
+func (s *Scheduler) alertNotSaved(f model.Feed, err error) {
+	if s.Notifier == nil {
 		return
 	}
 	s.alerts.mu.Lock()

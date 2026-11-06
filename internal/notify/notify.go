@@ -376,7 +376,7 @@ func describe(e Event) string {
 	case Recovered:
 		return fmt.Sprintf("Recovered: %s - refreshed successfully after %s in a row failed.", e.Feed, refreshes(e.Failures))
 	case NotSaved:
-		return fmt.Sprintf("Not saved: %s - the database refused this refresh, so nothing from it was stored and the feed waits to retry. Other feeds are likely affected; this alert is sent at most once an hour.%s", e.Feed, reason)
+		return fmt.Sprintf("Not saved: %s - the database refused this refresh, so nothing from it was stored and the feed waits to retry. Other feeds are likely affected; this alert repeats at most once an hour while results are refused.%s", e.Feed, reason)
 	case DBUnavailable:
 		return "Database unavailable: the scheduler cannot read the feed library, so no feed refreshes until it recovers. This alert repeats at most once an hour while it lasts." + reason
 	case DBAvailable:

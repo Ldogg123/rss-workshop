@@ -165,12 +165,12 @@ func (s *Scheduler) solverFree() bool {
 }
 
 // hold backs a feed off after its result could not be stored, and reports how
-// long until it is tried again and how many results in a row were not stored.
-// The delay doubles per consecutive failure from two minutes up to 1,024
-// minutes, about 17 hours: the same steps the database takes after a failed
-// fetch. Only a source's Retry-After can push that backoff to its 24-hour cap,
-// and a failed write has none, so a hold never reaches it.
-func (s *Scheduler) hold(id string) (time.Duration, int) {
+// long until it is tried again. The delay doubles per consecutive failure from
+// two minutes up to 1,024 minutes, about 17 hours: the same steps the database
+// takes after a failed fetch. Only a source's Retry-After can push that
+// backoff to its 24-hour cap, and a failed write has none, so a hold never
+// reaches it.
+func (s *Scheduler) hold(id string) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := s.held[id]
@@ -178,7 +178,7 @@ func (s *Scheduler) hold(id string) (time.Duration, int) {
 	wait := min(time.Duration(1<<min(h.failures, 10))*time.Minute, 24*time.Hour)
 	h.until = time.Now().Add(wait)
 	s.held[id] = h
-	return wait, h.failures
+	return wait
 }
 
 // Held reports whether a feed is waiting out a hold, so a tick will not
@@ -471,10 +471,10 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 		// Hold it here or the source gets refetched every second for as long as
 		// the database stays unwritable. Reporting success below would also be a
 		// lie: no story, run record or timestamp survived.
-		wait, streak := s.hold(f.ID)
+		wait := s.hold(f.ID)
 		slog.Error("refresh not saved", "feed", f.Title, "feed_id", f.ID, "error", err,
 			"retry_in", wait, "note", "nothing was stored, including this feed's schedule")
-		s.alertNotSaved(f, streak, err)
+		s.alertNotSaved(f, err)
 		return
 	}
 	s.released(f.ID)

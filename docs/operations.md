@@ -126,7 +126,7 @@ The address is trusted configuration, like `FLARESOLVERR_URL`: it may be on your
 | --- | --- |
 | `failing` | A feed's refreshes have failed `NOTIFY_AFTER_FAILURES` times in a row. Once per streak, when the count reaches that number, with the error its card shows |
 | `recovered` | A feed at or past that count refreshes successfully |
-| `not_saved` | The database refused a finished refresh, for example because its disk is full, and the feed started [waiting to retry](#waiting-to-retry-after-a-failed-save). At most one an hour across every feed, because such a database usually refuses every feed's results |
+| `not_saved` | The database refused a finished refresh, for example because its disk is full, and the feed started [waiting to retry](#waiting-to-retry-after-a-failed-save). At most one an hour across every feed, because such a database usually refuses every feed's results, and repeated hourly while refusals continue: one within the hour of the last alert is reported once the hour has passed, if results are still refused then |
 | `db_unavailable` | The scheduler cannot read the library at all, for example while PostgreSQL is down or the SQLite file cannot be read. No feed refreshes then, so no other event would report it. Repeated at most once an hour while it lasts |
 | `db_available` | The scheduler can read the library again after a `db_unavailable` was sent |
 
