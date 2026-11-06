@@ -189,7 +189,7 @@ func (s *Store) cleanError(err *error) {
 		*err = bad
 		return
 	}
-	for _, sentinel := range []error{sql.ErrNoRows, ErrStale, ErrFilterInUse, errPostgresEncoding, context.Canceled, context.DeadlineExceeded} {
+	for _, sentinel := range []error{sql.ErrNoRows, ErrStale, ErrDeleted, ErrFilterInUse, errPostgresEncoding, context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(*err, sentinel) {
 			*err = sentinel
 			return

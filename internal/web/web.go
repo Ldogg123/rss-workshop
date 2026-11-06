@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -86,6 +87,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/feeds/{id}", a.protect(a.save))
 	mux.HandleFunc("DELETE /api/feeds/{id}", a.protect(a.remove))
 	mux.HandleFunc("POST /api/feeds/{id}/refresh", a.protect(a.refresh))
+	mux.HandleFunc("POST /api/feeds/{id}/enabled", a.protect(a.setEnabled))
 	mux.HandleFunc("GET /api/feeds/{id}/runs", a.protect(a.runs))
 	mux.HandleFunc("POST /api/feeds/{id}/rotate-token", a.protect(a.rotateToken))
 	mux.HandleFunc("POST /api/preview", a.protect(a.preview))
@@ -158,6 +160,10 @@ const maxRequestBytes = 64 << 10
 // from the editor with its full library filter selection.
 // Each ID is 48 hex characters, quoted and comma-separated.
 const maxFilterIDsBytes = len(`,"filter_ids":[]`) + store.MaxFiltersPerFeed*(48+3)
+
+// maxLoadedEnabledBytes is the room for the editor's loaded_enabled field,
+// which validate() does not count for the same reason.
+const maxLoadedEnabledBytes = len(`,"loaded_enabled":false`)
 
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	return decodeWithin(w, r, v, maxRequestBytes)
@@ -260,6 +266,9 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 		if fs[i].Enabled && !fs[i].NextRun.After(time.Now()) {
 			due++
 		}
+		// A held feed's stored schedule says it is due, so without this the
+		// card would show a past next refresh and no reason.
+		fs[i].Held = fs[i].Enabled && a.Scheduler.Held(fs[i].ID)
 	}
 	active, limit := a.Scheduler.Stats()
 	solverActive, solverLimit := 0, 0
@@ -300,8 +309,13 @@ func (a *App) save(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		model.Feed
 		ApplyFiltersToHistory bool `json:"apply_filters_to_history"`
+		// LoadedEnabled is the enabled value the editor opened with. When the
+		// operator left the checkbox alone, the save keeps the stored value,
+		// which a card's Pause or Resume may have changed since. Clients that
+		// omit it, older ones included, set enabled as sent.
+		LoadedEnabled *bool `json:"loaded_enabled"`
 	}
-	if e := decodeWithin(w, r, &in, maxRequestBytes+maxFilterIDsBytes); e != nil {
+	if e := decodeWithin(w, r, &in, maxRequestBytes+maxFilterIDsBytes+maxLoadedEnabledBytes); e != nil {
 		failure(w, 400, e)
 		return
 	}
@@ -311,12 +325,48 @@ func (a *App) save(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, e)
 		return
 	}
-	id, e := a.Store.SaveWithOptions(r.Context(), f, store.SaveOptions{ApplyFiltersToHistory: in.ApplyFiltersToHistory, Validate: validate})
+	keep := f.ID != "" && in.LoadedEnabled != nil && *in.LoadedEnabled == f.Enabled
+	id, e := a.Store.SaveWithOptions(r.Context(), f, store.SaveOptions{ApplyFiltersToHistory: in.ApplyFiltersToHistory, Validate: validate, KeepEnabled: keep})
 	if e != nil {
 		a.saveFailure(w, r, e, in.ApplyFiltersToHistory, "could not save feed")
 		return
 	}
+	// The save made the feed due now, which a hold left by a failed write
+	// would otherwise override until it expired.
+	a.Scheduler.Retry(id)
 	reply(w, 200, map[string]string{"id": id})
+}
+
+// setEnabled pauses or resumes a feed. Unlike a save it sends no recipe, so a
+// card's stale copy of the feed cannot undo an edit saved from another tab,
+// and the feed keeps its error, failure count and conditional-fetch
+// validators. Readers see no change either way.
+func (a *App) setEnabled(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if e := decode(w, r, &in); e != nil {
+		failure(w, 400, e)
+		return
+	}
+	if in.Enabled == nil {
+		failure(w, 400, errors.New("enabled must be true or false"))
+		return
+	}
+	id := r.PathValue("id")
+	switch e := a.Store.SetEnabled(r.Context(), id, *in.Enabled); {
+	case errors.Is(e, sql.ErrNoRows):
+		http.NotFound(w, r)
+		return
+	case e != nil:
+		http.Error(w, "could not update feed", 500)
+		return
+	}
+	if *in.Enabled {
+		// Resuming makes the feed due now; see save.
+		a.Scheduler.Retry(id)
+	}
+	reply(w, 200, map[string]bool{"enabled": *in.Enabled})
 }
 func (a *App) remove(w http.ResponseWriter, r *http.Request) {
 	if e := a.Store.Delete(r.Context(), r.PathValue("id")); e != nil {
@@ -327,8 +377,13 @@ func (a *App) remove(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) refresh(w http.ResponseWriter, r *http.Request) {
 	f, e := a.Store.Get(r.Context(), r.PathValue("id"))
-	if e != nil {
+	if errors.Is(e, sql.ErrNoRows) {
 		http.NotFound(w, r)
+		return
+	}
+	if e != nil {
+		// Not a 404: during a database outage the feed still exists.
+		http.Error(w, "database read failed", 500)
 		return
 	}
 	if !f.Enabled {
@@ -339,6 +394,9 @@ func (a *App) refresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not queue refresh", 500)
 		return
 	}
+	// Queued means queued: a hold left by a failed write would otherwise keep
+	// the feed waiting for up to 17 hours whatever its schedule says.
+	a.Scheduler.Retry(f.ID)
 	reply(w, 202, map[string]bool{"queued": true})
 }
 func (a *App) preview(w http.ResponseWriter, r *http.Request) {
@@ -449,8 +507,12 @@ func (a *App) rss(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) rotateToken(w http.ResponseWriter, r *http.Request) {
-	if e := a.Store.RotateToken(r.Context(), r.PathValue("id")); e != nil {
+	switch e := a.Store.RotateToken(r.Context(), r.PathValue("id")); {
+	case errors.Is(e, sql.ErrNoRows):
 		http.NotFound(w, r)
+		return
+	case e != nil:
+		http.Error(w, "could not reset feed links", 500)
 		return
 	}
 	reply(w, 200, map[string]bool{"ok": true})

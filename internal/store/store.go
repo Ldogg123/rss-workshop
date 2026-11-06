@@ -25,6 +25,11 @@ import (
 var schema string
 var ErrStale = errors.New("recipe changed during refresh; result discarded")
 
+// ErrDeleted reports a refresh whose feed was deleted while it ran. Like
+// ErrStale it means nothing was written on purpose, not that the database
+// refused a write: deleting a feed mid-refresh is an ordinary action.
+var ErrDeleted = errors.New("feed deleted during refresh; result discarded")
+
 type Store struct {
 	DB       *sql.DB
 	MaxItems int
@@ -190,6 +195,35 @@ func (s *Store) Queue(ctx context.Context, id string) (err error) {
 	_, e := s.DB.ExecContext(ctx, s.bind("UPDATE feeds SET next_run=? WHERE id=?"), time.Now().Unix(), id)
 	return e
 }
+
+// SetEnabled pauses or resumes a feed without saving its recipe. Whether a feed
+// refreshes is not published, so its version, conditional-fetch validators,
+// error, failure count and output change time all stay as they are: a refresh
+// already running still saves, the next fetch can still be conditional, and
+// readers keep receiving 304. Resuming a paused feed makes it due now but keeps
+// its failure count, so a feed that fails again continues its backoff rather
+// than starting over. Resuming a feed that is already enabled changes nothing.
+func (s *Store) SetEnabled(ctx context.Context, id string, enabled bool) (err error) {
+	defer s.cleanError(&err)
+	// Every SET expression reads the row as it was before the update, on both
+	// backends, so the CASE sees whether the feed was paused.
+	query, args := "UPDATE feeds SET enabled=? WHERE id=?", []any{false, id}
+	if enabled {
+		query, args = "UPDATE feeds SET next_run=CASE WHEN enabled THEN next_run ELSE ? END,enabled=? WHERE id=?", []any{time.Now().Unix(), true, id}
+	}
+	res, e := s.DB.ExecContext(ctx, s.bind(query), args...)
+	if e != nil {
+		return e
+	}
+	n, e := res.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
 func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error) {
 	defer s.cleanError(&err)
 	rows, e := s.DB.QueryContext(ctx, s.bind(`SELECT key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed FROM items WHERE feed_id=? ORDER BY published DESC,key`), id)
@@ -221,7 +255,8 @@ func (s *Store) Complete(ctx context.Context, f model.Feed, items []model.Item, 
 }
 
 // CompleteWithDiagnostics records the bounded trace with the same transaction
-// as its run summary and saved items. Stale or deleted recipes leave no run.
+// as its run summary and saved items. Stale or deleted recipes leave no run,
+// and return ErrStale or ErrDeleted.
 func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items []model.Item, etag, modified string, status int, runErr error, retry time.Duration, details *model.RunDiagnostics) (err error) {
 	defer s.cleanError(&err)
 	tx, e := s.DB.BeginTx(ctx, nil)
@@ -236,6 +271,9 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 		versionQuery += " FOR UPDATE"
 	}
 	if e = tx.QueryRowContext(ctx, s.bind(versionQuery), f.ID).Scan(&version, &lastChanged); e != nil {
+		if errors.Is(e, sql.ErrNoRows) {
+			return ErrDeleted
+		}
 		return e
 	}
 	if version != f.Version {

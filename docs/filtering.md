@@ -78,7 +78,7 @@ Groups use `op: "all"` or `"any"` with a nonempty `rules` array. Conditions use 
 
 The authenticated feed-save API accepts a top-level `apply_filters_to_history: true` for the optional history cleanup. It defaults to false and is not part of the recipe or export. The usual Origin and CSRF protections apply. Database schema 3 prevents older app versions from reopening the database and ignoring its filters, and schema 5 does the same for library filters; follow the [upgrade guidance](operations.md#upgrades) before switching versions.
 
-Feed saves and previews also accept a top-level `filter_ids` array naming library filters in order. Omitting it keeps a saved feed's current library filters, so older clients and pause/resume requests do not unlink them; an empty array removes them all. Feed listings return `filter_ids` for every feed.
+Feed saves and previews also accept a top-level `filter_ids` array naming library filters in order. Omitting it keeps a saved feed's current library filters, so older clients, including ones that pause or resume a feed by saving it, do not unlink them; an empty array removes them all. Pausing or resuming from a feed card uses [its own request](operations.md#pausing-and-resuming), which never changes a feed's filters. Feed listings return `filter_ids` for every feed.
 
 | Route | Behavior |
 | --- | --- |

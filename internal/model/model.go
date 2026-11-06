@@ -61,6 +61,11 @@ type Feed struct {
 	RSSToken  string   `json:"-"`
 	RSSURL    string   `json:"rss_url,omitempty"`
 	AtomURL   string   `json:"atom_url,omitempty"`
+	// Held is set only by the library listing, for an enabled feed the
+	// scheduler holds in memory after the database refused a refresh. It is
+	// never stored. Like the other listed state, saves and previews accept and
+	// ignore it, so a feed taken from the listing can be sent back.
+	Held bool `json:"held"`
 }
 type Item struct {
 	Key   string `json:"key"`

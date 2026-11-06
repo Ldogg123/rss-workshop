@@ -2,6 +2,10 @@
 const $ = s => document.querySelector(s);
 let browserAvailable=false, flaresolverrAvailable=false;
 let csrf = '', feeds = [], polling;
+// The enabled value the open editor loaded. Saving sends it back, so a feed
+// paused or resumed from its card meanwhile keeps that state unless the
+// operator changed the checkbox.
+let loadedEnabled = null;
 const form = $('#recipe-form');
 function notice(text, success=false) { const n=$('#notice'); n.textContent=text; n.classList.toggle('success',success); n.hidden=!text; }
 async function api(path, method='GET', data, signal) {
@@ -41,13 +45,15 @@ async function load(){
  if(!$('#editor').hidden)renderHelp();
  $('#empty').hidden=feeds.length>0;$('#export-recipes').hidden=feeds.length===0;const list=$('#feeds');list.replaceChildren();
  for(const f of feeds){
-  const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',!f.enabled?'Paused':f.error?'Needs attention':f.last_success.startsWith('0001-')?'Pending':'Active','badge'+(f.error?' error':'')));card.append(top);
+  const held=f.enabled&&f.held;
+  const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',!f.enabled?'Paused':held?'Waiting to retry':f.error?'Needs attention':f.last_success.startsWith('0001-')?'Pending':'Active','badge'+(f.error||held?' error':'')));card.append(top);
   const source=node('a',f.url,'source');source.href=f.url;source.target='_blank';source.rel='noopener noreferrer';card.append(source);
-  const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',f.enabled?when(f.next_run):'Paused']]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
+  const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',!f.enabled?'Paused':held?'Delayed after a failed save':when(f.next_run)]]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
   const libraryFilters=window.rssLibrary?.names(f.filter_ids||[])||[];
   if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
+  if(held)card.append(node('p','Waiting to retry a failed database write. The last refresh could not be saved; it is retried after a delay, or now with Refresh.','diagnostic feed-held'));
   if(f.error)card.append(node('p',f.error,'diagnostic'));
-  const actions=node('div',undefined,'feed-actions');actions.append(action('Edit',()=>openEditor(f)),action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}`,'PUT',payload(f,!f.enabled));await load();}),action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'));card.append(actions);
+  const actions=node('div',undefined,'feed-actions');actions.append(action('Edit',()=>openEditor(f)),action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}/enabled`,'POST',{enabled:!f.enabled});await load();}),action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'));card.append(actions);
   const diagnostics=node('button','Diagnostics','quiet feed-diagnostics');diagnostics.type='button';diagnostics.onclick=()=>window.rssDiagnostics.open(f);diagnostics.dataset.feedId=f.id;actions.append(diagnostics);
   const exportLink=node('a','Export recipe','quiet button-link');exportLink.href='/api/recipes/export?id='+encodeURIComponent(f.id);exportLink.download='';actions.append(exportLink);
   const links=node('div',undefined,'feed-links');
@@ -63,9 +69,8 @@ async function copyFeedURL(format,url){
  if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(url);notice(format+' URL copied.',true);return;}catch{}}
  window.prompt('Copy this '+format+' URL:',url);
 }
-function payload(f,enabled=f.enabled){return {title:f.title,url:f.url,recipe:f.recipe,interval:f.interval,enabled};}
 function openEditor(f){
- form.reset();$('#preview').replaceChildren();$('#editor-title').textContent=f?'Edit feed':'New feed';form.elements.id.value=f?.id||'';
+ form.reset();$('#preview').replaceChildren();$('#editor-title').textContent=f?'Edit feed':'New feed';form.elements.id.value=f?.id||'';loadedEnabled=f?f.enabled:null;
  if(f){form.elements.mode.value=f.recipe.mode||"static";form.elements.wait_selector.value=f.recipe.wait_selector||"";form.elements.settle_ms.value=f.recipe.settle_ms||0;form.elements.title.value=f.title;form.elements.url.value=f.url;form.elements.type.value=f.recipe.type;form.elements.items.value=f.recipe.items;form.elements.interval.value=f.interval/60;form.elements.enabled.checked=f.enabled;for(const k of ['title','link','content','image','date']){form.elements[k+'_selector'].value=f.recipe[k].selector;form.elements[k+'_attr'].value=f.recipe[k].attr;}form.elements.date_layout.value=f.recipe.date_layout;form.elements.timezone.value=f.recipe.timezone;
   const full=f.recipe.full_content;form.elements.full_selector.value=full?.selector||'';form.elements.full_attr.value=full?.attr||'';form.elements.full_browser.checked=!!full?.browser;}
  window.rssFilters?.load(f?.recipe.filters,!!f);window.rssLibrary?.loadFeed(f?.filter_ids);window.rssLibrary?.refresh().catch(()=>{});$('#editor').hidden=false;renderHelp();help();fullContentSummary();form.elements.title.focus();
@@ -96,7 +101,7 @@ $('#login-form').onsubmit=e=>{e.preventDefault();busy(e.submitter,async()=>{cons
 $('#logout').onclick=()=>busy($('#logout'),async()=>{await api('/logout','POST',{});showLogin();});
 $('#new-feed').onclick=$('#empty-new').onclick=()=>openEditor();$('#close-editor').onclick=()=>$('#editor').hidden=true;form.elements.type.onchange=help;
 form.elements.full_selector.oninput=fullContentSummary;
-form.onsubmit=e=>{e.preventDefault();busy(e.submitter,async()=>{const id=form.elements.id.value,data=readForm();if(id)data.apply_filters_to_history=$('#apply-filters-to-history').checked;await api(id?`/feeds/${id}`:'/feeds',id?'PUT':'POST',data);$('#editor').hidden=true;notice('Feed saved. Enabled feeds refresh in the background.',true);await load();});};
+form.onsubmit=e=>{e.preventDefault();busy(e.submitter,async()=>{const id=form.elements.id.value,data=readForm();if(id){data.apply_filters_to_history=$('#apply-filters-to-history').checked;if(typeof loadedEnabled==='boolean')data.loaded_enabled=loadedEnabled;}await api(id?`/feeds/${id}`:'/feeds',id?'PUT':'POST',data);$('#editor').hidden=true;notice('Feed saved. Enabled feeds refresh in the background.',true);await load();});};
 $('#preview-button').onclick=()=>{if(!form.reportValidity())return;busy($('#preview-button'),async()=>{
  const p=$('#preview');p.replaceChildren(node('p','Fetching and extracting…','hint'));
  try{

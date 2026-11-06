@@ -124,6 +124,7 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testRunDiagnosticsUI(t, tab, s, jobs, f, solver)
 		testFiltersUI(t, tab, s)
 		testLibraryFiltersUI(t, tab, s)
+		testFeedStateUI(t, tab, s, f)
 	}
 	var overflow bool
 	if e = chromedp.Run(tab, chromedp.EmulateViewport(390, 844), chromedp.Evaluate(`document.documentElement.scrollWidth>innerWidth+1`, &overflow)); e != nil || overflow {
