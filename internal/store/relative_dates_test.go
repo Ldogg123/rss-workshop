@@ -154,6 +154,71 @@ func TestRelativePublicationDatesPersistAcrossRefreshAndRestart(t *testing.T) {
 	}
 }
 
+// A story saved while its date text was unrecognized keeps the first-seen
+// date and GUID it was published with once the text becomes recognizable;
+// only stories first saved afterwards take the site's date.
+func TestNewlyRecognizedDatesOnlyDateNewStories(t *testing.T) {
+	ctx := context.Background()
+	s, err := testStoreOpener(t, 10)()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.DB.Close() })
+	r := model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"}, Link: model.Field{Selector: "a"}, Date: model.Field{Selector: "time"}}
+	f := model.Feed{Title: "Month names", URL: "https://example.com/news", Recipe: r, Interval: 300, Enabled: true}
+	if f.ID, err = s.Save(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = s.Get(ctx, f.ID); err != nil {
+		t.Fatal(err)
+	}
+	const savedKey, newKey = "https://example.com/saved", "https://example.com/new"
+	page := `<article><h2>Saved</h2><a href="/saved">Read</a><time>Thu, 5 Nov 2026 10:00 EST</time></article>`
+	first, err := extract.RunAt([]byte(page), f.URL, r, time.Date(2026, time.November, 6, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An earlier release could not read this date, so it saved the story with
+	// the time it was first seen.
+	for i := range first.Items {
+		first.Items[i].Published = time.Time{}
+	}
+	if err = s.Complete(ctx, f, first.Items, "", "", 200, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.Items(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := relativeDatesByKey(t, stored)[savedKey]
+	if before.Published.IsZero() || !before.Published.Equal(before.FirstSeen) {
+		t.Fatalf("story was not saved with its first-seen time: %+v", before)
+	}
+
+	later, err := extract.RunAt([]byte(page+`<article><h2>New</h2><a href="/new">Read</a><time>5 November 2026 at 3:04 pm</time></article>`), f.URL, r, time.Date(2026, time.November, 6, 12, 5, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recognized := relativeDatesByKey(t, later.Items)
+	wantSaved, wantNew := time.Date(2026, time.November, 5, 15, 0, 0, 0, time.UTC), time.Date(2026, time.November, 5, 15, 4, 0, 0, time.UTC)
+	if !recognized[savedKey].Published.Equal(wantSaved) || !recognized[newKey].Published.Equal(wantNew) {
+		t.Fatalf("fixture must now recognize both dates: %+v", later.Items)
+	}
+	if err = s.Complete(ctx, f, later.Items, "", "", 200, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err = s.Items(ctx, f.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := relativeDatesByKey(t, stored)
+	if got := after[savedKey]; got.GUID == "" || got.GUID != before.GUID || !got.Published.Equal(before.Published) || !got.FirstSeen.Equal(before.FirstSeen) {
+		t.Fatalf("a recognized date rewrote a saved story: before %+v, after %+v", before, got)
+	}
+	if got := after[newKey]; !got.Published.Equal(wantNew) {
+		t.Fatalf("a story first saved now must take the site's date: %+v", got)
+	}
+}
+
 func relativeDatesByKey(t *testing.T, items []model.Item) map[string]model.Item {
 	t.Helper()
 	out := make(map[string]model.Item, len(items))
