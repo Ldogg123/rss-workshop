@@ -44,14 +44,14 @@
  function pageModeHelp(){
   const mode=$('#selector-mode').value, tip=$('#selector-mode-help');
   tip.hidden=mode==='static';
-  tip.textContent=mode==='flaresolverr'?(flaresolverrAvailable?'Uses the configured external browser. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. Set FLARESOLVERR_URL to load this page version.'):(browserAvailable?'Uses Chromium and the feed’s wait settings.':'Chromium is not configured on this server.');
+  tip.textContent=mode==='flaresolverr'?(flaresolverrAvailable?'Uses the configured external browser. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. To load this page version, set FLARESOLVERR_URL, then recreate the container with docker compose up -d or start the native server again; see docs/flaresolverr.md.'):(browserAvailable?'Uses Chromium and the feed’s wait settings.':'Chromium is not configured on this server.');
  }
  async function loadSnapshot(){
   clear();const current=revision;abort=new AbortController();state.textContent='Loading page…';$('#selector-load').disabled=true;
   try{
    const f=readForm();snapshotMode=$('#selector-mode').value;snapshotFeedMode=f.recipe.mode==='auto'&&!modeChanged?'auto':snapshotMode;
    pageModeHelp();
-   if(snapshotMode==='flaresolverr'&&!flaresolverrAvailable)throw new Error('FlareSolverr is not configured on this server. Choose another page version or configure FlareSolverr.');
+   if(snapshotMode==='flaresolverr'&&!flaresolverrAvailable)throw new Error('FlareSolverr is not configured on this server. Choose another page version, or set FLARESOLVERR_URL as docs/flaresolverr.md describes.');
    const data=await api('/selector/snapshot','POST',{url:f.url,recipe:{mode:snapshotMode,wait_selector:f.recipe.wait_selector,settle_ms:f.recipe.settle_ms}},abort.signal);
    if(current!==revision||!dialog.open)return;
    snapshot=data.nodes;$('#selector-source').textContent=data.url||f.url;token=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');

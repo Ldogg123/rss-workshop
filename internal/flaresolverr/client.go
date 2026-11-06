@@ -12,9 +12,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"rss-workshop/internal/fetch"
@@ -36,6 +39,7 @@ type Client struct {
 	http      *http.Client
 	transport *http.Transport
 	slots     chan struct{}
+	cooling   atomic.Int32
 	root      context.Context
 	stop      context.CancelFunc
 }
@@ -80,6 +84,11 @@ func New(endpoint string, slots int, timeout time.Duration, policy URLPolicy) (*
 // browser may continue until maxTimeout even when its client disconnects.
 func (c *Client) Stats() (active, capacity int) { return len(c.slots), cap(c.slots) }
 
+// Cooling reports how many of the slots Stats counts as active are held after
+// an interrupted request rather than by a request still in progress. A caller
+// that starts no more jobs than the slots left free never makes one wait.
+func (c *Client) Cooling() int { return int(c.cooling.Load()) }
+
 func (c *Client) Close() {
 	c.stop()
 	c.transport.CloseIdleConnections()
@@ -105,7 +114,7 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 	select {
 	case c.slots <- struct{}{}:
 	case <-ctx.Done():
-		return out, ctx.Err()
+		return out, waitFailure(ctx)
 	}
 	var holdFor time.Duration
 	defer func() {
@@ -115,6 +124,7 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 			// full remote budget plus grace from this failure, not from Do's start.
 			// This is conservative accounting, not a guarantee about the remote
 			// server: it must enforce its own execution and concurrency limits.
+			c.cooling.Add(1)
 			go func() {
 				timer := time.NewTimer(holdFor)
 				defer timer.Stop()
@@ -122,14 +132,15 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 				case <-timer.C:
 				case <-c.root.Done():
 				}
+				c.cooling.Add(-1)
 				<-c.slots
 			}()
 		} else {
 			<-c.slots
 		}
 	}()
-	if err := ctx.Err(); err != nil {
-		return out, err
+	if ctx.Err() != nil {
+		return out, waitFailure(ctx)
 	}
 	deadline, _ := ctx.Deadline()
 	remaining := time.Until(deadline)
@@ -138,14 +149,18 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 	budget := min(c.timeout, remaining-min(c.grace, remaining/10))
 	maxTimeout := budget.Milliseconds()
 	if maxTimeout < 1 {
-		return out, context.DeadlineExceeded
+		return out, errNoTimeLeft
 	}
 	payload, _ := json.Marshal(struct {
 		Command    string `json:"cmd"`
 		URL        string `json:"url"`
 		MaxTimeout int64  `json:"maxTimeout"`
 	}{"request.get", rawURL, maxTimeout})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
+	// Whether a connection opened decides both what went wrong and whether the
+	// remote browser can still be working: without one, no request reached it.
+	var connected atomic.Bool
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, c.endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return out, errors.New("invalid FlareSolverr service URL")
 	}
@@ -154,18 +169,15 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 	holdFor = time.Duration(maxTimeout)*time.Millisecond + c.grace
 	resp, err := c.http.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return out, ctx.Err()
+		if !connected.Load() {
+			holdFor = 0
 		}
-		return out, errors.New("FlareSolverr request failed; check the service address, connection, and timeout")
+		return out, requestFailure(ctx, err, connected.Load())
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if err != nil {
-		if ctx.Err() != nil {
-			return out, ctx.Err()
-		}
-		return out, errors.New("could not read the FlareSolverr response")
+		return out, requestFailure(ctx, err, true)
 	}
 	if len(body) > maxResponseBody {
 		return out, errors.New("FlareSolverr response exceeds its size limit")
@@ -188,10 +200,13 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 		if decodeErr == nil && result.Status == "error" {
 			return out, fmt.Errorf("FlareSolverr service returned HTTP %d: %s", resp.StatusCode, serviceFailure(result.Message))
 		}
-		return out, fmt.Errorf("FlareSolverr service returned HTTP %d; check its service logs", resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			return out, errNotAPI
+		}
+		return out, fmt.Errorf("%w (HTTP %d)", errNotFlareSolverr, resp.StatusCode)
 	}
 	if decodeErr != nil {
-		return out, errors.New("FlareSolverr returned an invalid JSON response")
+		return out, fmt.Errorf("%w (HTTP %d)", errNotFlareSolverr, resp.StatusCode)
 	}
 	if result.Status == "error" {
 		return out, errors.New(serviceFailure(result.Message))
@@ -223,6 +238,69 @@ func (c *Client) Fetch(ctx context.Context, rawURL, _, _ string) (fetch.Result, 
 	}
 	out.Body = []byte(*solution.Response)
 	return out, nil
+}
+
+// Failures to reach the service get fixed messages that say which part of the
+// setup to check. Go's own error text names the endpoint, and a reply that is
+// not FlareSolverr's says nothing this app can vouch for, so neither is
+// passed on. Each timeout still matches context.DeadlineExceeded.
+var (
+	errDNS             = errors.New("FlareSolverr DNS lookup failed: the host name in FLARESOLVERR_URL does not resolve from RSS Workshop")
+	errRefused         = errors.New("FlareSolverr connection refused: nothing accepts connections at the host and port in FLARESOLVERR_URL")
+	errUnreachable     = errors.New("FlareSolverr connection failed: there is no network route to the host in FLARESOLVERR_URL")
+	errConnect         = errors.New("FlareSolverr connection failed before a request was sent; check FLARESOLVERR_URL")
+	errClosed          = errors.New("FlareSolverr closed the connection without a complete reply")
+	errNotAPI          = errors.New("FlareSolverr address returned HTTP 404: FLARESOLVERR_URL is not the FlareSolverr /v1 API")
+	errNotFlareSolverr = errors.New("FlareSolverr address replied, but not as FlareSolverr")
+)
+
+const (
+	errConnectTimeout = deadlineError("FlareSolverr connection timed out: nothing answered at the address in FLARESOLVERR_URL")
+	errReplyTimeout   = deadlineError("FlareSolverr accepted the request but did not reply before the deadline")
+	errSlotTimeout    = deadlineError("timed out waiting for a free FlareSolverr slot")
+	errNoTimeLeft     = deadlineError("no time was left to send the FlareSolverr request before the deadline")
+)
+
+type deadlineError string
+
+func (e deadlineError) Error() string { return string(e) }
+func (deadlineError) Unwrap() error   { return context.DeadlineExceeded }
+
+// waitFailure explains a deadline spent waiting for one of this client's own
+// slots. A cancellation stays context.Canceled, which callers recognise.
+func waitFailure(ctx context.Context) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return errSlotTimeout
+	}
+	return ctx.Err()
+}
+
+// requestFailure explains a request that ended without a complete reply.
+// Before a connection opened, the cause is the address or the network; after
+// it, the service itself stopped answering.
+func requestFailure(ctx context.Context, err error, connected bool) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	var dns *net.DNSError
+	var netErr net.Error
+	timedOut := ctx.Err() != nil || errors.As(err, &netErr) && netErr.Timeout()
+	switch {
+	case connected && timedOut:
+		return errReplyTimeout
+	case connected:
+		return errClosed
+	case errors.As(err, &dns):
+		return errDNS
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return errRefused
+	case timedOut:
+		return errConnectTimeout
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return errUnreachable
+	default:
+		return errConnect
+	}
 }
 
 // Do not relay free-form service diagnostics: they can contain source HTML,

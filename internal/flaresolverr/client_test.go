@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -170,8 +174,8 @@ func TestRejectedResponsesAndSafeErrors(t *testing.T) {
 		name, body, want string
 		status           int
 	}{
-		{"malformed", `<html>cookie-secret</html>`, "invalid JSON", 200},
-		{"trailing JSON", `{"status":"ok"} {}`, "invalid JSON", 200},
+		{"malformed", `<html>cookie-secret</html>`, "replied, but not as FlareSolverr (HTTP 200)", 200},
+		{"trailing JSON", `{"status":"ok"} {}`, "replied, but not as FlareSolverr (HTTP 200)", 200},
 		{"unknown status", `{"status":"hmm"}`, "incomplete solution", 200},
 		{"missing solution", `{"status":"ok"}`, "incomplete solution", 200},
 		{"missing URL", `{"status":"ok","solution":{"status":200,"response":"page"}}`, "incomplete solution", 200},
@@ -184,7 +188,9 @@ func TestRejectedResponsesAndSafeErrors(t *testing.T) {
 		{"timeout", `{"status":"error","message":"Error solving the challenge. Timeout after 60 seconds! cookie-secret"}`, "timeout", 200},
 		{"browser", `{"status":"error","message":"session not created: Chrome failed to start. cookie-secret"}`, "browser request", 200},
 		{"unknown error", `{"status":"error","message":"<body>cookie-secret</body>"}`, "check its service logs", 200},
-		{"service HTTP error", `cookie-secret`, "HTTP 502", 502},
+		{"service HTTP error", `cookie-secret`, "replied, but not as FlareSolverr (HTTP 502)", 502},
+		{"not the API", `404 page not found cookie-secret`, "HTTP 404: FLARESOLVERR_URL is not the FlareSolverr /v1 API", 404},
+		{"another web app", `<html>cookie-secret</html>`, "replied, but not as FlareSolverr (HTTP 405)", 405},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +276,7 @@ func TestBoundedConcurrencyAndQueueCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	_, err := c.Fetch(ctx, "https://source.example/queued", "", "")
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) || err.Error() != "timed out waiting for a free FlareSolverr slot" {
 		t.Fatalf("queued request error=%v", err)
 	}
 	select {
@@ -329,5 +335,137 @@ func TestInterruptedRequestRetainsSlotUntilRemoteDeadline(t *testing.T) {
 	}
 	if time.Since(interruptedAt) < time.Duration(remoteTimeout)*time.Millisecond+c.grace {
 		t.Fatal("remote slot released before the full timeout and grace elapsed after interruption")
+	}
+}
+
+// The endpoint, the source URL and anything Go or the far end said are kept
+// out of every message: the text is stored, logged and shown in the editor.
+func assertFixedError(t *testing.T, err error, want string, private ...string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), want) || len(err.Error()) > 240 {
+		t.Fatalf("error=%v, want %q", err, want)
+	}
+	for _, value := range private {
+		if strings.Contains(err.Error(), value) {
+			t.Fatalf("error %q contains %q", err, value)
+		}
+	}
+}
+
+const privateSource = "https://source.example/private-feed?token=reader-secret"
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "dial timeout detail" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// A request that never opened a connection never reached the remote browser,
+// so its slot is free again at once; holding it would only report the solver
+// busy to the next preview, when the real problem is its address.
+func TestConnectionFailuresAreNamedAndReleaseTheirSlot(t *testing.T) {
+	dialFailure := func(err error) func(context.Context, string, string) (net.Conn, error) {
+		return func(context.Context, string, string) (net.Conn, error) {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: err}
+		}
+	}
+	for _, test := range []struct {
+		name string
+		dial func(context.Context, string, string) (net.Conn, error)
+		want string
+	}{
+		{"DNS lookup", dialFailure(&net.DNSError{Err: "no such host", Name: "solver.internal", IsNotFound: true}), "DNS lookup failed"},
+		{"connect timeout", dialFailure(timeoutErr{}), "connection timed out"},
+		{"no route", dialFailure(os.NewSyscallError("connect", syscall.EHOSTUNREACH)), "no network route"},
+		{"TLS or other", dialFailure(errors.New("tls: handshake failure cookie-secret")), "connection failed before a request was sent"},
+		{"deadline while connecting", func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: ctx.Err()}
+		}, "connection timed out"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c, err := New("http://solver.internal:8191", 1, 5*time.Second, permit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			c.transport.DialContext = test.dial
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			_, err = c.Fetch(ctx, privateSource, "", "")
+			assertFixedError(t, err, test.want, "solver.internal", "8191", "source.example", "reader-secret", "cookie-secret", "detail")
+			if active, _ := c.Stats(); active != 0 || c.Cooling() != 0 {
+				t.Fatalf("a request that never connected kept its slot: active=%d cooling=%d", active, c.Cooling())
+			}
+		})
+	}
+	t.Run("connection refused", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		address := listener.Addr().String()
+		listener.Close()
+		c, err := New("http://"+address, 1, 5*time.Second, permit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		_, err = c.Fetch(context.Background(), privateSource, "", "")
+		_, port, _ := net.SplitHostPort(address)
+		assertFixedError(t, err, "connection refused", port, "source.example", "reader-secret")
+		if active, _ := c.Stats(); active != 0 || c.Cooling() != 0 {
+			t.Fatalf("a refused request kept its slot: active=%d cooling=%d", active, c.Cooling())
+		}
+	})
+}
+
+// Once a request may have reached the service, its slot stays held after a
+// failure, as before; Cooling tells that hold apart from a running request.
+func TestFailuresAfterConnectingAreNamedAndHoldTheirSlot(t *testing.T) {
+	// A handler that never answers must still return before the test server
+	// closes, which waits for it.
+	silent := func(t *testing.T) http.HandlerFunc {
+		stop := make(chan struct{})
+		t.Cleanup(func() { close(stop) })
+		return func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-r.Context().Done():
+			case <-stop:
+			}
+		}
+	}
+	for _, test := range []struct {
+		name    string
+		handler func(*testing.T) http.HandlerFunc
+		want    string
+	}{
+		{"closed without a reply", func(*testing.T) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				conn, _, err := http.NewResponseController(w).Hijack()
+				if err == nil {
+					conn.Close()
+				}
+			}
+		}, "closed the connection without a complete reply"},
+		{"no reply in time", silent, "did not reply before the deadline"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c, server := testClient(t, test.handler(t))
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			_, err := c.Fetch(ctx, privateSource, "", "")
+			assertFixedError(t, err, test.want, strings.TrimPrefix(server.URL, "http://"), "source.example", "reader-secret")
+			if active, _ := c.Stats(); active != 1 || c.Cooling() != 1 {
+				t.Fatalf("slot after a failure past connecting: active=%d cooling=%d", active, c.Cooling())
+			}
+		})
+	}
+	c, _ := testClient(t, silent(t))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := c.Fetch(ctx, privateSource, "", ""); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reply timeout no longer matches context.DeadlineExceeded: %v", err)
 	}
 }

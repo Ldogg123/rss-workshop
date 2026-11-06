@@ -17,12 +17,29 @@ import (
 
 var ErrBusy = errors.New("all refresh slots are busy; try again shortly")
 
+// ErrSolverBusy refuses a FlareSolverr preview or page load while every solver
+// slot is taken, rather than letting it wait out its deadline for one. It
+// matches ErrBusy, so callers that handle a busy server need nothing new.
+var ErrSolverBusy error = solverBusy{}
+
+type solverBusy struct{}
+
+func (solverBusy) Error() string {
+	return "FlareSolverr is busy: every FlareSolverr slot is in use; try again shortly"
+}
+func (solverBusy) Is(target error) bool { return target == ErrBusy }
+
 type Renderer interface {
 	Render(context.Context, string, string, int) (fetch.Result, error)
 }
 type Solver interface {
 	fetch.Fetcher
+	// Stats reports the requests holding a slot, including slots still held
+	// after an interrupted request, and how many slots there are.
 	Stats() (int, int)
+	// Cooling reports how many of those slots are held after an interrupted
+	// request, with no request of this process still using them.
+	Cooling() int
 }
 type Scheduler struct {
 	Renderer            Renderer
@@ -35,6 +52,13 @@ type Scheduler struct {
 	slots   chan struct{}
 	mu      sync.Mutex
 	active  map[string]bool
+	// solving holds the admitted jobs that still have FlareSolverr requests
+	// to make: refreshes, previews and page loads in that mode, until their
+	// last page through the solver. The solver serves only a few requests at
+	// a time, and a job that waits for one does so inside its own deadline, so
+	// a burst of due feeds would time out and back off for nothing more than
+	// queueing. Admission instead keeps their number within the free slots.
+	solving map[string]bool
 	// held records feeds whose result could not be persisted. The usual backoff
 	// lives in the feeds row, so a failed write leaves nothing behind to slow
 	// the feed down: its schedule rolls back with the rest of the transaction
@@ -42,7 +66,11 @@ type Scheduler struct {
 	// keeps that backoff in memory, where a failing database cannot erase it.
 	// Retry lifts a hold early without forgetting its failures.
 	held map[string]hold
-	wg   sync.WaitGroup
+	// finished records when each refresh ended, until the next tick. A list
+	// read before then can still show the feed due, because its new schedule
+	// was saved after the read, and would start it again straight away.
+	finished map[string]time.Time
+	wg       sync.WaitGroup
 }
 
 type hold struct {
@@ -51,7 +79,7 @@ type hold struct {
 }
 
 func New(s *store.Store, f fetch.Fetcher, workers int, timeout time.Duration) *Scheduler {
-	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, held: map[string]hold{}}
+	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, solving: map[string]bool{}, held: map[string]hold{}, finished: map[string]time.Time{}}
 }
 func (s *Scheduler) Stats() (int, int) { return len(s.slots), cap(s.slots) }
 func (s *Scheduler) timeout(mode string) time.Duration {
@@ -60,21 +88,74 @@ func (s *Scheduler) timeout(mode string) time.Duration {
 	}
 	return s.Timeout
 }
-func (s *Scheduler) reserve(id string) bool {
+
+// usesSolver reports whether a job in this fetch mode takes a FlareSolverr
+// slot. Without a configured solver such a job fails at once, holding none.
+func (s *Scheduler) usesSolver(mode string) bool {
+	return mode == "flaresolverr" && s.FlareSolverr != nil
+}
+
+// reserve admits a job to one of the shared slots and, when it uses
+// FlareSolverr, to a solver slot that is free now. A refresh passes the time
+// its feed list was read, and is refused if the feed finished since then.
+func (s *Scheduler) reserve(id string, solver bool, listed time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active[id] {
-		return false
+	if s.active[id] || len(s.slots) == cap(s.slots) {
+		return ErrBusy
 	}
-	select {
-	case s.slots <- struct{}{}:
-		s.active[id] = true
-		return true
-	default:
-		return false
+	if done, ok := s.finished[id]; ok && !listed.IsZero() && !done.Before(listed) {
+		return ErrBusy
 	}
+	if solver && !s.solverFree() {
+		return ErrSolverBusy
+	}
+	s.slots <- struct{}{} // cannot block: only reserve sends, and it holds mu
+	s.active[id] = true
+	if solver {
+		s.solving[id] = true
+	}
+	return nil
 }
-func (s *Scheduler) release(id string) { s.mu.Lock(); delete(s.active, id); <-s.slots; s.mu.Unlock() }
+
+// release ends a job, with its FlareSolverr admission if it still holds one.
+func (s *Scheduler) release(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.active, id)
+	delete(s.solving, id)
+	<-s.slots
+}
+
+// finish releases a refresh, after its result was saved or given up.
+func (s *Scheduler) finish(id string) {
+	s.mu.Lock()
+	s.finished[id] = time.Now()
+	s.mu.Unlock()
+	s.release(id)
+}
+
+// doneWithSolver gives back a job's FlareSolverr admission once the job has
+// no more requests to make through the solver, as when a refresh fetches its
+// article pages as plain HTML. The slot it used then goes to the next
+// FlareSolverr job instead of idling until this one ends.
+func (s *Scheduler) doneWithSolver(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.solving, id)
+}
+
+// solverFree reports, with mu held, whether one more FlareSolverr job can
+// start without waiting for a slot. A job holds at most one at a time: a
+// refresh fetches its list page and then any article pages it renders there
+// one by one, and gives its admission back after its last such page. Slots
+// still held after an interrupted request are not free until they are let
+// go, so admitted jobs plus those can never exceed the capacity. Stats is
+// checked as well, so nothing using a slot is overlooked.
+func (s *Scheduler) solverFree() bool {
+	active, capacity := s.FlareSolverr.Stats()
+	return max(active, len(s.solving)+s.FlareSolverr.Cooling()) < capacity
+}
 
 // hold backs a feed off after its result could not be stored, and reports how
 // long until it is tried again. The delay doubles per consecutive failure from
@@ -143,15 +224,30 @@ func (s *Scheduler) forgetHolds(fs []model.Feed) {
 		}
 	}
 }
+
+// forgetFinished drops end times a list read at listed already reflects: a
+// refresh saves its result before it ends.
+func (s *Scheduler) forgetFinished(listed time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, done := range s.finished {
+		if done.Before(listed) {
+			delete(s.finished, id)
+		}
+	}
+}
 func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, error) {
-	id := store.ID()
-	if !s.reserve(id) {
-		return model.Preview{}, ErrBusy
+	id, solver := store.ID(), s.usesSolver(f.Recipe.Mode)
+	if err := s.reserve(id, solver, time.Time{}); err != nil {
+		return model.Preview{}, err
 	}
 	defer s.release(id)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(f.Recipe.Mode))
 	defer cancel()
 	_, p, e := s.extract(ctx, f, true)
+	if e != nil || !articlesUseSolver(f) {
+		s.doneWithSolver(id)
+	}
 	if e == nil {
 		// A preview fetches a sample rather than every article: it runs while an
 		// operator waits, and it must not become a way to fan out hundreds of
@@ -176,9 +272,9 @@ func (s *Scheduler) Snapshot(ctx context.Context, rawURL string, r model.Recipe)
 	if r.Mode != "static" && r.Mode != "browser" && r.Mode != "flaresolverr" {
 		return fetch.Result{}, errors.New("choose static, browser, or flaresolverr for the page preview")
 	}
-	id := store.ID()
-	if !s.reserve(id) {
-		return fetch.Result{}, ErrBusy
+	id, solver := store.ID(), s.usesSolver(r.Mode)
+	if err := s.reserve(id, solver, time.Time{}); err != nil {
+		return fetch.Result{}, err
 	}
 	defer s.release(id)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(r.Mode))
@@ -212,6 +308,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 func (s *Scheduler) Wait() { s.wg.Wait() }
 func (s *Scheduler) tick(ctx context.Context) {
+	listed := time.Now()
 	fs, e := s.Store.List(ctx)
 	if e != nil {
 		if ctx.Err() == nil {
@@ -222,6 +319,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 		return
 	}
+	s.dispatch(ctx, fs, listed)
+}
+
+// dispatch starts the due feeds in a list read at listed.
+func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.Time) {
 	// Oldest due first prevents a permanently busy queue starving later feeds.
 	sortFeeds(fs)
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
@@ -237,6 +339,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 	}
 	s.forgetHolds(fs)
+	s.forgetFinished(listed)
 	for _, f := range fs {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
 			continue
@@ -247,11 +350,14 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if !s.reserve(f.ID) {
+		// A feed that cannot start, because it is already running or its
+		// fetcher is busy, stays due: a later tick takes it, oldest first,
+		// without recording a failure or backing it off.
+		if s.reserve(f.ID, s.usesSolver(f.Recipe.Mode), listed) != nil {
 			continue
 		}
 		s.wg.Add(1)
-		go func(f model.Feed) { defer s.wg.Done(); defer s.release(f.ID); s.refresh(ctx, f) }(f)
+		go func(f model.Feed) { defer s.wg.Done(); defer s.finish(f.ID); s.refresh(ctx, f) }(f)
 	}
 }
 func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
@@ -267,6 +373,12 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	if e == nil {
 		f.Recipe = recipe
 		r, p, e = s.extract(ctx, f, false)
+	}
+	// Past its list page, a FlareSolverr refresh uses the solver only for
+	// article pages it renders there. Plain articles and the save leave the
+	// slot to the next FlareSolverr job.
+	if e != nil || !articlesUseSolver(f) {
+		s.doneWithSolver(f.ID)
 	}
 	items := p.Items
 	if e == nil && f.Recipe.Full != nil {
@@ -415,7 +527,7 @@ func (s *Scheduler) extract(ctx context.Context, f model.Feed, preview bool) (r 
 
 func (s *Scheduler) solve(ctx context.Context, rawURL string) (fetch.Result, error) {
 	if s.FlareSolverr == nil {
-		return fetch.Result{}, errors.New("FlareSolverr is unavailable; configure FLARESOLVERR_URL on the server")
+		return fetch.Result{}, errors.New("FlareSolverr is not configured on this server: set FLARESOLVERR_URL, in .env for Docker Compose or exported for a native run, then recreate the container with docker compose up -d or start the native server again; see docs/flaresolverr.md")
 	}
 	// The remote browser always returns a fresh document; HTTP validators from a
 	// previous static fetch cannot be reused for this request.
