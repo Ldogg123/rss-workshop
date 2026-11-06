@@ -34,6 +34,7 @@ func TestDateExtractionPrecedenceAndEstimates(t *testing.T) {
 		{name: "custom layout wins over month name", typ: "css", selector: "time", markup: `<time>5 November 2026 10:05</time>`, layout: "2 January 2006 04:15", want: "2026-11-05T05:10:00Z"},
 		{name: "month name datetime attribute is not machine-readable", typ: "css", selector: "time", markup: `<time datetime="5 November 2026">2 minutes ago</time>`, want: "2026-09-07T14:28:00Z", source: "2 minutes ago"},
 		{name: "US zone name", typ: "css", selector: "time", markup: `<time>Thu, 05 Nov 2026 10:00:00 EST</time>`, want: "2026-11-05T15:00:00Z"},
+		{name: "GMT with a zero offset", typ: "css", selector: "time", markup: `<time datetime="Thu, 05 Nov 2026 10:00:00 GMT+0">today</time>`, want: "2026-11-05T10:00:00Z"},
 		{name: "unknown zone name", typ: "css", selector: "time", markup: `<time>Thu, 05 Nov 2026 10:00:00 XYZ</time>`, warning: true},
 		{name: "unknown date", typ: "css", selector: "time", markup: `<time>recently-ish</time>`, warning: true},
 		{name: "unsupported future date", typ: "css", selector: "time", markup: `<time>in 2 minutes</time>`, warning: true},

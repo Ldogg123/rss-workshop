@@ -203,6 +203,12 @@ func TestParseAbsoluteDateZoneNames(t *testing.T) {
 		// Go reads the hours of GMT+3 but would leave the clock as UTC.
 		{"GMT plus hours", "Thu, 05 Nov 2026 10:00:00 GMT+3", "", "", "2026-11-05T07:00:00Z"},
 		{"GMT minus hours", "Thu, 05 Nov 2026 10:00:00 GMT-5", "", "", "2026-11-05T15:00:00Z"},
+		{"GMT plus two-digit hours", "Thu, 05 Nov 2026 10:00:00 GMT+11", "", "", "2026-11-04T23:00:00Z"},
+		{"GMT plus zero", "Thu, 05 Nov 2026 10:00:00 GMT+0", "", "", "2026-11-05T10:00:00Z"},
+		{"GMT minus zero", "Thu, 05 Nov 2026 10:00:00 GMT-0", "", "", "2026-11-05T10:00:00Z"},
+		{"GMT plus two zeros", "Thu, 05 Nov 2026 10:00:00 GMT+00", "", "", "2026-11-05T10:00:00Z"},
+		{"GMT plus four zeros", "Thu, 05 Nov 2026 10:00:00 GMT+0000", "", "", "2026-11-05T10:00:00Z"},
+		{"GMT plus zero in another zone", "Thu, 05 Nov 2026 10:00:00 GMT+0", "", "America/New_York", "2026-11-05T10:00:00Z"},
 		// The recipe's zone gives a name its meaning first.
 		{"China Standard Time", "Thu, 05 Nov 2026 10:00:00 CST", "", "Asia/Shanghai", "2026-11-05T02:00:00Z"},
 		{"Philippine Standard Time", "Thu, 05 Nov 2026 10:00:00 PST", "", "Asia/Manila", "2026-11-05T02:00:00Z"},
@@ -244,6 +250,10 @@ func TestParseAbsoluteDateZoneNames(t *testing.T) {
 		{"Thu, 05 Nov 2026 10:00:00 CET", "", ""},
 		{"Thu, 05 Nov 2026 10:00:00 IST", "", ""},
 		{"Thu, 05 Nov 2026 10:00:00 +03", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 +00", "", ""},
+		// Go would read the four digits as five hours, not five minutes.
+		{"Thu, 05 Nov 2026 10:00:00 GMT+0005", "", ""},
+		{"Thu, 05 Nov 2026 10:00:00 GMT+24", "", ""},
 		{"Thu, 05 Nov 2026 10:00:00 CET", "", "America/New_York"},
 		{"Thu, 05 Nov 2026 10:00 AEST", "", "Europe/Paris"},
 		{"05/11/2026 10:00 XYZ", "02/01/2006 15:04 MST", ""},
@@ -271,6 +281,9 @@ func TestParseMonthNameDate(t *testing.T) {
 		{"Nov. 5 2026", "2026-11-05T05:00:00Z"},
 		{"NOVEMBER 5TH, 2026", "2026-11-05T05:00:00Z"},
 		{"1st May 2026", "2026-05-01T04:00:00Z"},
+		{"May. 5, 2026", "2026-05-05T04:00:00Z"},
+		{"5 may. 2026", "2026-05-05T04:00:00Z"},
+		{"Jun. 5, 2026", "2026-06-05T04:00:00Z"},
 		{"Sept. 22nd, 2026", "2026-09-22T04:00:00Z"},
 		{"sept 3 2026", "2026-09-03T04:00:00Z"},
 		{"29 February 2024", "2024-02-29T05:00:00Z"},
@@ -287,6 +300,9 @@ func TestParseMonthNameDate(t *testing.T) {
 		{"Nov 5, 2026 10:00 AM GMT", "2026-11-05T10:00:00Z"},
 		{"5 Nov 2026 10:00 UTC", "2026-11-05T10:00:00Z"},
 		{"5 Nov 2026 10:00 UT", "2026-11-05T10:00:00Z"},
+		{"5 Nov 2026 10:00 GMT+3", "2026-11-05T07:00:00Z"},
+		{"Nov 5, 2026 10:00 am GMT-5", "2026-11-05T15:00:00Z"},
+		{"5 Nov 2026 10:00 GMT+0", "2026-11-05T10:00:00Z"},
 		{"5 Nov 2026 10:00 +0100", "2026-11-05T09:00:00Z"},
 		{"5 Nov 2026 10:00:30 -05:30", "2026-11-05T15:30:30Z"},
 		// Examples in docs/dates.md.
@@ -317,6 +333,7 @@ func TestParseMonthNameDate(t *testing.T) {
 		"Updated Nov 5, 2026", "Posted on 5 November 2026", "Nov 5, 2026.", "Nov 5, 2026 by Staff", "5 Novembre 2026",
 		"5 Nov 2026 13:00 pm", "5 Nov 2026 0:30 am", "5 Nov 2026 24:00", "5 Nov 2026 10:60", "5 Nov 2026 10:00:60",
 		"5 Nov 2026 10", "5 Nov 2026 3 pm", "5 Nov 2026 EST", "5 Nov 2026 10:00 XYZ", "5 Nov 2026 10:00 CET", "5 Nov 2026 10:00 +2500",
+		"5 Nov 2026 10:00 GMT+24", "5 Nov 2026 10:00 GMT+123", "5 Nov 2026 10:00 gmt+3", "5 May.. 2026", "5 Mayy 2026",
 		"31 Dec 9999 23:00 EST", "ſept 5, 2026", strings.Repeat(" ", 256) + "5 Nov 2026",
 	} {
 		if got := parseDateText(raw, "", zone); !got.IsZero() {

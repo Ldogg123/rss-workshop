@@ -126,9 +126,11 @@ func resolveZoneName(layout, raw string, t time.Time, loc *time.Location) (time.
 	if standard, ok := rfc5322Zones[name]; ok {
 		return wall.Add(-time.Duration(standard) * time.Second), true
 	}
-	// Go reads the offset of a name such as GMT+3 but leaves the wall clock
-	// as UTC. Any other name it does not know gets an invented zero offset.
-	if offset != 0 {
+	// Go reads the hours of a name such as GMT+3 or GMT+0 but leaves the wall
+	// clock as UTC. It also reads GMT+0005 as five hours, so more than two
+	// digits are accepted only as zero. Any other name it does not know gets
+	// an invented zero offset.
+	if strings.HasPrefix(name, "GMT") && (len(name) <= len("GMT+00") || offset == 0) {
 		return wall.Add(-time.Duration(offset) * time.Second), true
 	}
 	return time.Time{}, false
@@ -160,7 +162,7 @@ func parseDateText(raw, layout string, loc *time.Location) time.Time {
 
 const (
 	weekdayNames = `(?:mon|tue|wed|thu|fri|sat|sun)\.?|monday|tuesday|wednesday|thursday|friday|saturday|sunday`
-	monthNames   = `january|february|march|april|may|june|july|august|september|october|november|december|(?:jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?`
+	monthNames   = `january|february|march|april|may|june|july|august|september|october|november|december|(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)\.?`
 	dayOfMonth   = `(\d{1,2})(?:st|nd|rd|th)?`
 )
 
@@ -170,7 +172,7 @@ const (
 var monthNameDatePattern = regexp.MustCompile(`(?i)^(?:(` + weekdayNames + `),? )?` +
 	`(?:` + dayOfMonth + ` (` + monthNames + `) (\d{4})|(` + monthNames + `) ` + dayOfMonth + `,? (\d{4}))` +
 	`(?:(?:,? at|,)? (\d{1,2}):(\d{2})(?::(\d{2}))?(?: ?([ap])\.?m\.?)?` +
-	`(?: ([+-]\d{2}:?\d{2}|(?-i:[A-Z][A-Za-z]{1,4})))?)?$`)
+	`(?: ([+-]\d{2}:?\d{2}|(?-i:GMT[+-]\d{1,2}|[A-Z][A-Za-z]{1,4})))?)?$`)
 
 var (
 	monthNumbers = map[string]time.Month{"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}

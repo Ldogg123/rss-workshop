@@ -66,8 +66,8 @@ Use **Date settings → Time zone** for the source site’s IANA time zone, such
 A numeric offset such as `-0500` or `+01:00` is used as written, and `UTC` is always UTC. A zone name such as `EST` is read in this order:
 
 1. **The recipe’s time zone.** If that zone uses the name, its meaning there wins: `CST` is China Standard Time (+08:00) under `Asia/Shanghai`, and `PST` is Philippine Standard Time (+08:00) under `Asia/Manila`. A name written out of season, such as `EDT` in December under `America/New_York`, keeps the offset the zone gives it.
-2. **RFC 5322.** Otherwise `UT` and `GMT` are UTC, `EST` and `EDT` are −05:00 and −04:00, `CST` and `CDT` −06:00 and −05:00, `MST` and `MDT` −07:00 and −06:00, and `PST` and `PDT` −08:00 and −07:00. `GMT+3` and `GMT-5` are read as those offsets.
-3. **Anything else is not guessed.** Abbreviations are not unique: `IST` is used in India, Ireland and Israel. A name such as `CET` or `IST` with a blank time zone therefore makes the date unrecognized, and the story falls back to first-seen time with a warning rather than a time that may be hours wrong. Set the site’s time zone to have it read: `CET` under `Europe/Paris`, or `IST` under `Asia/Kolkata`.
+2. **RFC 5322.** Otherwise `UT` and `GMT` are UTC, `EST` and `EDT` are −05:00 and −04:00, `CST` and `CDT` −06:00 and −05:00, `MST` and `MDT` −07:00 and −06:00, and `PST` and `PDT` −08:00 and −07:00. `GMT+3`, `GMT-5` and `GMT+0` are read as those offsets.
+3. **Anything else is not guessed.** Abbreviations are not unique: `IST` is used in India, Ireland and Israel. A name such as `CET` or `IST`, or an hour such as `+03` written in place of a name, therefore makes the date unrecognized when the recipe’s time zone does not use it, and the story falls back to first-seen time with a warning rather than a time that may be hours wrong. Set the site’s time zone to have it read: `CET` under `Europe/Paris`, or `IST` under `Asia/Kolkata`.
 
 The same rules apply to a Go date layout that contains the zone name element `MST`.
 
