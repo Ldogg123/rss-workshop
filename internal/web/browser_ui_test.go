@@ -114,7 +114,11 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testEstimatedDatePreview(t, tab)
 		testFlareSolverrSelector(t, tab, f, solver)
 	}
-	if e = chromedp.Run(tab, chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.WaitVisible(".feed-card"), chromedp.Click(`//button[text()='Edit']`, chromedp.BySearch), chromedp.WaitVisible("#editor")); e != nil {
+	// The dashboard redraws its cards after the save and on every poll, so a
+	// node found by one command can be gone by the next. Find and click the
+	// button in one evaluation, as the other card tests do.
+	if e = chromedp.Run(tab, chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.WaitVisible(".feed-card"),
+		chromedp.Evaluate(`[...document.querySelectorAll('.feed-card button')].find(b=>b.textContent==='Edit').click()`, nil), chromedp.WaitVisible("#editor")); e != nil {
 		t.Fatal(e)
 	}
 	var title string
