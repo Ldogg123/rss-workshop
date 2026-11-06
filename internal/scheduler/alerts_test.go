@@ -105,6 +105,16 @@ func TestFailingAndRecoveredFollowTheStoredFailureCount(t *testing.T) {
 	if len(events) != 1 || events[0] != want || stored.Failures != 3 {
 		t.Fatalf("at the threshold: %+v; want %+v", events, want)
 	}
+	// The usual recovery, from exactly the threshold.
+	source.err = nil
+	if events := run(1); len(events) != 1 || events[0] != (notify.Event{Kind: notify.Recovered, Feed: "Evening news", FeedID: f.ID, Failures: 3}) {
+		t.Fatalf("recovery at the threshold: %+v", events)
+	}
+
+	source.err = errors.New("source returned HTTP 503")
+	if events := run(3); len(events) != 1 || events[0].Kind != notify.Failing {
+		t.Fatalf("a streak after a recovery: %v", kinds(events))
+	}
 	if events := run(3); len(events) != 0 {
 		t.Fatalf("past the threshold: %v", kinds(events))
 	}

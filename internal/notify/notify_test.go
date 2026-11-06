@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -465,6 +466,97 @@ func TestResponseIsReadOnlyBriefly(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > attemptTimeout/2 {
 		t.Fatalf("delivery waited %v for the rest of the answer", elapsed)
 	}
+}
+
+// stalledBody is an answer that stops after its headers.
+type stalledBody struct{ ctx context.Context }
+
+func (b stalledBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (stalledBody) Close() error { return nil }
+
+// There is one worker, so a service that accepts a request and then stalls,
+// before its answer or in the middle of it, would hold every later message
+// until shutdown while the queue filled and dropped alerts. Each attempt ends
+// after attemptTimeout, with the client New builds.
+func TestEachAttemptIsBoundedInTime(t *testing.T) {
+	logs := captureLog(t)
+	synctest.Test(t, func(t *testing.T) {
+		silent := &endpoint{respond: func(_ int, r *http.Request) (*http.Response, error) {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		}}
+		n := fake(t, Ntfy, silent)
+		defer n.Close()
+		n.Start()
+		start := time.Now()
+		n.Notify(failing("Feed", 3))
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		seen := silent.seen()
+		want := []time.Duration{Window, Window + attemptTimeout + 2*time.Second, Window + 2*attemptTimeout + 6*time.Second}
+		if len(seen) != len(want) {
+			t.Fatalf("made %d attempts; want %d, each ending after %v", len(seen), len(want), attemptTimeout)
+		}
+		for i, offset := range want {
+			if got := seen[i].at.Sub(start); got != offset {
+				t.Errorf("attempt %d at %v; want %v", i+1, got, offset)
+			}
+		}
+		if _, failed, _ := n.Stats(); failed != 1 {
+			t.Errorf("failed=%d; want the message counted as failed", failed)
+		}
+		n.Close()
+
+		stalled := &endpoint{respond: func(_ int, r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: stalledBody{r.Context()}, Request: r}, nil
+		}}
+		n = fake(t, Ntfy, stalled)
+		defer n.Close()
+		start = time.Now()
+		n.Test(context.Background())
+		if elapsed := time.Since(start); elapsed != attemptTimeout {
+			t.Errorf("an answer that stalled after its headers held delivery for %v; want %v", elapsed, attemptTimeout)
+		}
+	})
+	if !strings.Contains(logs.String(), `msg="notification failed" kind=ntfy events=1 attempts=3 reason=timeout`) {
+		t.Errorf("no timeout line:\n%s", logs)
+	}
+}
+
+// ntfy turns a message past its default limit of 4,096 bytes into an
+// attachment, or refuses it. Twenty lines with the longest titles and errors
+// Notify keeps would pass that several times over, so an ntfy message lists
+// the lines that fit and counts the rest.
+func TestNtfyMessageStaysWithinItsSizeLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := &endpoint{}
+		n := fake(t, Ntfy, e)
+		defer n.Close()
+		n.Start()
+		for i := range MaxLines {
+			// Longer than Notify keeps, in characters of two and three bytes.
+			n.Notify(Event{Kind: Failing, Feed: strings.Repeat(string(rune('A'+i))+"é", maxTitle), FeedID: "id",
+				Failures: 3, Error: strings.Repeat("界", 2*maxError)})
+		}
+		time.Sleep(Window)
+		synctest.Wait()
+		seen := e.seen()
+		if len(seen) != 1 {
+			t.Fatalf("got %d messages", len(seen))
+		}
+		body := string(seen[0].body)
+		lines := strings.Count(body, "Failing: ")
+		if len(body) > maxNtfyBody || lines == 0 || lines == MaxLines {
+			t.Fatalf("a %d-byte message with %d of %d lines; want at most %d bytes", len(body), lines, MaxLines, maxNtfyBody)
+		}
+		if !strings.Contains(body, "...and "+strconv.Itoa(MaxLines-lines)+" more.") || !strings.HasSuffix(body, "Library: "+dashboard) {
+			t.Errorf("the message does not count what it leaves out:\n%s", body)
+		}
+	})
 }
 
 // Shutdown sends what is pending at once, and gives up after FlushGrace

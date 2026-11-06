@@ -173,7 +173,7 @@ Each delivery is logged by format and outcome, never by address:
 - `reason=tls` — the certificate is not trusted or does not match the host name.
 - `reason=closed` or `reason=connection` — the connection failed before a complete answer.
 - `reason=canceled` — the app stopped before the message could be sent.
-- `notifications dropped events=40 reason="queue full"` — more than 256 events waited while the service was slow or down; the next message counts them among those it does not list.
+- `notifications dropped kind=json events=40 reason="queue full"` — more than 256 events waited while the service was slow or down; the next message counts them among those it does not list.
 
 A failed **Send test notification** gives the same cause on the dashboard, in words.
 
