@@ -44,7 +44,7 @@ RSS Workshop starts a FlareSolverr job only when a slot is free, and each job us
 
 When more FlareSolverr feeds are due than there are slots, as after a restart, an outage or an import, the rest stay due and start oldest first as slots free up. Waiting for a slot is not a failure: it records no error and does not back a feed off. Feeds in other fetch modes are not held back.
 
-**Preview items** and **Choose elements visually** do not wait either. When every slot is in use, they report `FlareSolverr is busy` straight away; try again once the running refresh has finished. Raising `FLARESOLVERR_SLOTS` helps only if the FlareSolverr machine can run that many browsers at once.
+**Preview items** and **Choose elements visually** do not wait either. When every slot is in use, they report `FlareSolverr is busy` straight away. They have no claim on the next slot to free up: while FlareSolverr feeds are due, the scheduler gives each freed slot to the oldest of them within about a second. With nothing queued, a preview can run as soon as the running refresh has finished; after a restart, an outage or an import, it may stay busy until the due FlareSolverr feeds have refreshed. Raising `FLARESOLVERR_SLOTS` helps only if the FlareSolverr machine can run that many browsers at once.
 
 FlareSolverr cannot cancel a request. When one is interrupted after reaching the service, for example by closing the visual workspace during a load, its slot stays in use until the remote browser's own deadline has passed. A request that never connected frees its slot at once. The dashboard and the `rss_workshop_flaresolverr_active` metric count both kinds of busy slot.
 
@@ -72,7 +72,7 @@ To test the service from the app, open **Choose elements visually** with **Page 
 | `FlareSolverr address replied, but not as FlareSolverr` | Another service or a proxy answers at that address; the HTTP status in parentheses hints at which. `401` or `403` suggests an authenticating proxy, and `502` or `503` a proxy whose upstream is down. |
 | `FlareSolverr closed the connection without a complete reply` | FlareSolverr, or a proxy in front of it, dropped the request, typically while crashing or restarting. Check its logs. |
 | `FlareSolverr accepted the request but did not reply before the deadline` | The request reached FlareSolverr, which did not answer in time: at most `FLARESOLVERR_TIMEOUT` and a short grace period, less for an article page late in a refresh. It may be overloaded or busy with another client's requests. |
-| `FlareSolverr is busy` | Every slot is in use by a refresh or another preview. See [capacity](#capacity). |
+| `FlareSolverr is busy` | Every slot is in use by a refresh or another preview. Due FlareSolverr feeds take freed slots first, so after an import this can last until they have refreshed. See [capacity](#capacity). |
 | `timed out waiting for a free FlareSolverr slot` | A slot stayed in use for the whole deadline, usually after an interrupted request. `no time was left to send the FlareSolverr request` is the same deadline running out just as a slot freed. |
 
 Messages that FlareSolverr reports itself, such as an unsolved CAPTCHA, a timeout or a failed browser request, need investigation on the FlareSolverr side; increasing the timeout helps only when the challenge can be solved. Cancelling a preview stops the app's request, but the remote browser may continue until its own timeout. The app does not offer interactive CAPTCHA completion or account login sessions.
