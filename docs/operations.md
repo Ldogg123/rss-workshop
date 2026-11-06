@@ -10,7 +10,7 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 docker compose logs --tail 30 rss-workshop
 ```
 
-The dashboard reports saved items, refresh status, due feeds, and fetch capacity. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. A card marked **Waiting to retry** is [held after a failed save](#waiting-to-retry-after-a-failed-save).
+The dashboard reports saved items, refresh status, due feeds, and fetch capacity. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. A FlareSolverr failure on a card, in a preview or in Diagnostics names the step that failed, such as a DNS lookup, a refused connection or an address that is not the FlareSolverr API; [FlareSolverr troubleshooting](flaresolverr.md#troubleshooting) says what to check for each. A card marked **Waiting to retry** is [held after a failed save](#waiting-to-retry-after-a-failed-save).
 
 ### Log detail
 
