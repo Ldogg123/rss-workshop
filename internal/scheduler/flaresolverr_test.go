@@ -19,6 +19,7 @@ func (f *solverFetcher) Fetch(ctx context.Context, u, etag, modified string) (fe
 	return f.fetch(ctx, u, etag, modified)
 }
 func (*solverFetcher) Stats() (int, int) { return 0, 1 }
+func (*solverFetcher) Cooling() int      { return 0 }
 
 func solverFeed() model.Feed {
 	return model.Feed{Title: "Protected news", URL: "https://example.com/news", Interval: 60, Enabled: true,

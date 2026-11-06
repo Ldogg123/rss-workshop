@@ -16,6 +16,7 @@ import (
 type fixtureSolver struct{ *fixtureFetcher }
 
 func (*fixtureSolver) Stats() (int, int) { return 0, 1 }
+func (*fixtureSolver) Cooling() int      { return 0 }
 
 func TestFlareSolverrPreviewSnapshotAndPortableRecipe(t *testing.T) {
 	h := newPortabilityHarness(t)

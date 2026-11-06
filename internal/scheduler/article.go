@@ -18,7 +18,8 @@ const (
 	// body and are picked up by the next refresh, so a backlog drains over a
 	// few cycles instead of hammering the source in one burst.
 	MaxArticlesPerRun = 10
-	// articleWorkers bounds concurrent requests to a single source.
+	// articleWorkers bounds concurrent requests to a single source. Through
+	// FlareSolverr a feed fetches its articles one at a time instead.
 	articleWorkers = 4
 	// articleRecency keeps re-fetching a recently discovered item, because a
 	// source may publish its images or finish its article body minutes after
@@ -70,11 +71,18 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 		return nil
 	}
 
+	workers := articleWorkers
+	if f.Recipe.Full.Browser && f.Recipe.Mode == "flaresolverr" {
+		// A FlareSolverr job is admitted for one solver slot (see solverFree).
+		// Fetching its articles in parallel would take the slots of jobs
+		// admitted after it, which then wait inside their own deadlines.
+		workers = 1
+	}
 	var mu sync.Mutex
 	warnings := []string{}
 	queue := make(chan int)
 	var wg sync.WaitGroup
-	for w := 0; w < articleWorkers; w++ {
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

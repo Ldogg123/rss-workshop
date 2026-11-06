@@ -14,7 +14,7 @@ FLARESOLVERR_SLOTS=1
 
 `FLARESOLVERR_URL` accepts the HTTP(S) base URL or the `/v1` endpoint. Blank disables this integration. Use your existing service's hostname or LAN address; `localhost` inside the RSS Workshop container refers to that container. The example hostname assumes both services share a Docker network.
 
-`FLARESOLVERR_TIMEOUT` permits 5 seconds through 2 minutes and defaults to 60 seconds. It is independent of `FETCH_TIMEOUT`; jobs have an additional 10 seconds for transport and cleanup. `FLARESOLVERR_SLOTS` permits 1–4 concurrent requests and defaults to 1. These requests also occupy the app's existing shared refresh/preview slots. A low concurrency limit is useful because the browser work runs on the FlareSolverr machine.
+`FLARESOLVERR_TIMEOUT` permits 5 seconds through 2 minutes and defaults to 60 seconds. It is independent of `FETCH_TIMEOUT`; jobs have an additional 10 seconds for transport and cleanup. `FLARESOLVERR_SLOTS` permits 1–4 concurrent requests and defaults to 1. These requests also occupy the app's existing shared refresh/preview slots. A low concurrency limit is useful because the browser work runs on the FlareSolverr machine; see [capacity](#capacity).
 
 Recreate the app container after changing its environment, keeping the already-local image for this configuration change:
 
@@ -35,6 +35,16 @@ The visual workspace also offers **Page version → FlareSolverr (Cloudflare)**.
 This is an explicit per-feed choice. **Auto** continues to try static HTML, then local Chromium only when a successful static fetch yields no items; HTTP errors and access blocks do not invoke FlareSolverr. Local Chromium's wait selector and settling delay do not apply to FlareSolverr and are hidden in this mode.
 
 The integration makes stateless `request.get` calls. It does not retain sessions or reuse returned cookies in later requests. Returned HTML uses the existing extraction, sanitization, preview, retention, and RSS/Atom output paths. Recipe export/import preserves the fetch mode; the server endpoint stays in deployment configuration and is not exported with recipes.
+
+## Capacity
+
+Each FlareSolverr job holds one slot at a time, and RSS Workshop starts only as many as there are free slots. A feed that renders its [article pages](atom.md#full-article-content) through FlareSolverr fetches them one by one within the same job.
+
+When more FlareSolverr feeds are due than there are slots, as after a restart, an outage or an import, the rest stay due and start oldest first as slots free up. Waiting for a slot is not a failure: it records no error and does not back a feed off. Feeds in other fetch modes are not held back.
+
+**Preview items** and **Choose elements visually** do not wait either. When every slot is in use, they report `FlareSolverr is busy` straight away; try again once the running refresh has finished. Raising `FLARESOLVERR_SLOTS` helps only if the FlareSolverr machine can run that many browsers at once.
+
+FlareSolverr cannot cancel a request. When one is interrupted after reaching the service, for example by closing the visual workspace during a load, its slot stays in use until the remote browser's own deadline has passed. A request that never connected frees its slot at once. The dashboard and the `rss_workshop_flaresolverr_active` metric count both kinds of busy slot.
 
 ## Network boundary
 
@@ -59,6 +69,7 @@ To test the service from the app, open **Choose elements visually** with **Page 
 | `FlareSolverr address replied, but not as FlareSolverr` | Another service or a proxy answers at that address; the HTTP status in parentheses hints at which. `401` or `403` suggests an authenticating proxy, and `502` or `503` a proxy whose upstream is down. |
 | `FlareSolverr closed the connection without a complete reply` | FlareSolverr, or a proxy in front of it, dropped the request, typically while crashing or restarting. Check its logs. |
 | `FlareSolverr accepted the request but did not reply before the deadline` | The request reached FlareSolverr, which did not answer in time: at most `FLARESOLVERR_TIMEOUT` and a short grace period, less for an article page late in a refresh. It may be overloaded or busy with another client's requests. |
+| `FlareSolverr is busy` | Every slot is in use by a refresh or another preview. See [capacity](#capacity). |
 | `timed out waiting for a free FlareSolverr slot` | A slot stayed in use for the whole deadline, usually after an interrupted request. `no time was left to send the FlareSolverr request` is the same deadline running out just as a slot freed. |
 
 Messages that FlareSolverr reports itself, such as an unsolved CAPTCHA, a timeout or a failed browser request, need investigation on the FlareSolverr side; increasing the timeout helps only when the challenge can be solved. Cancelling a preview stops the app's request, but the remote browser may continue until its own timeout. The app does not offer interactive CAPTCHA completion or account login sessions.
