@@ -4,7 +4,7 @@ RSS Workshop's original code is licensed under [MIT](../LICENSE), with copyright
 
 ## Go executable and source repository
 
-Runtime Go modules have BSD, MIT, or Apache-2.0 top-level licenses; `github.com/golang/groupcache/lru` uses Apache-2.0. The [dependency table](dependencies.md) distinguishes runtime modules from tools and the wider module graph. Recheck the compiled dependency graph and compare upstream notices when changing dependencies or build targets.
+Runtime Go modules have BSD, MIT, or Apache-2.0 top-level licenses; `github.com/golang/groupcache/lru` uses Apache-2.0. The [dependency table](dependencies.md) distinguishes runtime modules from tools and the wider module graph. `scripts/check-dependencies.py`, run by `make release-test` and so by `make check` and CI, fails when the table or `docs/licenses/`, including the notice names in this guide, falls out of step with the modules `./cmd/server` links and the versions the module graph selects, or when a linked module's copied notices differ from upstream; see [checking the table](dependencies.md#checking-the-table). It does not judge license terms: when changing dependencies or build targets, still read any new or changed license, reassess the generated-header notices below, and keep the notices from outside the Go module graph.
 
 Preserve `docs/licenses/` in source and binary releases. Both application images include it at `/licenses`. Keep the Go license, modernc's third-party notices, and SQLite's separate notices. `Go-time-zone-data-README` records the embedded IANA time-zone database's public-domain provenance.
 

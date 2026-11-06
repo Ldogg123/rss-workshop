@@ -6,7 +6,7 @@ Official package references: [goquery](https://github.com/PuerkitoBio/goquery), 
 
 Upstream notices are preserved under `docs/licenses/` and included in containers at `/licenses`. Original application code uses MIT; components retain their own terms, including modernc's additional notices and generated-header exceptions. See [licensing and redistribution](licensing.md).
 
-The table distinguishes runtime modules from tools and the wider module graph. Runtime status reflects `go list -deps ./cmd/server` on Linux/amd64 and Linux/arm64. Dependency test fixtures and source-only assets are not included in application images. Refresh the table and notices when changing targets or dependencies.
+The table distinguishes runtime modules from tools and the wider module graph. A row marked Yes is a module that `go list -deps ./cmd/server` reports for Linux/amd64 or Linux/arm64 with CGo disabled, as every release is built, and each such module needs one. Rows marked No are optional: they keep notices for modules in the graph that a runtime module requires but the supported builds do not link, such as modernc's C-to-Go toolchain and libraries used only on other platforms. Modules the graph holds only for other modules' tests, such as testify and its dependencies, need no row. Dependency test fixtures and source-only assets are not included in application images.
 
 | Module | Pinned version | Copied license notice | Runtime |
 | --- | --- | --- | --- |
@@ -57,3 +57,17 @@ The table distinguishes runtime modules from tools and the wider module graph. R
 | github.com/gobwas/ws | v1.5.0 | [LICENSE](licenses/github.com_gobwas_ws@v1.5.0_LICENSE) | Yes |
 | github.com/gobwas/pool | v0.2.1 | [LICENSE](licenses/github.com_gobwas_pool@v0.2.1_LICENSE) | No |
 | github.com/gobwas/httphead | v0.1.0 | [LICENSE](licenses/github.com_gobwas_httphead@v0.1.0_LICENSE) | Yes |
+
+## Checking the table
+
+`scripts/check-dependencies.py` compares this table and `docs/licenses/` with the Go module graph. `make release-test` runs it, so `make check`, CI's Go jobs (including pushes to `main`) and the native archive release run it too. It fails when:
+
+- a module either architecture links has no row, or its row says No; or a row says Yes for a module neither architecture links;
+- a row names a module that has left the graph, or pins a version other than the one `go list -m all` selects;
+- a row links no notice, or links one that is missing or not named `<module path with / as _>@<version>_<upstream file>` for the pinned version;
+- a module notice in `docs/licenses/` is neither linked from the table nor named in [licensing](licensing.md), by file name as libc's generated-header notices are or by a link or path into `licenses/`, or names a module or version the table does not pin; or the licensing guide or `docs/licenses/README.md` names or links to a notice that does not exist;
+- for a linked module, a copied notice differs from the upstream file in the module cache, upstream no longer has that file, or a file at the module's root whose name starts with `LICENSE`, `LICENCE`, `COPYING` or `NOTICE`, in any case and other than Go source, has no copy.
+
+Only linked modules are compared byte for byte, since the source of the others is often not downloaded, and a linked module missing from the cache is reported and skipped rather than failed. Go runs with `-mod=readonly` and `GOWORK=off`, so the check never edits `go.mod` or `go.sum` and ignores a local workspace. It uses Make's `GO`, as in `make release-test GO=/path/to/go`.
+
+After changing dependencies or build targets, update the rows the check names, copy new notices from the module's directory, which `go list -m -f '{{.Dir}}' MODULE` prints once the module is downloaded, and delete notices for versions no longer pinned, then rerun `make release-test`. CI skips changes limited to Markdown guides directly under `docs/`, so run it locally after editing only this table. The check does not judge license terms, nor the generated-header notices, which are compiled rather than copied; review those as [licensing](licensing.md) describes.
