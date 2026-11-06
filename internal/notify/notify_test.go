@@ -618,33 +618,60 @@ func TestEachAttemptIsBoundedInTime(t *testing.T) {
 // ntfy turns a message past its default limit of 4,096 bytes into an
 // attachment, or refuses it. Twenty lines with the longest titles and errors
 // Notify keeps would pass that several times over, so an ntfy message lists
-// the lines that fit and counts the rest.
+// the lines that fit and counts the rest, within the 4,000 bytes the
+// operations guide promises. That holds with the longest public address a
+// host name allows, whose link ends every message; an address longer than
+// any host name is left out rather than crowding out the events.
 func TestNtfyMessageStaysWithinItsSizeLimit(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		e := &endpoint{}
-		n := fake(t, Ntfy, e)
-		defer n.Close()
-		n.Start()
-		for i := range MaxLines {
-			// Longer than Notify keeps, in characters of two and three bytes.
-			n.Notify(Event{Kind: Failing, Feed: strings.Repeat(string(rune('A'+i))+"é", maxTitle), FeedID: "id",
-				Failures: 3, Error: strings.Repeat("界", 2*maxError)})
-		}
-		time.Sleep(Window)
-		synctest.Wait()
-		seen := e.seen()
-		if len(seen) != 1 {
-			t.Fatalf("got %d messages", len(seen))
-		}
-		body := string(seen[0].body)
-		lines := strings.Count(body, "Failing: ")
-		if len(body) > maxNtfyBody || lines == 0 || lines == MaxLines {
-			t.Fatalf("a %d-byte message with %d of %d lines; want at most %d bytes", len(body), lines, MaxLines, maxNtfyBody)
-		}
-		if !strings.Contains(body, "...and "+strconv.Itoa(MaxLines-lines)+" more.") || !strings.HasSuffix(body, "Library: "+dashboard) {
-			t.Errorf("the message does not count what it leaves out:\n%s", body)
-		}
-	})
+	// 253 characters, the most a DNS name may have.
+	host := strings.Repeat(strings.Repeat("h", 62)+".", 4) + "net"
+	for _, tc := range []struct {
+		name, dashboard, link string
+	}{
+		{"short address", dashboard, dashboard},
+		{"longest host name", "https://" + host + ":65535", "https://" + host + ":65535"},
+		{"longer than a host name", "https://" + strings.Repeat("h", 5000) + ".net", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				e := &endpoint{}
+				n, err := New("https://notify.example/topic", Ntfy, "", tc.dashboard)
+				if err != nil {
+					t.Fatal(err)
+				}
+				n.client.Transport = e
+				defer n.Close()
+				// More than the queue holds, so the count of what is left out
+				// includes drops and runs to four digits.
+				for i := range QueueSize + 1000 {
+					// Longer than Notify keeps, in characters of two and three bytes.
+					n.Notify(Event{Kind: Failing, Feed: strings.Repeat(string(rune('A'+i%26))+"é", maxTitle), FeedID: "id",
+						Failures: 3, Error: strings.Repeat("界", 2*maxError)})
+				}
+				n.Start()
+				time.Sleep(Window)
+				synctest.Wait()
+				seen := e.seen()
+				if len(seen) != 1 {
+					t.Fatalf("got %d messages", len(seen))
+				}
+				body := string(seen[0].body)
+				lines := strings.Count(body, "Failing: ")
+				if len(body) > 4000 || lines == 0 {
+					t.Fatalf("a %d-byte message with %d lines; want at most 4,000 bytes and at least one line", len(body), lines)
+				}
+				if !strings.Contains(body, "...and "+strconv.Itoa(QueueSize+1000-lines)+" more.") {
+					t.Errorf("the message does not count what it leaves out:\n%s", body)
+				}
+				if click := seen[0].header.Get("Click"); click != tc.link {
+					t.Errorf("Click = %q; want %q", click, tc.link)
+				}
+				if tc.link != "" && !strings.HasSuffix(body, "Library: "+tc.link) || tc.link == "" && strings.Contains(body, "Library:") {
+					t.Errorf("the message does not end with the right link:\n%s", body)
+				}
+			})
+		})
+	}
 }
 
 // Shutdown sends what is pending at once, and gives up after FlushGrace

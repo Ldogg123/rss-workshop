@@ -101,8 +101,12 @@ const (
 	// ntfy turns a longer message into an attachment, or refuses it, at its
 	// default size limit of 4,096 bytes, so its body stays below that.
 	maxNtfyBody = 4000
-	title       = "RSS Workshop"
-	userAgent   = "RSS-Workshop"
+	// A public origin is a few hundred bytes at most, since a host name has
+	// at most 253 characters. A longer one cannot be a real address, and its
+	// link would leave an ntfy message no room for the events.
+	maxDashboard = 512
+	title        = "RSS Workshop"
+	userAgent    = "RSS-Workshop"
 )
 
 // Notifier delivers events. Create it with New, call Start, and Close it
@@ -146,7 +150,7 @@ func New(endpoint, format, token, dashboard string) (*Notifier, error) {
 	if strings.ContainsFunc(token, func(r rune) bool { return r <= ' ' || r > '~' }) {
 		return nil, errors.New("NOTIFY_TOKEN must be printable ASCII without spaces")
 	}
-	if d, err := url.Parse(dashboard); err != nil || (d.Scheme != "http" && d.Scheme != "https") || d.Host == "" {
+	if d, err := url.Parse(dashboard); err != nil || (d.Scheme != "http" && d.Scheme != "https") || d.Host == "" || len(dashboard) > maxDashboard {
 		dashboard = ""
 	}
 	tr := &http.Transport{
@@ -378,6 +382,12 @@ func (n *Notifier) compose(events []Event, extra int) message {
 		return 0
 	})
 	m := message{}
+	// What follows the lines in an ntfy body: the count of those left out,
+	// which has at most 20 digits, and the link to the library.
+	reserve := len("...and  more.\n") + 20
+	if n.dashboard != "" {
+		reserve += len("\nLibrary: \n") + len(n.dashboard)
+	}
 	var b strings.Builder
 	for i, e := range events {
 		m.alert = m.alert || alerting(e.Kind)
@@ -386,7 +396,7 @@ func (n *Notifier) compose(events []Event, extra int) message {
 			continue
 		}
 		line := describe(e) + "\n"
-		if i == MaxLines || (n.format == Ntfy && b.Len()+len(line) > maxNtfyBody-200) {
+		if i == MaxLines || (n.format == Ntfy && b.Len()+len(line) > maxNtfyBody-reserve) {
 			m.more = len(events) - i
 			continue
 		}
