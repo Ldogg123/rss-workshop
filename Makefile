@@ -36,6 +36,8 @@ release-test:
 	$(PYTHON) scripts/collect_debian_sources_test.py
 	$(PYTHON) scripts/release_sources_test.py
 	$(PYTHON) scripts/promote_images_test.py
+	$(PYTHON) scripts/check_dependencies_test.py
+	$(PYTHON) scripts/check-dependencies.py --go '$(GO)'
 check: fmt-check race vet backup-test release-test smoke-test smoke
 smoke: build
 	$(PYTHON) scripts/smoke.py
