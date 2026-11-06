@@ -89,11 +89,26 @@ func (s *Scheduler) hold(id string) time.Duration {
 	return wait
 }
 
-func (s *Scheduler) holding(id string) bool {
+// Held reports whether a feed is waiting out a hold, so a tick will not
+// dispatch it however overdue its stored schedule says it is.
+func (s *Scheduler) Held(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h, ok := s.held[id]
 	return ok && h.until.After(time.Now())
+}
+
+// Retry lets a held feed run at its stored due time instead of when the hold
+// expires. The failure count stays, so a write that fails again holds the
+// feed twice as long as the last one rather than starting over at two
+// minutes.
+func (s *Scheduler) Retry(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h, ok := s.held[id]; ok {
+		h.until = time.Time{}
+		s.held[id] = h
+	}
 }
 
 // released clears the backoff once a result is stored again.
@@ -219,7 +234,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
 			continue
 		}
-		if s.holding(f.ID) {
+		if s.Held(f.ID) {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -289,7 +304,24 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	// Use a short independent context to record a timed-out or canceled job.
 	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
-	if err := s.Store.CompleteWithDiagnostics(saveCtx, f, items, r.ETag, r.LastModified, r.Status, e, r.RetryAfter, p.Diagnostics); err != nil && !errors.Is(err, store.ErrStale) {
+	switch err := s.Store.CompleteWithDiagnostics(saveCtx, f, items, r.ETag, r.LastModified, r.Status, e, r.RetryAfter, p.Diagnostics); {
+	case errors.Is(err, store.ErrStale), errors.Is(err, store.ErrDeleted):
+		// The feed was edited or deleted while this ran, so the result was
+		// thrown away unsaved and left no run record. Saying it finished or
+		// failed would describe a run that Diagnostics never shows. Neither is
+		// a write failure. An edit just committed, so it releases a hold the
+		// way Retry does, keeping its failure count; a deleted feed has
+		// nothing left to hold.
+		reason := "feed changed during refresh"
+		if errors.Is(err, store.ErrDeleted) {
+			reason = "feed deleted during refresh"
+			s.released(f.ID)
+		} else {
+			s.Retry(f.ID)
+		}
+		slog.Info("refresh discarded", "feed", f.Title, "feed_id", f.ID, "reason", reason, "duration", time.Since(start))
+		return
+	case err != nil:
 		// Nothing was written, including the schedule, so this feed is still due.
 		// Hold it here or the source gets refetched every second for as long as
 		// the database stays unwritable. Reporting success below would also be a

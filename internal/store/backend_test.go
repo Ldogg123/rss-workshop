@@ -225,7 +225,7 @@ func TestPostgresConcurrentRecipeInvalidation(t *testing.T) {
 			want := ErrStale
 			if mutation == "delete" {
 				query = "DELETE FROM feeds WHERE id=$1"
-				want = sql.ErrNoRows
+				want = ErrDeleted
 			}
 			if mutation == "cancel" {
 				stopRefresh()

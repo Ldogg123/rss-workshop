@@ -25,6 +25,11 @@ import (
 var schema string
 var ErrStale = errors.New("recipe changed during refresh; result discarded")
 
+// ErrDeleted reports a refresh whose feed was deleted while it ran. Like
+// ErrStale it means nothing was written on purpose, not that the database
+// refused a write: deleting a feed mid-refresh is an ordinary action.
+var ErrDeleted = errors.New("feed deleted during refresh; result discarded")
+
 type Store struct {
 	DB       *sql.DB
 	MaxItems int
@@ -221,7 +226,8 @@ func (s *Store) Complete(ctx context.Context, f model.Feed, items []model.Item, 
 }
 
 // CompleteWithDiagnostics records the bounded trace with the same transaction
-// as its run summary and saved items. Stale or deleted recipes leave no run.
+// as its run summary and saved items. Stale or deleted recipes leave no run,
+// and return ErrStale or ErrDeleted.
 func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items []model.Item, etag, modified string, status int, runErr error, retry time.Duration, details *model.RunDiagnostics) (err error) {
 	defer s.cleanError(&err)
 	tx, e := s.DB.BeginTx(ctx, nil)
@@ -236,6 +242,9 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 		versionQuery += " FOR UPDATE"
 	}
 	if e = tx.QueryRowContext(ctx, s.bind(versionQuery), f.ID).Scan(&version, &lastChanged); e != nil {
+		if errors.Is(e, sql.ErrNoRows) {
+			return ErrDeleted
+		}
 		return e
 	}
 	if version != f.Version {

@@ -119,13 +119,13 @@ func TestHoldClearsAfterASuccessfulSave(t *testing.T) {
 
 	restore := blockItemWrites(t, s)
 	jobs.refresh(ctx, f)
-	if !jobs.holding(f.ID) {
+	if !jobs.Held(f.ID) {
 		t.Fatal("an unsaved refresh did not hold the feed")
 	}
 	restore()
 	// A held feed is skipped by tick, so drive the recovery directly.
 	jobs.refresh(ctx, f)
-	if jobs.holding(f.ID) {
+	if jobs.Held(f.ID) {
 		t.Error("the feed stayed held after its result was stored")
 	}
 	items, err := s.Items(ctx, f.ID)
@@ -151,10 +151,10 @@ func TestHoldsAreForgottenForDeletedFeeds(t *testing.T) {
 	jobs.hold(f.ID)
 	jobs.hold("a-feed-that-no-longer-exists")
 	jobs.tick(ctx)
-	if jobs.holding("a-feed-that-no-longer-exists") {
+	if jobs.Held("a-feed-that-no-longer-exists") {
 		t.Error("a hold survived for a feed that is not in the library")
 	}
-	if !jobs.holding(f.ID) {
+	if !jobs.Held(f.ID) {
 		t.Error("a hold for a live feed was dropped")
 	}
 }

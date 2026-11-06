@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -118,7 +117,9 @@ func TestRunDiagnosticsStaleAndDeletedResultsDiscarded(t *testing.T) {
 	if err := s.Delete(t.Context(), f.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CompleteWithDiagnostics(t.Context(), f, nil, "", "", 500, errors.New("deleted error"), 0, testRunDiagnostics()); !errors.Is(err, sql.ErrNoRows) {
+	// A distinct sentinel, kept by the PostgreSQL error cleaner too, so the
+	// scheduler can tell a deleted feed from a database that refused the write.
+	if err := s.CompleteWithDiagnostics(t.Context(), f, nil, "", "", 500, errors.New("deleted error"), 0, testRunDiagnostics()); !errors.Is(err, ErrDeleted) {
 		t.Fatal("deleted refresh recorded", err)
 	}
 	after, err = s.Runs(t.Context(), f.ID)
