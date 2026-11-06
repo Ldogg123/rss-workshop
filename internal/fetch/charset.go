@@ -33,7 +33,9 @@ var errDecodedTooLarge = errors.New("source exceeds 4 MiB limit once decoded to 
 // A UTF-8 page therefore keeps its exact bytes, byte order mark included.
 //
 // The result is bounded by MaxBody like the raw response, because the visual
-// selector and browser mode apply that limit to the decoded page too.
+// selector and browser mode apply that limit to the decoded page too. A page
+// refused for that returns body unchanged with the error, as a page over the
+// raw limit does, so diagnostics still report the size the source sent.
 func toUTF8(body []byte, contentType string) ([]byte, error) {
 	name, skip := "", 0
 	switch {
@@ -55,7 +57,7 @@ func toUTF8(body []byte, contentType string) ([]byte, error) {
 		return body, nil
 	}
 	if len(out) > MaxBody {
-		return nil, errDecodedTooLarge
+		return body, errDecodedTooLarge
 	}
 	return out, nil
 }

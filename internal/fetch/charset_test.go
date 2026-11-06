@@ -130,8 +130,10 @@ func TestFetchLimitsTheDecodedPage(t *testing.T) {
 	if err != nil || len(r.Body) != MaxBody || !strings.HasSuffix(string(r.Body), "xé") {
 		t.Fatalf("a page decoding to exactly 4 MiB: %d bytes, %v", len(r.Body), err)
 	}
+	// A refused page keeps the response as its body, as one over the raw limit
+	// does, so run diagnostics report what the source sent rather than 0 B.
 	for _, path := range []string{"/grows", "/doubles"} {
-		if r, err = c.Fetch(context.Background(), base+path, "", ""); err == nil || !strings.Contains(err.Error(), "4 MiB") || r.Body != nil {
+		if r, err = c.Fetch(context.Background(), base+path, "", ""); err == nil || !strings.Contains(err.Error(), "4 MiB") || len(r.Body) != MaxBody {
 			t.Fatalf("%s: a page decoding past 4 MiB gave %d bytes, %v", path, len(r.Body), err)
 		}
 	}
