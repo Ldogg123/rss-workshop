@@ -407,8 +407,9 @@ func TestImportedRecipeFitsEditRequestLimit(t *testing.T) {
 		t.Fatalf("resume changed recipe or left it paused: enabled=%v, error=%v", f.Enabled, err)
 	}
 
-	// The editor also sends its library filter selection, which validate()
-	// does not count. A full selection must still reach the handler.
+	// The editor also sends its library filter selection and the enabled
+	// value it opened with, which validate() does not count. A full selection
+	// must still reach the handler.
 	if len(store.ID()) != 48 {
 		t.Fatal("library filter ID length changed; update maxFilterIDsBytes")
 	}
@@ -421,7 +422,8 @@ func TestImportedRecipeFitsEditRequestLimit(t *testing.T) {
 			Enabled               bool     `json:"enabled"`
 			ApplyFiltersToHistory bool     `json:"apply_filters_to_history"`
 			FilterIDs             []string `json:"filter_ids"`
-		}{edit.portableFeed, false, false, ids}
+			LoadedEnabled         bool     `json:"loaded_enabled"`
+		}{edit.portableFeed, false, false, ids, false}
 		data, err := json.Marshal(body)
 		if err != nil {
 			t.Fatal(err)

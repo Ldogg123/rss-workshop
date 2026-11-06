@@ -23,6 +23,11 @@ type SaveOptions struct {
 	// to a submitted feed, so merged rules stay within the limits a recipe
 	// export must satisfy to be imported again.
 	Validate func(model.Feed) error
+	// KeepEnabled saves an existing feed without changing whether it refreshes
+	// automatically, for an editor whose setting the operator left alone. A
+	// pause or resume made from the library while the editor was open then
+	// survives the editor's save instead of being undone by its stale copy.
+	KeepEnabled bool
 }
 
 const historyFilterTimeout = 5 * time.Second
@@ -92,8 +97,15 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		// interval is published only as whole minutes of ttl.
 		now := time.Now().Unix()
 		title, url := readableText(f.Title), readableText(f.URL)
+		args := []any{title, url, f.Interval / 60, now, now, title, url, string(recipe), f.Interval}
+		enabled := ""
+		if !options.KeepEnabled {
+			enabled = "enabled=?,"
+			args = append(args, f.Enabled)
+		}
+		args = append(args, now, f.ID)
 		result, err := tx.ExecContext(ctx, s.bind(`UPDATE feeds SET last_changed=CASE WHEN title<>? OR url<>? OR interval/60<>? THEN `+bumpChanged+` ELSE last_changed END,
-title=?,url=?,recipe=?,interval=?,enabled=?,next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), title, url, f.Interval/60, now, now, title, url, string(recipe), f.Interval, f.Enabled, now, f.ID)
+title=?,url=?,recipe=?,interval=?,`+enabled+`next_run=?,etag='',modified='',error='',failures=0,version=version+1 WHERE id=?`), args...)
 		if err != nil {
 			return "", err
 		}

@@ -195,6 +195,35 @@ func (s *Store) Queue(ctx context.Context, id string) (err error) {
 	_, e := s.DB.ExecContext(ctx, s.bind("UPDATE feeds SET next_run=? WHERE id=?"), time.Now().Unix(), id)
 	return e
 }
+
+// SetEnabled pauses or resumes a feed without saving its recipe. Whether a feed
+// refreshes is not published, so its version, conditional-fetch validators,
+// error, failure count and output change time all stay as they are: a refresh
+// already running still saves, the next fetch can still be conditional, and
+// readers keep receiving 304. Resuming a paused feed makes it due now but keeps
+// its failure count, so a feed that fails again continues its backoff rather
+// than starting over. Resuming a feed that is already enabled changes nothing.
+func (s *Store) SetEnabled(ctx context.Context, id string, enabled bool) (err error) {
+	defer s.cleanError(&err)
+	// Every SET expression reads the row as it was before the update, on both
+	// backends, so the CASE sees whether the feed was paused.
+	query, args := "UPDATE feeds SET enabled=? WHERE id=?", []any{false, id}
+	if enabled {
+		query, args = "UPDATE feeds SET next_run=CASE WHEN enabled THEN next_run ELSE ? END,enabled=? WHERE id=?", []any{time.Now().Unix(), true, id}
+	}
+	res, e := s.DB.ExecContext(ctx, s.bind(query), args...)
+	if e != nil {
+		return e
+	}
+	n, e := res.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
 func (s *Store) Items(ctx context.Context, id string) (_ []model.Item, err error) {
 	defer s.cleanError(&err)
 	rows, e := s.DB.QueryContext(ctx, s.bind(`SELECT key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed FROM items WHERE feed_id=? ORDER BY published DESC,key`), id)

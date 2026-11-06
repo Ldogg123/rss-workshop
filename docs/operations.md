@@ -245,6 +245,14 @@ Reader requests serialize saved data without fetching sources. Failed or empty e
 
 Source bodies are limited to 4 MiB and extraction to 1,000 cards, 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
 
+### Pausing and resuming
+
+**Pause** on a feed card stops its automatic refreshes and **Resume** restarts them. Nothing else about the feed changes: its recipe, error message, failure count and the source's conditional-request validators stay as they were, a refresh already running is still saved, and readers keep receiving the same output, so a paused feed goes on serving its saved stories. Resuming makes the feed due at once, even during an error backoff. Its failure count is kept, so if it fails again the backoff continues where it left off instead of starting over at 2 minutes.
+
+The editor's **Refresh automatically** checkbox is saved with the rest of the feed, and a save, like any edit, clears the error, failure count and validators and discards a running refresh. If you leave the checkbox as it was when the editor opened, the save keeps the feed's current setting, so a feed you paused or resumed from its card while the editor was open stays that way.
+
+The card uses `POST /api/feeds/{id}/enabled` with `{"enabled": false}` or `{"enabled": true}`; it needs a signed-in session and passes the same Origin and CSRF checks as every other change. Feed saves accept an optional top-level `loaded_enabled`, the `enabled` value the editor loaded: when the two are equal, the save keeps the stored setting. A save without it sets `enabled` as sent.
+
 ### Waiting to retry after a failed save
 
 When the database refuses a finished refresh, for example because its disk is full, nothing from that refresh is stored, including the feed's next refresh time. The app therefore holds the feed in memory, or it would fetch the source again every second until the database recovered: 2 minutes after the first such failure, then twice as long after each further one, up to 1,024 minutes (about 17 hours). The log reports each one as `refresh not saved`, the feed's card shows **Waiting to retry**, and `rss_workshop_feeds_held` counts it.
