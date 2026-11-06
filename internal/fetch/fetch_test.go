@@ -113,9 +113,50 @@ func TestUserAgent(t *testing.T) {
 	if _, err := c.Fetch(context.Background(), srv.URL+"/page", `"tag"`, "Mon, 02 Jan 2006 15:04:05 GMT"); err != nil {
 		t.Fatal(err)
 	}
-	const name = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)"
-	want := []string{name, name, name, "GoRSS/0.1 (+self-hosted feed builder)"}
+	// A feed's own User-Agent, carried by its context, replaces both, through
+	// a redirect too. A blank one leaves the client's.
+	for _, path := range []string{"/page", "/moved"} {
+		if _, err := c.Fetch(WithUserAgent(context.Background(), "Feed/1 (+mailto:ops@example.net)"), srv.URL+path, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.Fetch(WithUserAgent(context.Background(), ""), srv.URL+"/page", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	c.UserAgent = ""
+	if _, err := c.Fetch(WithUserAgent(context.Background(), "Feed/1 (+mailto:ops@example.net)"), srv.URL+"/page", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	const name, old, own = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)", "GoRSS/0.1 (+self-hosted feed builder)", "Feed/1 (+mailto:ops@example.net)"
+	want := []string{name, name, name, old, own, own, own, old, own}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("sources saw %q, want %q", got, want)
+	}
+}
+
+// FETCH_USER_AGENT and a recipe's User-Agent share one rule: trimmed, then at
+// most 256 bytes of printable ASCII. Anything a header cannot carry as written
+// is refused, a line break above all, since it would add a header of its own.
+func TestCheckUserAgent(t *testing.T) {
+	for raw, want := range map[string]string{
+		"":      "",
+		" \t\n": "",
+		" GoRSS/0.1 (+self-hosted feed builder)\r\n": "GoRSS/0.1 (+self-hosted feed builder)",
+		"Reader/2 (+mailto:ops@example.net; ~x)":     "Reader/2 (+mailto:ops@example.net; ~x)",
+		strings.Repeat("a", 256):                     strings.Repeat("a", 256),
+		" " + strings.Repeat("a", 256) + " ":         strings.Repeat("a", 256),
+	} {
+		if got, ok := CheckUserAgent(raw); !ok || got != want {
+			t.Errorf("CheckUserAgent(%q) = %q, %v; want %q", raw, got, ok, want)
+		}
+	}
+	for _, raw := range []string{
+		"agent\r\nX-Injected: 1", "agent\nX-Injected: 1", "agent\rX-Injected: 1", "agent\tname",
+		"agent\x00", "agent\x1b[0m", "agent\x7f", "agenté", "agent\xff", "agent\u2028name",
+		strings.Repeat("a", 257), strings.Repeat("é", 100),
+	} {
+		if got, ok := CheckUserAgent(raw); ok {
+			t.Errorf("CheckUserAgent(%q) accepted %q", raw, got)
+		}
 	}
 }

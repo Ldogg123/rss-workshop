@@ -244,6 +244,7 @@ func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, e
 	defer s.release(id)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(f.Recipe.Mode))
 	defer cancel()
+	ctx = fetch.WithUserAgent(ctx, f.Recipe.UserAgent)
 	_, p, e := s.extract(ctx, f, true)
 	if e != nil || !articlesUseSolver(f) {
 		s.doneWithSolver(id)
@@ -279,6 +280,7 @@ func (s *Scheduler) Snapshot(ctx context.Context, rawURL string, r model.Recipe)
 	defer s.release(id)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout(r.Mode))
 	defer cancel()
+	ctx = fetch.WithUserAgent(ctx, r.UserAgent)
 	if r.Mode == "flaresolverr" {
 		return s.solve(ctx, rawURL)
 	}
@@ -364,6 +366,10 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(parent, s.timeout(f.Recipe.Mode))
 	defer cancel()
+	// Every static request this refresh makes, article pages included, sends
+	// the feed's own User-Agent when its recipe has one. Chromium and
+	// FlareSolverr ignore it and send their browser's.
+	ctx = fetch.WithUserAgent(ctx, f.Recipe.UserAgent)
 	var r fetch.Result
 	var p model.Preview
 	// Library filters are read as the refresh starts. Editing one afterwards

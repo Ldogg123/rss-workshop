@@ -21,6 +21,35 @@ const MaxBody = 4 << 20
 // advertise which release it runs. Chromium and FlareSolverr send their own.
 const DefaultUserAgent = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)"
 
+// MaxUserAgent is the longest User-Agent CheckUserAgent accepts, in bytes.
+const MaxUserAgent = 256
+
+// CheckUserAgent trims surrounding white space from a User-Agent and reports
+// whether the rest can be sent: at most MaxUserAgent bytes of printable ASCII.
+// A line break would let the value add headers of its own, and Go refuses one
+// at request time, failing every fetch that carries it; other control and
+// non-ASCII characters are refused too, so a value that passes here is sent
+// exactly as written. FETCH_USER_AGENT and a recipe's own User-Agent both go
+// through this. The trimmed value is returned whether or not it passes.
+func CheckUserAgent(raw string) (string, bool) {
+	ua := strings.TrimSpace(raw)
+	return ua, len(ua) <= MaxUserAgent && !strings.ContainsFunc(ua, func(r rune) bool { return r < ' ' || r > '~' })
+}
+
+type userAgentKey struct{}
+
+// WithUserAgent returns a context whose static requests send ua instead of the
+// client's own User-Agent. A feed's refresh, preview and snapshot carry its
+// recipe's value this way, so the Fetcher interface stays as it is and every
+// static request made for the feed, article pages included, sends it. Blank
+// leaves the client's. Callers pass a value CheckUserAgent accepted.
+func WithUserAgent(ctx context.Context, ua string) context.Context {
+	if ua == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, userAgentKey{}, ua)
+}
+
 type Result struct {
 	// Body is UTF-8 when the page declares an encoding Fetch can decode; see
 	// toUTF8. Rendered pages are always UTF-8.
@@ -40,8 +69,9 @@ type Fetcher interface {
 	Fetch(context.Context, string, string, string) (Result, error)
 }
 type Client struct {
-	// UserAgent replaces DefaultUserAgent when it is not blank. Set it before
-	// the client is shared; config.Load has already validated it.
+	// UserAgent replaces DefaultUserAgent when it is not blank, and a
+	// context from WithUserAgent replaces both. Set it before the client is
+	// shared; config.Load has already validated it.
 	UserAgent string
 	client    *http.Client
 	allow     []netip.Prefix
@@ -186,7 +216,12 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	if e != nil {
 		return out, fmt.Errorf("invalid source URL")
 	}
-	ua := c.UserAgent
+	// A feed's own User-Agent, else the operator's FETCH_USER_AGENT, else
+	// the project's name.
+	ua, _ := ctx.Value(userAgentKey{}).(string)
+	if ua == "" {
+		ua = c.UserAgent
+	}
 	if ua == "" {
 		ua = DefaultUserAgent
 	}

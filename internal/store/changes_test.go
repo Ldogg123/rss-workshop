@@ -103,6 +103,23 @@ func TestOutputChangeTimesMoveOnlyWithPublishedOutput(t *testing.T) {
 	current = expect("listed story beyond retention", false, current)
 	s.MaxItems = 10
 
+	// A different User-Agent can get a different page, so changing it drops
+	// the source's validators and any refresh in flight, like every recipe
+	// edit, but it publishes nothing new.
+	agent := current
+	agent.Recipe.UserAgent = "Reader/1 (+mailto:ops@example.net)"
+	if _, err := s.Save(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Complete(ctx, current, changed, "etag", "", 200, nil, 0); !errors.Is(err, ErrStale) {
+		t.Fatalf("a refresh started before the User-Agent edit was saved: %v", err)
+	}
+	before := current
+	current = expect("User-Agent edit", false, current)
+	if before.ETag == "" || current.ETag != "" || current.Recipe.UserAgent != agent.Recipe.UserAgent {
+		t.Fatalf("User-Agent edit: validators %q -> %q, User-Agent %q", before.ETag, current.ETag, current.Recipe.UserAgent)
+	}
+
 	// Edits change output before any refresh: a paused feed's rename or
 	// interval, cleared article bodies, and pruned history.
 	edited := current

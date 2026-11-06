@@ -79,7 +79,8 @@ func portableExamples() []portableFeed {
 			Recipe: model.Recipe{Mode: "auto", WaitSelector: "main", SettleMS: 5000, Type: "xpath", Items: "//article",
 				Title: model.Field{Selector: ".//h2"}, Link: model.Field{Selector: ".//a/@href"},
 				Date: model.Field{Selector: ".//time/@datetime"}, Content: model.Field{Selector: ".//p"},
-				Image: model.Field{Selector: ".//img", Attr: "src"}, DateLayout: time.RFC3339, Timezone: "UTC"}},
+				Image: model.Field{Selector: ".//img", Attr: "src"}, DateLayout: time.RFC3339, Timezone: "UTC",
+				UserAgent: "GoRSS/0.1 (+self-hosted feed builder)"}},
 	}
 }
 
@@ -286,6 +287,8 @@ func TestRecipeImportValidationIsAtomic(t *testing.T) {
 		{"invalid selector", func(f *portableFeed) { f.Recipe.Type = "css"; f.Recipe.Items = "[" }},
 		{"unknown mode", func(f *portableFeed) { f.Recipe.Mode = "unsupported" }},
 		{"excess settle", func(f *portableFeed) { f.Recipe.SettleMS = 5001 }},
+		{"User-Agent with a line break", func(f *portableFeed) { f.Recipe.UserAgent = "Reader/1\r\nX-Injected: 1" }},
+		{"long User-Agent", func(f *portableFeed) { f.Recipe.UserAgent = strings.Repeat("a", 257) }},
 	} {
 		feeds := portableExamples()
 		invalid.mutate(&feeds[1])

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"rss-workshop/internal/fetch"
 )
 
 type Config struct {
@@ -65,11 +67,10 @@ func Load() (Config, error) {
 	if e != nil || c.Timeout < time.Second || c.Timeout > 2*time.Minute {
 		return c, fmt.Errorf("FETCH_TIMEOUT must be between 1s and 2m")
 	}
-	// A header value cannot hold a line break, which would let it add headers of
-	// its own, and Go refuses one at request time, failing every static fetch.
-	// Refuse anything else unprintable too, at startup, where it is visible.
-	c.FetchUserAgent = strings.TrimSpace(os.Getenv("FETCH_USER_AGENT"))
-	if len(c.FetchUserAgent) > 256 || strings.ContainsFunc(c.FetchUserAgent, func(r rune) bool { return r < ' ' || r > '~' }) {
+	// A value that would fail every static fetch stops startup instead, where
+	// it is visible. A recipe's own User-Agent follows the same rule.
+	var ok bool
+	if c.FetchUserAgent, ok = fetch.CheckUserAgent(os.Getenv("FETCH_USER_AGENT")); !ok {
 		return c, fmt.Errorf("FETCH_USER_AGENT must be at most 256 printable ASCII characters")
 	}
 	c.FlareSolverrTimeout, e = time.ParseDuration(env("FLARESOLVERR_TIMEOUT", "60s"))

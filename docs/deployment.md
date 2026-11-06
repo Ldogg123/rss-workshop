@@ -129,7 +129,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `POSTGRES_DATA_DIR` | `./postgres-data` | Compose host directory for the optional PostgreSQL server; precreate before startup |
 | `STATIC_WORKERS` | `16` | 1–64 shared refresh/preview slots |
 | `FETCH_TIMEOUT` | `30s` | 1s–2m static/local Chromium deadline |
-| `FETCH_USER_AGENT` | empty: `RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)` | User-Agent of static requests: list pages, article pages and the visual selector's static snapshot. At most 256 printable ASCII characters. Chromium and FlareSolverr send their own. See [identifying requests](#identifying-requests) |
+| `FETCH_USER_AGENT` | empty: `RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)` | User-Agent of static requests: list pages, article pages and the visual selector's static snapshot. At most 256 printable ASCII characters. A feed's own User-Agent replaces it for that feed. Chromium and FlareSolverr send their own. See [identifying requests](#identifying-requests) |
 | `CHROMIUM_PATH` | empty | Native browser executable; browser image sets `/usr/bin/chromium` |
 | `BROWSER_SLOTS` | `2` | 1–8 local browser jobs |
 | `FLARESOLVERR_URL` | empty | Trusted service base URL or `/v1` endpoint |
@@ -166,6 +166,8 @@ FETCH_USER_AGENT=GoRSS/0.1 (+self-hosted feed builder)
 ```
 
 Surrounding spaces are trimmed. Startup stops if the value is longer than 256 characters or contains anything but printable ASCII, such as a line break, and the startup log reports `custom_user_agent=true` when one is in effect. The setting applies to list pages, article pages and the visual selector's static snapshot, and changes only that header: destination checks and conditional requests work as before. Pages that local Chromium renders, including Auto's render and rendered articles, send Chromium's own User-Agent, and [FlareSolverr](flaresolverr.md) sends that of its browser; this setting changes neither. After a change, a source that varies its pages by User-Agent may answer the next conditional request with the full page instead of 304; feeds change only if the stories did.
+
+A feed can also send a User-Agent of its own: set **User-Agent** under **Request settings** in its editor. It follows the same rules and replaces `FETCH_USER_AGENT` and the built-in name for that feed's static requests only: its list page in Static HTTP mode and in Auto before any render, its article pages fetched as plain HTML, its previews, and the visual selector's Static HTML page. Each static request therefore sends the feed's own User-Agent if it has one, else `FETCH_USER_AGENT` if that is set, else the built-in name above. Pages that Chromium renders or FlareSolverr loads keep their browser's User-Agent here too. The editor leaves the field blank for a feed without one, and never shows the server's value. The setting is part of the recipe, so recipe exports carry it. Saving a different value is a recipe edit: it drops the source's conditional-request validators and any refresh in progress, and publishes nothing new by itself. Releases before 1.2 ignore it, send their own User-Agent for that feed, and remove it from any feed they save, pause or resume; they also refuse a recipe file in which any feed has one.
 
 ## Run a prebuilt executable
 

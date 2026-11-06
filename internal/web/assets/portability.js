@@ -22,6 +22,8 @@
    item.append(node('h3',feed.title),node('p',feed.url,'source'));
    const mode={static:'Static HTTP',auto:'Auto',browser:'Chromium',flaresolverr:'FlareSolverr (Cloudflare)'}[feed.recipe.mode||'static']||feed.recipe.mode;
    item.append(node('p',`${schedule(feed.interval)} · ${mode}`,'meta'));
+   // A recipe's own User-Agent changes what its sources see, so name it here.
+   if(feed.recipe.user_agent)item.append(node('p',`User-Agent: ${feed.recipe.user_agent}`,'meta'));
    const selectors=node('details'),summary=node('summary','Recipe selectors');selectors.append(summary);
    const mapping=node('dl',undefined,'import-mapping');
    for(const [label,value] of [['Items',`${feed.recipe.type.toUpperCase()}: ${feed.recipe.items}`],...['title','link','content','image','date'].map(field=>{

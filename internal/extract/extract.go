@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 	"rss-workshop/internal/diagnostics"
+	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
 )
@@ -52,6 +53,10 @@ func ValidateRender(r model.Recipe) error {
 		if _, e := cascadia.Compile(r.WaitSelector); e != nil {
 			return fmt.Errorf("invalid CSS readiness selector: %w", e)
 		}
+	}
+	// The error does not repeat the value, which goes into a request header.
+	if _, ok := fetch.CheckUserAgent(r.UserAgent); !ok {
+		return fmt.Errorf("User-Agent must be at most %d printable ASCII characters", fetch.MaxUserAgent)
 	}
 
 	return nil

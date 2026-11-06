@@ -23,6 +23,12 @@ type Recipe struct {
 	// Optional per-item article fetching. Nil leaves a feed built from its
 	// list page alone, which stays the default for every existing recipe.
 	Full *FullContent `json:"full_content,omitempty"`
+	// UserAgent replaces the server's User-Agent for this feed's static
+	// requests: its list page, article pages fetched as plain HTML, previews
+	// and the visual selector's static snapshot. Chromium and FlareSolverr
+	// send their own. Omitted when blank, so a recipe without one, and its
+	// export, is unchanged.
+	UserAgent string `json:"user_agent,omitempty"`
 }
 
 // FullContent follows each item's own link and extracts the article body from
