@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"golang.org/x/net/html/charset"
 )
 
 type page struct{ contentType, body string }
@@ -31,6 +33,16 @@ func serve(t *testing.T, pages map[string]page) (*Client, string) {
 		t.Fatal(err)
 	}
 	return c, srv.URL
+}
+
+// encoded returns s in the named encoding, as a legacy site would serve it.
+func encoded(name, s string) string {
+	enc, _ := charset.Lookup(name)
+	b, err := enc.NewEncoder().String(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func utf16Page(order binary.AppendByteOrder, s string) string {
@@ -71,6 +83,9 @@ func TestFetchDecodesDeclaredEncodings(t *testing.T) {
 		{"UTF-16BE byte order mark", page{"text/html", utf16Page(binary.BigEndian, "<title>Café</title>")}, "<title>Café</title>"},
 		{"seven-bit ISO-2022-JP", page{"text/html; charset=iso-2022-jp", "<title>\x1b$BF|K\\8l\x1b(B</title>"}, "<title>日本語</title>"},
 		{"EUC-KR", page{"text/html; charset=euc-kr", "<title>\xc7\xd1\xb1\xb9\xbe\xee</title>"}, "<title>한국어</title>"},
+		// Some legacy CJK byte pairs happen to be valid UTF-8 too, six of them
+		// here against 13 invalid bytes, so a few valid ones do not keep a page.
+		{"Shift_JIS with bytes that also read as UTF-8", page{"text/html; charset=shift_jis", encoded("shift_jis", "<title>今日はとても良い天気ですね。</title>")}, "<title>今日はとても良い天気ですね。</title>"},
 
 		// Left as they are.
 		{"no declaration", page{"text/html", latin1}, latin1},
@@ -84,6 +99,9 @@ func TestFetchDecodesDeclaredEncodings(t *testing.T) {
 		// legacy encoding. A real legacy page is practically never valid UTF-8.
 		{"Latin-1 declared on a UTF-8 page", page{"text/html; charset=iso-8859-1", "<title>Café crème</title>"}, "<title>Café crème</title>"},
 		{"Shift_JIS declared on a UTF-8 page", page{"text/html", "<meta charset=shift_jis><title>日本語</title>"}, "<meta charset=shift_jis><title>日本語</title>"},
+		// One stray byte, here an excerpt cut in the middle of a character, does
+		// not turn such a page into mojibake.
+		{"Latin-1 declared on a UTF-8 page with a cut character", page{"text/html; charset=iso-8859-1", "<title>Café crème</title><p>Déjà vu\xe2\x80</p>"}, "<title>Café crème</title><p>Déjà vu\xe2\x80</p>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, base := serve(t, map[string]page{"/": tc.page})

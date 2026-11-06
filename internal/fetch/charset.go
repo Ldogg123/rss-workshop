@@ -28,10 +28,9 @@ var errDecodedTooLarge = errors.New("source exceeds 4 MiB limit once decoded to 
 // bytes. Anything else returns body unchanged, as before: a page declaring no
 // encoding, or one no browser knows, UTF-8 itself, and the "replacement"
 // encoding browsers use to blank out ISO-2022-KR and HZ pages. So does a page
-// that declares a legacy encoding but is valid UTF-8 with non-ASCII text, which
-// is a server or template still naming Latin-1 after the site moved to UTF-8;
-// real legacy text is practically never valid UTF-8. A UTF-8 page therefore
-// keeps its exact bytes, byte order mark included.
+// that declares a legacy encoding but is mostly UTF-8 (see mostlyUTF8), which
+// is a server or template still naming Latin-1 after the site moved to UTF-8.
+// A UTF-8 page therefore keeps its exact bytes, byte order mark included.
 //
 // The result is bounded by MaxBody like the raw response, because the visual
 // selector and browser mode apply that limit to the decoded page too.
@@ -46,7 +45,7 @@ func toUTF8(body []byte, contentType string) ([]byte, error) {
 		name, skip = "utf-16le", 2
 	default:
 		name = declaredCharset(body, contentType)
-		if name == "" || name == "utf-8" || name == "replacement" || (utf8.Valid(body) && !ascii(body)) {
+		if name == "" || name == "utf-8" || name == "replacement" || mostlyUTF8(body) {
 			return body, nil
 		}
 	}
@@ -59,6 +58,35 @@ func toUTF8(body []byte, contentType string) ([]byte, error) {
 		return nil, errDecodedTooLarge
 	}
 	return out, nil
+}
+
+// mostlyUTF8 reports whether body has more valid multibyte UTF-8 characters
+// than bytes that are invalid as UTF-8. A page declaring a legacy encoding that
+// passes is a UTF-8 page whose server or template kept an old declaration, and
+// decoding it would turn every accented or CJK character into mojibake where it
+// reads correctly today. One stray byte, such as an excerpt cut in the middle
+// of a character, must not tip such a page over, so the test is a majority
+// rather than validity. Real legacy text is the other way round: an accented
+// windows-1252 letter is almost always followed by ASCII, which UTF-8 rejects,
+// and legacy CJK and Thai text is several times more invalid than valid.
+// A page with no non-ASCII bytes fails too, so it is still decoded, as 7-bit
+// ISO-2022-JP and ASCII text in UTF-16 need.
+func mostlyUTF8(body []byte) bool {
+	valid, invalid := 0, 0
+	for i := 0; i < len(body); {
+		if body[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRune(body[i:])
+		if r == utf8.RuneError && n == 1 {
+			invalid++
+		} else {
+			valid++
+		}
+		i += n
+	}
+	return valid > invalid
 }
 
 // declaredCharset returns the canonical name of the encoding the response
@@ -151,13 +179,4 @@ func contentCharset(s string) string {
 		}
 		return s
 	}
-}
-
-func ascii(b []byte) bool {
-	for _, c := range b {
-		if c >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
 }
