@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -149,6 +150,11 @@ func TestCheckUserAgent(t *testing.T) {
 		if got, ok := CheckUserAgent(raw); !ok || got != want {
 			t.Errorf("CheckUserAgent(%q) = %q, %v; want %q", raw, got, ok, want)
 		}
+		// ValidateUserAgent does not trim: it accepts only what is already
+		// trimmed, which is what a request sends.
+		if err := ValidateUserAgent(raw); (err == nil) != (raw == want) {
+			t.Errorf("ValidateUserAgent(%q) = %v", raw, err)
+		}
 	}
 	for _, raw := range []string{
 		"agent\r\nX-Injected: 1", "agent\nX-Injected: 1", "agent\rX-Injected: 1", "agent\tname",
@@ -158,5 +164,41 @@ func TestCheckUserAgent(t *testing.T) {
 		if got, ok := CheckUserAgent(raw); ok {
 			t.Errorf("CheckUserAgent(%q) accepted %q", raw, got)
 		}
+		if ValidateUserAgent(raw) == nil {
+			t.Errorf("ValidateUserAgent(%q) accepted it", raw)
+		}
+	}
+}
+
+// A context's User-Agent is sent exactly as given or not at all. Recipes are
+// trimmed and checked before they get here; a value that skipped that, with
+// space around it, a line break or anything else a header cannot carry as
+// written, is refused before the source is contacted. It is neither sent
+// altered nor left to fail in the transport behind a generic connection
+// error, and the error does not repeat it.
+func TestFetchRefusesAContextUserAgentItCannotSendAsGiven(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Write([]byte("page"))
+	}))
+	defer srv.Close()
+	c, _ := New(time.Second, "127.0.0.1/32")
+	for ua, want := range map[string]string{
+		" Secret/1":                  "User-Agent must not begin or end with white space",
+		"Secret/1\n":                 "User-Agent must not begin or end with white space",
+		"\vSecret/1":                 "User-Agent must not begin or end with white space",
+		"Secret/1\u00a0":             "User-Agent must not begin or end with white space",
+		"\u0085Secret/1":             "User-Agent must not begin or end with white space",
+		"Secret/1\r\nX-Injected: 1":  "User-Agent must be at most 256 printable ASCII characters",
+		"Secret/é":                   "User-Agent must be at most 256 printable ASCII characters",
+		strings.Repeat("Secret", 43): "User-Agent must be at most 256 printable ASCII characters",
+	} {
+		if _, err := c.Fetch(WithUserAgent(context.Background(), ua), srv.URL+"/page", "", ""); err == nil || err.Error() != want {
+			t.Errorf("Fetch with User-Agent %q: %v, want %q", ua, err, want)
+		}
+	}
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("the source received %d requests", n)
 	}
 }

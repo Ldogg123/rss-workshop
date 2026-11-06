@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/model"
+	"rss-workshop/internal/scheduler"
 )
 
 func userAgentFeed(agent string) model.Feed {
@@ -92,6 +97,48 @@ func TestRecipeUserAgentIsTrimmedAndValidated(t *testing.T) {
 	}
 	if h.fetcher.calls.Load() != 0 {
 		t.Fatal("a refused User-Agent reached the fetcher")
+	}
+}
+
+// The editor's preview and the visual selector's page load trim the
+// User-Agent as a save does, so a value the editor would store is the one they
+// send. The scheduler and the fetcher accept only a value that can be sent as
+// given, so either handler without its trim would refuse a value that saves.
+// The real guarded fetcher is used, so the source sees the header itself.
+func TestPreviewAndSnapshotSendTheTrimmedUserAgent(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path+" "+r.UserAgent())
+		mu.Unlock()
+		w.Write([]byte(`<article><h2>Story</h2></article>`))
+	}))
+	defer source.Close()
+	h := newPortabilityHarness(t)
+	client, err := fetch.New(time.Second, "127.0.0.1/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.app.Scheduler = scheduler.New(h.app.Store, client, 2, 5*time.Second)
+
+	const agent = " \tAgent/1 (+mailto:ops@example.net)\r\n"
+	f := userAgentFeed(agent)
+	f.URL = source.URL + "/preview"
+	if w := h.request("POST", "/api/preview", feedJSON(t, f)); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Story") {
+		t.Errorf("preview: %d %s", w.Code, w.Body.String())
+	}
+	snapshot, err := json.Marshal(map[string]any{"url": source.URL + "/snapshot", "recipe": model.Recipe{Mode: "static", UserAgent: agent}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := h.request("POST", "/api/selector/snapshot", snapshot); w.Code != http.StatusOK {
+		t.Errorf("snapshot: %d %s", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"/preview Agent/1 (+mailto:ops@example.net)", "/snapshot Agent/1 (+mailto:ops@example.net)"}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("the source received %q, want %q", seen, want)
 	}
 }
 

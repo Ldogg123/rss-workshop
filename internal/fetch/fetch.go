@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -36,13 +37,30 @@ func CheckUserAgent(raw string) (string, bool) {
 	return ua, len(ua) <= MaxUserAgent && !strings.ContainsFunc(ua, func(r rune) bool { return r < ' ' || r > '~' })
 }
 
+// ValidateUserAgent accepts a User-Agent that can be sent exactly as given:
+// one CheckUserAgent accepts and leaves unchanged, so blank too. It does not
+// trim; a caller that wants trimming runs CheckUserAgent first and validates
+// what it returns. A recipe's value is checked with this when it is saved,
+// previewed or loaded by the visual selector, and again by Fetch before
+// anything is sent. The errors do not repeat the value.
+func ValidateUserAgent(ua string) error {
+	checked, ok := CheckUserAgent(ua)
+	if !ok {
+		return fmt.Errorf("User-Agent must be at most %d printable ASCII characters", MaxUserAgent)
+	}
+	if checked != ua {
+		return errors.New("User-Agent must not begin or end with white space")
+	}
+	return nil
+}
+
 type userAgentKey struct{}
 
 // WithUserAgent returns a context whose static requests send ua instead of the
 // client's own User-Agent. A feed's refresh, preview and snapshot carry its
 // recipe's value this way, so the Fetcher interface stays as it is and every
 // static request made for the feed, article pages included, sends it. Blank
-// leaves the client's. Callers pass a value CheckUserAgent accepted.
+// leaves the client's. Fetch refuses a value ValidateUserAgent refuses.
 func WithUserAgent(ctx context.Context, ua string) context.Context {
 	if ua == "" {
 		return ctx
@@ -206,6 +224,21 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	if e := ValidateURL(raw); e != nil {
 		return out, e
 	}
+	// A feed's own User-Agent, else the operator's FETCH_USER_AGENT, else
+	// the project's name. A feed's value was checked when its recipe was
+	// accepted; one that arrives here without that check is refused before
+	// anything is sent, rather than sent altered or failed by the transport
+	// behind the generic connection error below.
+	ua, _ := ctx.Value(userAgentKey{}).(string)
+	if e := ValidateUserAgent(ua); e != nil {
+		return out, e
+	}
+	if ua == "" {
+		ua = c.UserAgent
+	}
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
 	u, _ := url.Parse(raw)
 	release, e := c.acquire(ctx, strings.ToLower(u.Host))
 	if e != nil {
@@ -215,15 +248,6 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	req, e := http.NewRequestWithContext(ctx, "GET", raw, nil)
 	if e != nil {
 		return out, fmt.Errorf("invalid source URL")
-	}
-	// A feed's own User-Agent, else the operator's FETCH_USER_AGENT, else
-	// the project's name.
-	ua, _ := ctx.Value(userAgentKey{}).(string)
-	if ua == "" {
-		ua = c.UserAgent
-	}
-	if ua == "" {
-		ua = DefaultUserAgent
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "text/html, application/xhtml+xml")

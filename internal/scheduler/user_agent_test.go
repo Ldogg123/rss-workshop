@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -200,5 +201,63 @@ func TestFeedUserAgentReplacesTheServers(t *testing.T) {
 				t.Errorf("the source received requests for %d paths, want %d: %q", len(seen), len(want), seen)
 			}
 		})
+	}
+}
+
+// The web handlers trim a recipe's User-Agent and check it before any of this
+// runs, but the scheduler does not depend on that. Snapshot checks the value
+// it would send in every page version, before it picks one, and a preview or
+// a refresh of a stored recipe that skipped the check is refused by the
+// fetcher. A value with space around it, a line break or non-ASCII fails with
+// an error that names the setting, and the source receives nothing: no
+// request with a header other than the one checked, and no generic connection
+// error from the transport.
+func TestUncheckedFeedUserAgentIsRefusedBeforeAnyRequest(t *testing.T) {
+	var requests atomic.Int32
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Write([]byte(`<article><h2>Story</h2><a href="/story">Read</a><p>Teaser</p></article>`))
+	}))
+	defer source.Close()
+
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	client, err := fetch.New(time.Second, "127.0.0.1/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := New(s, client, 2, 5*time.Second)
+	refused := func(err error) bool {
+		return err != nil && strings.HasPrefix(err.Error(), "User-Agent must ") && !strings.Contains(err.Error(), "Agent/1")
+	}
+	for _, agent := range []string{" Agent/1", "Agent/1\n", " Agent/1\r\n", "\vAgent/1", "Agent/1 ", "\u0085Agent/1", "Agent/1\r\nX-Injected: 1", "Agent/1é"} {
+		for _, mode := range []string{"static", "browser", "flaresolverr"} {
+			if _, err := jobs.Snapshot(ctx, source.URL+"/list", model.Recipe{Mode: mode, UserAgent: agent}); !refused(err) {
+				t.Errorf("%s snapshot with User-Agent %q: %v", mode, agent, err)
+			}
+		}
+		recipe := fullRecipe()
+		recipe.Mode, recipe.UserAgent = "static", agent
+		f := model.Feed{Title: "Agent", URL: source.URL + "/list", Interval: 60, Enabled: true, Recipe: recipe}
+		if _, err := jobs.Preview(ctx, f); !refused(err) {
+			t.Errorf("preview with User-Agent %q: %v", agent, err)
+		}
+		if f.ID, err = s.Save(ctx, f); err != nil {
+			t.Fatal(err)
+		}
+		if f, err = s.Get(ctx, f.ID); err != nil {
+			t.Fatal(err)
+		}
+		jobs.refresh(ctx, f)
+		if got, err := s.Get(ctx, f.ID); err != nil || !strings.Contains(got.Error, "User-Agent must ") || !got.LastSuccess.IsZero() {
+			t.Errorf("refresh with User-Agent %q: %q, %v", agent, got.Error, err)
+		}
+	}
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("the source received %d requests", n)
 	}
 }

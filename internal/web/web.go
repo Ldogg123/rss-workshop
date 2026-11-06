@@ -281,7 +281,7 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 // trimRecipe removes the space around a submitted User-Agent, as
 // FETCH_USER_AGENT's is, so the trimmed value is what validate checks, what a
 // preview sends and what is stored. Every handler that accepts a recipe calls
-// it before validating.
+// it before validating, which refuses a value with space around it.
 func trimRecipe(r *model.Recipe) {
 	r.UserAgent, _ = fetch.CheckUserAgent(r.UserAgent)
 }

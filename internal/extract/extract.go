@@ -54,9 +54,12 @@ func ValidateRender(r model.Recipe) error {
 			return fmt.Errorf("invalid CSS readiness selector: %w", e)
 		}
 	}
-	// The error does not repeat the value, which goes into a request header.
-	if _, ok := fetch.CheckUserAgent(r.UserAgent); !ok {
-		return fmt.Errorf("User-Agent must be at most %d printable ASCII characters", fetch.MaxUserAgent)
+	// The value goes into a request header exactly as given, so one with
+	// space around it is refused here rather than trimmed. The handlers trim
+	// what they accept first; a check that trimmed would pass a value that
+	// Fetch then refuses or the request carries altered.
+	if err := fetch.ValidateUserAgent(r.UserAgent); err != nil {
+		return err
 	}
 
 	return nil
