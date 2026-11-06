@@ -162,6 +162,17 @@ class CheckTests(unittest.TestCase):
         self.fixture.write('docs/licenses/README.md', '')
         self.assertProblem('example.com_linked@v1.2.0_GENERATED-HEADER-NOTICES is neither linked')
 
+    def test_licensing_guide_may_link_to_a_notice_or_give_its_path(self):
+        name = 'example.com_linked@v1.2.0_GENERATED-HEADER-NOTICES'
+        for reference in (f'[the generated-header notices](licenses/{name})', f'`docs/licenses/{name}`'):
+            self.fixture.write('docs/licensing.md', f'# Licensing\n\nSee {reference}.\n')
+            problems, _, _ = self.fixture.check()
+            self.assertEqual(problems, [], reference)
+        old = name.replace('v1.2.0', 'v1.1.0')
+        self.fixture.write('docs/licensing.md', f'# Licensing\n\nSee [the notices](licenses/{name}) '
+                                                f'and [the old ones](licenses/{old}).\n')
+        self.assertProblem(f'docs/licensing.md names {old}, which docs/licenses/ does not contain')
+
     def test_guide_names_a_missing_notice(self):
         self.fixture.edit('docs/licensing.md', 'v1.2.0_GENERATED', 'v1.1.0_GENERATED')
         self.assertProblem('docs/licensing.md names example.com_linked@v1.1.0_GENERATED-HEADER-NOTICES, which docs/licenses/ does not contain')

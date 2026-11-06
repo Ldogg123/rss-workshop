@@ -29,7 +29,9 @@ MODULE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._~/-]*')
 VERSION = re.compile(r'v[0-9][A-Za-z0-9.+-]*')
 LINK = re.compile(r'\[[^\]]*\]\(licenses/([^)\s]+)\)')
 # A copied module notice is named <module path, / as _>@<version>_<upstream file>.
-NOTICE = re.compile(r'(?<![\w.~/@-])[A-Za-z0-9][\w.~-]*@v[0-9][A-Za-z0-9.+-]*_[\w.-]*[\w-]')
+# A guide may give it bare, link to it in licenses/ or give its docs/licenses/
+# path, so a / may precede it.
+NOTICE = re.compile(r'(?<![\w.~@-])[A-Za-z0-9][\w.~-]*@v[0-9][A-Za-z0-9.+-]*_[\w.-]*[\w-]')
 # Upstream files at a module's root that a copy must carry. AUTHORS and PATENTS
 # are not notices the licenses require, and the repository does not copy them.
 UPSTREAM = re.compile(r'(?i)(licen[cs]e|copying|notice)([-._][\w.-]*)?')
