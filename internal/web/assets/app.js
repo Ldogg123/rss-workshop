@@ -41,11 +41,13 @@ async function load(){
  if(!$('#editor').hidden)renderHelp();
  $('#empty').hidden=feeds.length>0;$('#export-recipes').hidden=feeds.length===0;const list=$('#feeds');list.replaceChildren();
  for(const f of feeds){
-  const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',!f.enabled?'Paused':f.error?'Needs attention':f.last_success.startsWith('0001-')?'Pending':'Active','badge'+(f.error?' error':'')));card.append(top);
+  const held=f.enabled&&f.held;
+  const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',!f.enabled?'Paused':held?'Waiting to retry':f.error?'Needs attention':f.last_success.startsWith('0001-')?'Pending':'Active','badge'+(f.error||held?' error':'')));card.append(top);
   const source=node('a',f.url,'source');source.href=f.url;source.target='_blank';source.rel='noopener noreferrer';card.append(source);
-  const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',f.enabled?when(f.next_run):'Paused']]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
+  const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',!f.enabled?'Paused':held?'Delayed after a failed save':when(f.next_run)]]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
   const libraryFilters=window.rssLibrary?.names(f.filter_ids||[])||[];
   if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
+  if(held)card.append(node('p','Waiting to retry a failed database write. The last refresh could not be saved; it is retried after a delay, or now with Refresh.','diagnostic feed-held'));
   if(f.error)card.append(node('p',f.error,'diagnostic'));
   const actions=node('div',undefined,'feed-actions');actions.append(action('Edit',()=>openEditor(f)),action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}`,'PUT',payload(f,!f.enabled));await load();}),action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'));card.append(actions);
   const diagnostics=node('button','Diagnostics','quiet feed-diagnostics');diagnostics.type='button';diagnostics.onclick=()=>window.rssDiagnostics.open(f);diagnostics.dataset.feedId=f.id;actions.append(diagnostics);

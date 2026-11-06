@@ -47,14 +47,19 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 	metric("rss_workshop_build_info", "Build identity of the running server.", "gauge")
 	value("rss_workshop_build_info", `{version="`+escapeLabel(a.Version)+`"}`, 1)
 
-	enabled, due, failing, items := 0, 0, 0, 0
+	enabled, due, held, failing, items := 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, f := range feeds {
 		items += f.Count
 		if f.Enabled {
 			enabled++
+			// A held feed still counts as due, as its stored schedule says, so
+			// this series means what it always has; held says why it waits.
 			if !f.NextRun.After(now) {
 				due++
+			}
+			if a.Scheduler.Held(f.ID) {
+				held++
 			}
 		}
 		if f.Failures > 0 {
@@ -68,6 +73,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		{"rss_workshop_feeds", "Feeds in the library.", len(feeds)},
 		{"rss_workshop_feeds_enabled", "Feeds set to refresh automatically.", enabled},
 		{"rss_workshop_feeds_due", "Enabled feeds whose next refresh is due.", due},
+		{"rss_workshop_feeds_held", "Enabled feeds waiting to retry a refresh the database could not store.", held},
 		{"rss_workshop_feeds_failing", "Feeds whose last refresh failed.", failing},
 		{"rss_workshop_items", "Stories saved across all feeds.", items},
 	} {

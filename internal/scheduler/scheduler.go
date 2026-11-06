@@ -40,6 +40,7 @@ type Scheduler struct {
 	// the feed down: its schedule rolls back with the rest of the transaction
 	// and the next tick refetches the source a second later, indefinitely. This
 	// keeps that backoff in memory, where a failing database cannot erase it.
+	// Retry lifts a hold early without forgetting its failures.
 	held map[string]hold
 	wg   sync.WaitGroup
 }
@@ -76,8 +77,11 @@ func (s *Scheduler) reserve(id string) bool {
 func (s *Scheduler) release(id string) { s.mu.Lock(); delete(s.active, id); <-s.slots; s.mu.Unlock() }
 
 // hold backs a feed off after its result could not be stored, and reports how
-// long until it is tried again. The delay doubles per consecutive failure to a
-// daily ceiling, matching the backoff the database applies when a fetch fails.
+// long until it is tried again. The delay doubles per consecutive failure from
+// two minutes up to 1,024 minutes, about 17 hours: the same steps the database
+// takes after a failed fetch. Only a source's Retry-After can push that
+// backoff to its 24-hour cap, and a failed write has none, so a hold never
+// reaches it.
 func (s *Scheduler) hold(id string) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -99,9 +103,12 @@ func (s *Scheduler) Held(id string) bool {
 }
 
 // Retry lets a held feed run at its stored due time instead of when the hold
-// expires. The failure count stays, so a write that fails again holds the
-// feed twice as long as the last one rather than starting over at two
-// minutes.
+// expires. Callers use it once the database has just accepted a write for the
+// feed: a manual refresh, an editor save or a resume, each an authenticated
+// request. That write proves less than a stored result would, because a disk
+// can refuse new stories while still accepting a small update, so the failure
+// count stays: a write that fails again holds the feed twice as long as the
+// last one rather than starting over at two minutes.
 func (s *Scheduler) Retry(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

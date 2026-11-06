@@ -14,26 +14,10 @@ import (
 
 // blockItemWrites makes storing an item fail while reads keep working, which is
 // what a full disk or a revoked permission looks like to the scheduler. The
-// trigger syntax differs per backend, so this mirrors the fixture in
-// internal/store/migrations_test.go; the PostgreSQL matrix runs these same tests.
+// PostgreSQL matrix runs these same tests with that backend's trigger.
 func blockItemWrites(t *testing.T, s *store.Store) func() {
 	t.Helper()
-	ctx := context.Background()
-	create := `CREATE TRIGGER block_item_writes BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'disk full'); END`
-	drop := "DROP TRIGGER block_item_writes"
-	if testutil.PostgresURL(t) != "" {
-		create = `CREATE FUNCTION block_item_writes() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$;
-CREATE TRIGGER block_item_writes BEFORE INSERT ON items FOR EACH ROW EXECUTE FUNCTION block_item_writes()`
-		drop = "DROP TRIGGER block_item_writes ON items"
-	}
-	if _, err := s.DB.ExecContext(ctx, create); err != nil {
-		t.Fatal(err)
-	}
-	return func() {
-		if _, err := s.DB.ExecContext(ctx, drop); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return testutil.BlockItemWrites(t, s.DB)
 }
 
 // A failed write rolls back the whole transaction, including the feed's next
@@ -156,5 +140,78 @@ func TestHoldsAreForgottenForDeletedFeeds(t *testing.T) {
 	}
 	if !jobs.Held(f.ID) {
 		t.Error("a hold for a live feed was dropped")
+	}
+}
+
+// A manual refresh, an editor save or a resume shows that the database
+// accepts a write for the feed again. Each must let a held feed run now rather
+// than when the hold expires: before Retry, Refresh said "queued" and then
+// nothing happened for up to 17 hours. The failure count is kept, so a write
+// that fails again holds the feed twice as long as before instead of starting
+// over at two minutes.
+func TestRetryReleasesAHoldButKeepsItsBackoff(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	p := newPageFetcher(listPage(1), articlePages(1))
+	r := fullRecipe()
+	r.Full = nil
+	jobs := New(s, p, 4, 10*time.Second)
+	f := saveFeed(t, jobs, r)
+	tick := func() { t.Helper(); jobs.tick(ctx); jobs.Wait() }
+	retryIn := func() time.Duration {
+		jobs.mu.Lock()
+		defer jobs.mu.Unlock()
+		return time.Until(jobs.held[f.ID].until)
+	}
+	near := func(got, want time.Duration) bool { return got <= want && got > want-10*time.Second }
+
+	restore := blockItemWrites(t, s)
+	tick()
+	if got := p.calls.Load(); got != 1 || !jobs.Held(f.ID) || !near(retryIn(), 2*time.Minute) {
+		t.Fatalf("first unsaved refresh: %d fetches, held=%v for %v", got, jobs.Held(f.ID), retryIn())
+	}
+	// Queueing alone is what the Refresh button used to do: the hold still wins.
+	if err := s.Queue(ctx, f.ID); err != nil {
+		t.Fatal(err)
+	}
+	tick()
+	if got := p.calls.Load(); got != 1 {
+		t.Fatalf("a held feed was fetched %d times without a retry", got)
+	}
+	jobs.Retry(f.ID)
+	if jobs.Held(f.ID) {
+		t.Fatal("Retry left the feed held")
+	}
+	tick()
+	tick()
+	if got := p.calls.Load(); got != 2 {
+		t.Fatalf("source fetched %d times; want one retry, then a new hold", got)
+	}
+	if !jobs.Held(f.ID) || !near(retryIn(), 4*time.Minute) {
+		t.Fatalf("a second unsaved refresh held the feed for %v; want twice the first hold", retryIn())
+	}
+
+	// A stored result forgets the failures entirely.
+	restore()
+	jobs.Retry(f.ID)
+	tick()
+	if items, err := s.Items(ctx, f.ID); err != nil || len(items) != 1 || jobs.Held(f.ID) {
+		t.Fatalf("recovery stored %d items, held=%v: %v", len(items), jobs.Held(f.ID), err)
+	}
+	// Retrying a feed that was never held creates nothing to forget.
+	jobs.Retry("a-feed-that-was-never-held")
+	jobs.mu.Lock()
+	_, remembered := jobs.held[f.ID]
+	entries := len(jobs.held)
+	jobs.mu.Unlock()
+	if remembered {
+		t.Error("a stored result kept the feed's hold failures")
+	}
+	if entries != 0 {
+		t.Error("Retry created a hold")
 	}
 }
