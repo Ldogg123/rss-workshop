@@ -706,6 +706,8 @@ func TestEventDescriptions(t *testing.T) {
 	}{
 		{Event{Kind: Failing, Feed: "News", Failures: 1, Error: "boom"}, "Failing: News - 1 refresh in a row failed. Error: boom"},
 		{Event{Kind: Recovered, Feed: "News", Failures: 3}, "Recovered: News - refreshed successfully after 3 refreshes in a row failed."},
+		// After an editor save reset the count.
+		{Event{Kind: Recovered, Feed: "News"}, "Recovered: News - refreshed successfully.\n"},
 		{Event{Kind: NotSaved, Feed: "News", Error: "disk full"}, "Not saved: News - the database refused this refresh"},
 		{Event{Kind: DBUnavailable, Error: "database is locked"}, "Database unavailable: the scheduler cannot read the feed library"},
 		{Event{Kind: DBAvailable}, "Database available again"},

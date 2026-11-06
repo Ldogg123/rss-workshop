@@ -154,6 +154,88 @@ func TestFailingAndRecoveredFollowTheStoredFailureCount(t *testing.T) {
 	}
 }
 
+// Saving a feed in the editor resets its failure count, and the editor is how
+// an operator repairs a broken selector. A feed reported as failing still
+// reports its recovery after that, or its failing alert would stand
+// unanswered; one that never reached the threshold stays silent.
+func TestRecoveryAfterAnEditIsStillReported(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	source := &interruptingFetcher{err: errors.New("source returned HTTP 503")}
+	jobs := New(s, source, 1, 10*time.Second)
+	h, _ := alerting(jobs, 3)
+	captureLog(t)
+	f := namedFeed(t, s, "Evening news")
+	run := func(times int) []notify.Event {
+		for range times {
+			jobs.refresh(ctx, reload(t, s, f.ID))
+		}
+		return h.take()
+	}
+	edit := func() {
+		t.Helper()
+		if _, err := s.Save(ctx, reload(t, s, f.ID)); err != nil {
+			t.Fatal(err)
+		}
+		if stored := reload(t, s, f.ID); stored.Failures != 0 {
+			t.Fatalf("the save kept %d failures", stored.Failures)
+		}
+	}
+
+	if events := run(3); len(events) != 1 || events[0].Kind != notify.Failing {
+		t.Fatalf("at the threshold: %v", kinds(events))
+	}
+	edit()
+	source.err = nil
+	if events := run(1); len(events) != 1 || events[0] != (notify.Event{Kind: notify.Recovered, Feed: "Evening news", FeedID: f.ID}) {
+		t.Fatalf("recovery after an edit: %+v", events)
+	}
+	if events := run(1); len(events) != 0 {
+		t.Fatalf("a second success: %v", kinds(events))
+	}
+
+	// An edit that does not fix it: the feed fails again below the threshold,
+	// then recovers, which still answers the alert.
+	source.err = errors.New("source returned HTTP 503")
+	if events := run(3); len(events) != 1 || events[0].Kind != notify.Failing {
+		t.Fatalf("a new streak: %v", kinds(events))
+	}
+	edit()
+	run(1)
+	source.err = nil
+	if events := run(1); len(events) != 1 || events[0].Kind != notify.Recovered || events[0].Failures != 1 {
+		t.Fatalf("recovery after an edit and a failure: %+v", events)
+	}
+
+	// Below the threshold nothing was reported, so nothing is answered.
+	source.err = errors.New("source returned HTTP 503")
+	run(2)
+	edit()
+	source.err = nil
+	if events := run(1); len(events) != 0 {
+		t.Fatalf("a feed that never reached the threshold: %v", kinds(events))
+	}
+
+	// What is remembered for a deleted feed goes with it.
+	source.err = errors.New("source returned HTTP 503")
+	run(3)
+	if err := s.Delete(ctx, f.ID); err != nil {
+		t.Fatal(err)
+	}
+	jobs.tick(ctx)
+	jobs.Wait()
+	jobs.alerts.mu.Lock()
+	left := len(jobs.alerts.reported)
+	jobs.alerts.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d reported feeds remembered after the delete", left)
+	}
+}
+
 // A result thrown away because the feed was edited or deleted changed nothing
 // stored, so it is neither a failure nor a recovery.
 func TestDiscardedRefreshesRaiseNoEvent(t *testing.T) {

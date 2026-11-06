@@ -26,12 +26,36 @@ const alertInterval = time.Hour
 type alerts struct {
 	mu  sync.Mutex
 	now func() time.Time
+	// reported holds the feeds whose failing went out and which have not
+	// recovered since. An editor save resets the stored count, so without it a
+	// feed repaired in the editor would recover from 0 and never answer its
+	// alert. It lives in memory: after a restart the stored count decides.
+	reported map[string]bool
 	// notSaved is when the last not_saved went out.
 	notSaved time.Time
 	// unavailable is when the last db_unavailable went out, and announced
 	// whether the outage it reported is still unresolved.
 	unavailable time.Time
 	announced   bool
+}
+
+// forget drops reported feeds that no longer exist, so a long-running process
+// does not accumulate deleted ones.
+func (a *alerts) forget(fs []model.Feed) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.reported) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(fs))
+	for _, f := range fs {
+		live[f.ID] = true
+	}
+	for id := range a.reported {
+		if !live[id] {
+			delete(a.reported, id)
+		}
+	}
 }
 
 func (a *alerts) clock() time.Time {
@@ -55,19 +79,32 @@ func (a *alerts) due(last *time.Time) bool {
 // alertRefresh reports a stored refresh. f is the feed as the refresh read it,
 // so its failure count is the one before this result: the store saved
 // f.Failures+1 for a failure and 0 for a success. A feed fails once per streak
-// exactly at the threshold, and recovers only from at or past it.
+// exactly at the threshold, and recovers from at or past it, or from any
+// count once its failing went out in this process.
 func (s *Scheduler) alertRefresh(f model.Feed, runErr error) {
 	if s.Notifier == nil {
 		return
 	}
 	threshold := max(s.NotifyAfter, 1)
+	s.alerts.mu.Lock()
+	reported := s.alerts.reported[f.ID]
+	var event *notify.Event
 	switch {
 	case runErr != nil && f.Failures+1 == threshold:
-		s.Notifier.Notify(notify.Event{Kind: notify.Failing, Feed: f.Title, FeedID: f.ID, Failures: f.Failures + 1,
+		if s.alerts.reported == nil {
+			s.alerts.reported = map[string]bool{}
+		}
+		s.alerts.reported[f.ID] = true
+		event = &notify.Event{Kind: notify.Failing, Feed: f.Title, FeedID: f.ID, Failures: f.Failures + 1,
 			// What the store saved as the feed's error, and the card shows.
-			Error: diagnostics.SafeText(runErr.Error(), 1000)})
-	case runErr == nil && f.Failures >= threshold:
-		s.Notifier.Notify(notify.Event{Kind: notify.Recovered, Feed: f.Title, FeedID: f.ID, Failures: f.Failures})
+			Error: diagnostics.SafeText(runErr.Error(), 1000)}
+	case runErr == nil && (f.Failures >= threshold || reported):
+		delete(s.alerts.reported, f.ID)
+		event = &notify.Event{Kind: notify.Recovered, Feed: f.Title, FeedID: f.ID, Failures: f.Failures}
+	}
+	s.alerts.mu.Unlock()
+	if event != nil {
+		s.Notifier.Notify(*event)
 	}
 }
 

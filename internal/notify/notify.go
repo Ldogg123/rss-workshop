@@ -374,6 +374,11 @@ func describe(e Event) string {
 	case Failing:
 		return fmt.Sprintf("Failing: %s - %s in a row failed.%s", e.Feed, refreshes(e.Failures), reason)
 	case Recovered:
+		if e.Failures == 0 {
+			// A feed reported as failing, repaired in the editor, whose save
+			// reset the count.
+			return fmt.Sprintf("Recovered: %s - refreshed successfully.", e.Feed)
+		}
 		return fmt.Sprintf("Recovered: %s - refreshed successfully after %s in a row failed.", e.Feed, refreshes(e.Failures))
 	case NotSaved:
 		return fmt.Sprintf("Not saved: %s - the database refused this refresh, so nothing from it was stored and the feed waits to retry. Other feeds are likely affected; this alert repeats at most once an hour while results are refused.%s", e.Feed, reason)

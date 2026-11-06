@@ -350,6 +350,7 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 		}
 	}
 	s.forgetHolds(fs)
+	s.alerts.forget(fs)
 	s.forgetFinished(listed)
 	for _, f := range fs {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
