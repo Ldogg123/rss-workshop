@@ -66,7 +66,7 @@ The table distinguishes runtime modules from tools and the wider module graph. A
 - a row names a module that has left the graph, or pins a version other than the one `go list -m all` selects;
 - a row links no notice, or links one that is missing or not named `<module path with / as _>@<version>_<upstream file>` for the pinned version;
 - a module notice in `docs/licenses/` is neither linked from the table nor named in [licensing](licensing.md), by file name as libc's generated-header notices are or by a link or path into `licenses/`, or names a module or version the table does not pin; or the licensing guide or `docs/licenses/README.md` names or links to a notice that does not exist;
-- for a linked module, a copied notice differs from the upstream file in the module cache, upstream no longer has that file, or a `LICENSE*`, `LICENCE*`, `COPYING*` or `NOTICE*` file at the module's root has no copy.
+- for a linked module, a copied notice differs from the upstream file in the module cache, upstream no longer has that file, or a file at the module's root whose name starts with `LICENSE`, `LICENCE`, `COPYING` or `NOTICE`, in any case and other than Go source, has no copy.
 
 Only linked modules are compared byte for byte, since the source of the others is often not downloaded, and a linked module missing from the cache is reported and skipped rather than failed. Go runs with `-mod=readonly` and `GOWORK=off`, so the check never edits `go.mod` or `go.sum` and ignores a local workspace. It uses Make's `GO`, as in `make release-test GO=/path/to/go`.
 

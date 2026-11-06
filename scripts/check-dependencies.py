@@ -32,9 +32,11 @@ LINK = re.compile(r'\[[^\]]*\]\(licenses/([^)\s]+)\)')
 # A guide may give it bare, link to it in licenses/ or give its docs/licenses/
 # path, so a / may precede it.
 NOTICE = re.compile(r'(?<![\w.~@-])[A-Za-z0-9][\w.~-]*@v[0-9][A-Za-z0-9.+-]*_[\w.-]*[\w-]')
-# Upstream files at a module's root that a copy must carry. AUTHORS and PATENTS
-# are not notices the licenses require, and the repository does not copy them.
-UPSTREAM = re.compile(r'(?i)(licen[cs]e|copying|notice)([-._][\w.-]*)?')
+# Upstream files at a module's root that a copy must carry: any name that starts
+# with one of these words, in any case, such as NOTICES or LICENSE2, except Go
+# source. AUTHORS and PATENTS are not notices the licenses require, and the
+# repository does not copy them.
+UPSTREAM = re.compile(r'(?i)(licen[cs]e|copying|notice)[\w.-]*')
 DEPS_FORMAT = '{{with .Module}}{{if not .Main}}{{.Path}}\t{{.Version}}\t{{with .Replace}}{{.Path}} {{.Version}}{{end}}\t{{.Dir}}{{end}}{{end}}'
 GRAPH_FORMAT = '{{if not .Main}}{{.Path}}\t{{.Version}}\t{{with .Replace}}{{.Path}} {{.Version}}{{end}}\t{{.Dir}}{{end}}'
 

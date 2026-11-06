@@ -204,9 +204,12 @@ class CheckTests(unittest.TestCase):
         self.assertProblem('example.com/other/v2 v2.0.1 ships LICENSE, which its row does not link')
 
     def test_new_upstream_notice_needs_a_copy(self):
-        (self.fixture.cache / 'example.com/linked@v1.2.0/LICENSE-SQLITE').write_bytes(b'blessing\n')
-        self.assertProblem('example.com/linked v1.2.0 ships LICENSE-SQLITE, which its row does not link; '
-                           'copy it to docs/licenses/example.com_linked@v1.2.0_LICENSE-SQLITE')
+        # The fixture's AUTHORS, PATENTS and license.go need no copy, as the
+        # matching tree shows; any other name starting with a notice word does.
+        for name in ('LICENSE-SQLITE', 'NOTICES', 'LICENSE2', 'COPYINGv3', 'licence.txt'):
+            (self.fixture.cache / 'example.com/linked@v1.2.0' / name).write_bytes(b'notice\n')
+            self.assertProblem(f'example.com/linked v1.2.0 ships {name}, which its row does not link; '
+                               f'copy it to docs/licenses/example.com_linked@v1.2.0_{name}')
 
     def test_module_missing_from_the_cache_is_reported_without_failing(self):
         self.fixture.runtime['example.com/other/v2'].directory = ''
