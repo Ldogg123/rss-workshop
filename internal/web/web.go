@@ -13,7 +13,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"rss-workshop/internal/auth"
@@ -24,6 +26,7 @@ import (
 	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
+	"rss-workshop/internal/notify"
 	"rss-workshop/internal/scheduler"
 	"rss-workshop/internal/store"
 )
@@ -41,6 +44,12 @@ type App struct {
 	// MetricsToken enables GET /metrics. Blank leaves the route returning 404,
 	// so counters labelled with feed titles are never published by default.
 	MetricsToken string
+	// Notifier is the configured health notification channel, or nil when
+	// notifications are off.
+	Notifier *notify.Notifier
+
+	testMu   sync.Mutex
+	lastTest time.Time
 }
 
 func (a *App) Handler() http.Handler {
@@ -98,6 +107,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/filters", a.protect(a.saveFilter))
 	mux.HandleFunc("PUT /api/filters/{id}", a.protect(a.saveFilter))
 	mux.HandleFunc("DELETE /api/filters/{id}", a.protect(a.removeFilter))
+	mux.HandleFunc("POST /api/notifications/test", a.protect(a.testNotification))
 	// Not under /api and not session-authenticated: a scraper presents a bearer
 	// token instead. The handler returns 404 when no token is configured.
 	mux.HandleFunc("GET /metrics", a.metrics)
@@ -280,7 +290,45 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 	if a.Scheduler.FlareSolverr != nil {
 		solverActive, solverLimit = a.Scheduler.FlareSolverr.Stats()
 	}
-	reply(w, 200, map[string]any{"feeds": fs, "active": active, "capacity": limit, "due": due, "browser": a.browserStats(), "flaresolverr": map[string]int{"active": solverActive, "capacity": solverLimit}})
+	reply(w, 200, map[string]any{"feeds": fs, "active": active, "capacity": limit, "due": due, "browser": a.browserStats(), "flaresolverr": map[string]int{"active": solverActive, "capacity": solverLimit},
+		"notifications": a.Notifier.Kind()})
+}
+
+// testInterval spaces the dashboard's test notifications. Each is a request to
+// the configured service, so a script or a repeated click must not be able to
+// make this server send them continuously.
+const testInterval = 10 * time.Second
+
+// testNotification sends a fixed message with no feed data through the
+// configured channel and reports the outcome in words that never include the
+// endpoint or its token.
+func (a *App) testNotification(w http.ResponseWriter, r *http.Request) {
+	if e := decode(w, r, &struct{}{}); e != nil {
+		failure(w, 400, e)
+		return
+	}
+	if a.Notifier == nil {
+		failure(w, 409, errors.New("notifications are off: set NOTIFY_URL, in .env for Docker Compose or exported for a native run, then recreate the container with docker compose up -d or start the native server again; see docs/operations.md#notifications"))
+		return
+	}
+	a.testMu.Lock()
+	wait := testInterval - time.Since(a.lastTest)
+	if !a.lastTest.IsZero() && wait > 0 {
+		a.testMu.Unlock()
+		seconds := int((wait + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		failure(w, 429, fmt.Errorf("a test notification was just sent; try again in %d seconds", seconds))
+		return
+	}
+	a.lastTest = time.Now()
+	a.testMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	if e := a.Notifier.Test(ctx); e != nil {
+		failure(w, 502, fmt.Errorf("test notification failed: %w", e))
+		return
+	}
+	reply(w, 200, map[string]bool{"sent": true})
 }
 
 // trimRecipe removes the space around a submitted User-Agent, as

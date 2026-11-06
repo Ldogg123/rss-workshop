@@ -242,3 +242,94 @@ func TestFetchUserAgentConfig(t *testing.T) {
 		}
 	}
 }
+
+// NOTIFY_URL and NOTIFY_TOKEN are secrets: webhook URLs carry tokens in their
+// path or query, and a topic on a public ntfy server works as a password. A
+// startup error must say what is wrong without repeating either, because it
+// is the line Compose shows in docker compose logs.
+func TestNotificationConfig(t *testing.T) {
+	clean := func(t *testing.T) {
+		t.Helper()
+		for _, key := range []string{"ADMIN_PASSWORD_HASH", "CHROMIUM_PATH", "FLARESOLVERR_URL",
+			"FLARESOLVERR_TIMEOUT", "FLARESOLVERR_SLOTS", "FETCH_TIMEOUT", "BROWSER_SLOTS",
+			"STATIC_WORKERS", "MAX_ITEMS", "PUBLIC_BASE_URL", "DATABASE_URL", "LOG_LEVEL", "LOG_FORMAT",
+			"METRICS_TOKEN", "UPGRADE_BACKUP", "FETCH_USER_AGENT",
+			"NOTIFY_URL", "NOTIFY_FORMAT", "NOTIFY_TOKEN", "NOTIFY_AFTER_FAILURES"} {
+			t.Setenv(key, "")
+		}
+		t.Setenv("ADMIN_PASSWORD", "long-test-password")
+	}
+
+	t.Run("off by default", func(t *testing.T) {
+		clean(t)
+		c, err := Load()
+		if err != nil || c.NotifyURL != "" || c.NotifyToken != "" || c.NotifyFormat != "json" || c.NotifyAfterFailures != 3 {
+			t.Fatalf("defaults: url=%q token=%q format=%q after=%d, %v", c.NotifyURL, c.NotifyToken, c.NotifyFormat, c.NotifyAfterFailures, err)
+		}
+	})
+
+	t.Run("valid", func(t *testing.T) {
+		for _, tc := range []struct{ url, format, token, after, wantFormat string }{
+			// A private address is allowed: the endpoint is trusted configuration.
+			{" http://192.168.1.20:8090/rss-alerts ", "ntfy", " tk_fixturetoken0123456789 ", "1", "ntfy"},
+			{"https://hooks.example/notify?token=fixture-secret", "JSON", "", "100", "json"},
+			{"https://ntfy.example/topic", " Ntfy ", "", "", "ntfy"},
+		} {
+			clean(t)
+			t.Setenv("NOTIFY_URL", tc.url)
+			t.Setenv("NOTIFY_FORMAT", tc.format)
+			t.Setenv("NOTIFY_TOKEN", tc.token)
+			t.Setenv("NOTIFY_AFTER_FAILURES", tc.after)
+			c, err := Load()
+			if err != nil {
+				t.Fatalf("%s rejected: %v", tc.url, err)
+			}
+			if c.NotifyURL != strings.TrimSpace(tc.url) || c.NotifyToken != strings.TrimSpace(tc.token) || c.NotifyFormat != tc.wantFormat {
+				t.Errorf("read url=%q token=%q format=%q", c.NotifyURL, c.NotifyToken, c.NotifyFormat)
+			}
+		}
+	})
+
+	const secret = "fixture-secret-value"
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"credentials", map[string]string{"NOTIFY_URL": "https://user:" + secret + "@hooks.example/notify"}, "NOTIFY_URL"},
+		{"fragment", map[string]string{"NOTIFY_URL": "https://hooks.example/" + secret + "#section"}, "NOTIFY_URL"},
+		{"empty fragment", map[string]string{"NOTIFY_URL": "https://hooks.example/" + secret + "#"}, "NOTIFY_URL"},
+		{"scheme", map[string]string{"NOTIFY_URL": "ftp://hooks.example/" + secret}, "NOTIFY_URL"},
+		{"opaque", map[string]string{"NOTIFY_URL": "mailto:" + secret + "@example.com"}, "NOTIFY_URL"},
+		{"relative", map[string]string{"NOTIFY_URL": "/notify/" + secret}, "NOTIFY_URL"},
+		{"no host", map[string]string{"NOTIFY_URL": "http:///" + secret}, "NOTIFY_URL"},
+		{"unparseable", map[string]string{"NOTIFY_URL": "http://hooks.example/%zz" + secret}, "NOTIFY_URL"},
+		{"line break", map[string]string{"NOTIFY_URL": "http://hooks.example/" + secret + "\nX: y"}, "NOTIFY_URL"},
+		{"token without URL", map[string]string{"NOTIFY_TOKEN": secret}, "NOTIFY_TOKEN"},
+		{"token line break", map[string]string{"NOTIFY_URL": "https://ntfy.example/topic", "NOTIFY_TOKEN": secret + "\r\nX-Injected: 1"}, "NOTIFY_TOKEN"},
+		{"token space", map[string]string{"NOTIFY_URL": "https://ntfy.example/topic", "NOTIFY_TOKEN": secret + " more"}, "NOTIFY_TOKEN"},
+		{"token non-ASCII", map[string]string{"NOTIFY_URL": "https://ntfy.example/topic", "NOTIFY_TOKEN": secret + "é"}, "NOTIFY_TOKEN"},
+		{"token too long", map[string]string{"NOTIFY_URL": "https://ntfy.example/topic", "NOTIFY_TOKEN": secret + strings.Repeat("x", 4096)}, "NOTIFY_TOKEN"},
+		{"format", map[string]string{"NOTIFY_FORMAT": "slack"}, "NOTIFY_FORMAT"},
+		{"threshold zero", map[string]string{"NOTIFY_AFTER_FAILURES": "0"}, "NOTIFY_AFTER_FAILURES"},
+		{"threshold too high", map[string]string{"NOTIFY_AFTER_FAILURES": "101"}, "NOTIFY_AFTER_FAILURES"},
+		{"threshold not a number", map[string]string{"NOTIFY_AFTER_FAILURES": "three"}, "NOTIFY_AFTER_FAILURES"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clean(t)
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			_, err := Load()
+			if err == nil {
+				t.Fatal("accepted an invalid notification setting")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error does not name %s: %v", tc.want, err)
+			}
+			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "hooks.example") {
+				t.Errorf("error repeats the secret value: %v", err)
+			}
+		})
+	}
+}

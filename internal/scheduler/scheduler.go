@@ -71,6 +71,13 @@ type Scheduler struct {
 	// was saved after the read, and would start it again straight away.
 	finished map[string]time.Time
 	wg       sync.WaitGroup
+
+	// Notifier, when set, hears when a feed reaches NotifyAfter failed
+	// refreshes in a row or recovers from that, and when the database stops
+	// storing results or serving the library.
+	Notifier    Notifier
+	NotifyAfter int
+	alerts      alerts
 }
 
 type hold struct {
@@ -158,12 +165,12 @@ func (s *Scheduler) solverFree() bool {
 }
 
 // hold backs a feed off after its result could not be stored, and reports how
-// long until it is tried again. The delay doubles per consecutive failure from
-// two minutes up to 1,024 minutes, about 17 hours: the same steps the database
-// takes after a failed fetch. Only a source's Retry-After can push that
-// backoff to its 24-hour cap, and a failed write has none, so a hold never
-// reaches it.
-func (s *Scheduler) hold(id string) time.Duration {
+// long until it is tried again and how many results in a row were not stored.
+// The delay doubles per consecutive failure from two minutes up to 1,024
+// minutes, about 17 hours: the same steps the database takes after a failed
+// fetch. Only a source's Retry-After can push that backoff to its 24-hour cap,
+// and a failed write has none, so a hold never reaches it.
+func (s *Scheduler) hold(id string) (time.Duration, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := s.held[id]
@@ -171,7 +178,7 @@ func (s *Scheduler) hold(id string) time.Duration {
 	wait := min(time.Duration(1<<min(h.failures, 10))*time.Minute, 24*time.Hour)
 	h.until = time.Now().Add(wait)
 	s.held[id] = h
-	return wait
+	return wait, h.failures
 }
 
 // Held reports whether a feed is waiting out a hold, so a tick will not
@@ -318,9 +325,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 			// be on the line: rotation would otherwise discard the first
 			// occurrence, which is the one that says what actually broke.
 			slog.Error("scheduler database read failed", "error", e)
+			s.alertListed(e)
 		}
 		return
 	}
+	s.alertListed(nil)
 	s.dispatch(ctx, fs, listed)
 }
 
@@ -451,12 +460,14 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 		// Hold it here or the source gets refetched every second for as long as
 		// the database stays unwritable. Reporting success below would also be a
 		// lie: no story, run record or timestamp survived.
-		wait := s.hold(f.ID)
+		wait, streak := s.hold(f.ID)
 		slog.Error("refresh not saved", "feed", f.Title, "feed_id", f.ID, "error", err,
 			"retry_in", wait, "note", "nothing was stored, including this feed's schedule")
+		s.alertNotSaved(f, streak, err)
 		return
 	}
 	s.released(f.ID)
+	s.alertRefresh(f, e)
 	// A failure is the line an operator actually needs, so it carries the reason
 	// and rises above the routine ones. Titles are the operator's own labels;
 	// source URLs and reader tokens stay out of the log.

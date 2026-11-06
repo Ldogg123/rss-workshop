@@ -33,6 +33,14 @@ class SmokeEnvironmentTests(unittest.TestCase):
                     self.assertEqual(env['RSS_DATA_DIR'], '/tmp/private-fixture/data')
                     self.assertEqual(env['POSTGRES_DATA_DIR'], '/tmp/private-fixture/postgres-data')
 
+    def test_notifications_never_reach_an_operator_service(self):
+        with mock.patch.dict(os.environ, {'NOTIFY_URL': 'https://ntfy.sh/operator-private-topic',
+                                         'NOTIFY_TOKEN': 'operator-token'}):
+            for compose in (False, True):
+                env = smoke.smoke_environment('/tmp/fixture', 'fixture-password', 'http://localhost:1234', 1234, False, compose)
+                self.assertEqual(env['NOTIFY_URL'], '')
+                self.assertEqual(env['NOTIFY_TOKEN'], '')
+
     def test_only_explicit_native_postgres_mode_uses_test_database(self):
         with mock.patch.dict(os.environ, {'DATABASE_URL': 'postgres://production/private',
                                          'RSS_TEST_POSTGRES_URL': 'postgres://test/disposable'}):

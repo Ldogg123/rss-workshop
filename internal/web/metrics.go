@@ -113,6 +113,14 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		value(m.name, "", m.v)
 	}
 
+	// Messages, not events: a message lists every event of its window.
+	sent, failed, dropped := a.Notifier.Stats()
+	metric("rss_workshop_notifications_total", "Health notification messages by outcome: sent, or failed after every attempt.", "counter")
+	value("rss_workshop_notifications_total", `{result="sent"}`, sent)
+	value("rss_workshop_notifications_total", `{result="failed"}`, failed)
+	metric("rss_workshop_notification_events_dropped_total", "Health notification events dropped because the delivery queue was full.", "counter")
+	value("rss_workshop_notification_events_dropped_total", "", dropped)
+
 	if len(feeds) > maxMetricFeeds {
 		feeds = feeds[:maxMetricFeeds]
 	}

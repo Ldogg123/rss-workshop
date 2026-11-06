@@ -53,6 +53,8 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	defer func() { cancel(); jobs.Wait() }()
 	server := httptest.NewUnstartedServer(nil)
 	app := &App{Store: s, Scheduler: jobs, Auth: a}
+	service := newReceiver(t, 200)
+	withNotifier(t, app, service.URL+"/rss-alerts")
 	server.Config.Handler = app.Handler()
 	server.Start()
 	defer server.Close()
@@ -136,6 +138,7 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testLibraryFiltersUI(t, tab, s)
 		testFeedStateUI(t, tab, s, f)
 		testDashboardUI(t, tab, s)
+		testNotificationsUI(t, tab, service)
 	}
 	var overflow bool
 	if e = chromedp.Run(tab, chromedp.EmulateViewport(390, 844), chromedp.Evaluate(`document.documentElement.scrollWidth>innerWidth+1`, &overflow)); e != nil || overflow {

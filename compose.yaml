@@ -26,6 +26,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      NOTIFY_URL: ${NOTIFY_URL:-}
+      NOTIFY_FORMAT: ${NOTIFY_FORMAT:-json}
+      NOTIFY_TOKEN: ${NOTIFY_TOKEN:-}
+      NOTIFY_AFTER_FAILURES: ${NOTIFY_AFTER_FAILURES:-3}
       UPGRADE_BACKUP: ${UPGRADE_BACKUP:-true}
     volumes:
       - type: bind

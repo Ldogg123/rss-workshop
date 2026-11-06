@@ -1,0 +1,362 @@
+package scheduler
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"rss-workshop/internal/model"
+	"rss-workshop/internal/notify"
+	"rss-workshop/internal/store"
+)
+
+// heard records the events a scheduler raises.
+type heard struct {
+	mu     sync.Mutex
+	events []notify.Event
+}
+
+func (h *heard) Notify(e notify.Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.events = append(h.events, e)
+}
+
+// take returns the events since the last call.
+func (h *heard) take() []notify.Event {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := h.events
+	h.events = nil
+	return out
+}
+
+func kinds(events []notify.Event) []notify.Kind {
+	out := []notify.Kind{}
+	for _, e := range events {
+		out = append(out, e.Kind)
+	}
+	return out
+}
+
+// fakeClock lets a test move the hourly limits on without waiting.
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) advance(d time.Duration) { c.now = c.now.Add(d) }
+
+func alerting(jobs *Scheduler, after int) (*heard, *fakeClock) {
+	h, clock := &heard{}, &fakeClock{now: time.Now()}
+	jobs.Notifier, jobs.NotifyAfter = h, after
+	jobs.alerts.now = func() time.Time { return clock.now }
+	return h, clock
+}
+
+func namedFeed(t *testing.T, s *store.Store, title string) model.Feed {
+	t.Helper()
+	r := fullRecipe()
+	r.Full = nil
+	id, err := s.Save(context.Background(), model.Feed{Title: title, URL: "https://example.com/list", Interval: 60, Enabled: true, Recipe: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reload(t, s, id)
+}
+
+func reload(t *testing.T, s *store.Store, id string) model.Feed {
+	t.Helper()
+	f, err := s.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// Events are edges of the failure count the store already keeps: one when a
+// streak reaches the threshold, one when it ends. A restart reads the same
+// count, so it neither repeats an alert nor misses a recovery.
+func TestFailingAndRecoveredFollowTheStoredFailureCount(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	source := &interruptingFetcher{err: errors.New("source returned HTTP 503")}
+	jobs := New(s, source, 1, 10*time.Second)
+	h, _ := alerting(jobs, 3)
+	f := namedFeed(t, s, "Evening news")
+	run := func(times int) []notify.Event {
+		for range times {
+			jobs.refresh(ctx, reload(t, s, f.ID))
+		}
+		return h.take()
+	}
+
+	if events := run(2); len(events) != 0 {
+		t.Fatalf("below the threshold: %v", kinds(events))
+	}
+	events := run(1)
+	stored := reload(t, s, f.ID)
+	want := notify.Event{Kind: notify.Failing, Feed: "Evening news", FeedID: f.ID, Failures: 3, Error: stored.Error}
+	if len(events) != 1 || events[0] != want || stored.Failures != 3 {
+		t.Fatalf("at the threshold: %+v; want %+v", events, want)
+	}
+	if events := run(3); len(events) != 0 {
+		t.Fatalf("past the threshold: %v", kinds(events))
+	}
+
+	source.err = nil
+	events = run(1)
+	if len(events) != 1 || events[0] != (notify.Event{Kind: notify.Recovered, Feed: "Evening news", FeedID: f.ID, Failures: 6}) {
+		t.Fatalf("recovery: %+v", events)
+	}
+	if events := run(2); len(events) != 0 {
+		t.Fatalf("after recovery: %v", kinds(events))
+	}
+
+	// A new streak alerts again, and a restart in the middle of it neither
+	// repeats that alert nor forgets to report the recovery.
+	source.err = errors.New("source returned HTTP 503")
+	if events := run(3); len(events) != 1 || events[0].Kind != notify.Failing {
+		t.Fatalf("second streak: %v", kinds(events))
+	}
+	jobs = New(s, source, 1, 10*time.Second)
+	h, _ = alerting(jobs, 3)
+	if events := run(2); len(events) != 0 {
+		t.Fatalf("after a restart: %v", kinds(events))
+	}
+	source.err = nil
+	if events := run(1); len(events) != 1 || events[0].Kind != notify.Recovered || events[0].Failures != 5 {
+		t.Fatalf("recovery after a restart: %+v", events)
+	}
+
+	// A feed below the threshold recovers silently.
+	source.err = errors.New("source returned HTTP 503")
+	run(1)
+	source.err = nil
+	if events := run(1); len(events) != 0 {
+		t.Fatalf("a single failure reported a recovery: %v", kinds(events))
+	}
+}
+
+// A result thrown away because the feed was edited or deleted changed nothing
+// stored, so it is neither a failure nor a recovery.
+func TestDiscardedRefreshesRaiseNoEvent(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	source := &interruptingFetcher{err: errors.New("source unavailable")}
+	jobs := New(s, source, 1, 10*time.Second)
+	h, _ := alerting(jobs, 1)
+
+	edited := namedFeed(t, s, "Edited")
+	source.during = func() {
+		changed := edited
+		changed.Title = "Renamed"
+		if _, err := s.Save(ctx, changed); err != nil {
+			t.Error(err)
+		}
+	}
+	jobs.refresh(ctx, edited)
+	deleted := namedFeed(t, s, "Deleted")
+	source.during = func() {
+		if err := s.Delete(ctx, deleted.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	jobs.refresh(ctx, deleted)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("discarded failures raised %v", kinds(events))
+	}
+
+	// The same failure, stored, is an event.
+	source.during = nil
+	kept := namedFeed(t, s, "Kept")
+	jobs.refresh(ctx, kept)
+	if events := h.take(); len(events) != 1 || events[0].Kind != notify.Failing || events[0].Feed != "Kept" {
+		t.Fatalf("a stored failure at the threshold raised %v", kinds(events))
+	}
+
+	// A success thrown away is not a recovery either.
+	source.err = nil
+	failed := reload(t, s, kept.ID)
+	source.during = func() {
+		changed := failed
+		changed.Title = "Kept, renamed"
+		if _, err := s.Save(ctx, changed); err != nil {
+			t.Error(err)
+		}
+	}
+	jobs.refresh(ctx, failed)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("a discarded success raised %v", kinds(events))
+	}
+}
+
+// A database that refuses one result usually refuses them all, so the first
+// hold of a streak reports it, at most once an hour across every feed.
+func TestNotSavedReportsTheFirstHoldAtMostHourly(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	jobs := New(s, newPageFetcher(listPage(1), nil), 1, 10*time.Second)
+	h, clock := alerting(jobs, 3)
+	a, b, c := namedFeed(t, s, "Alpha"), namedFeed(t, s, "Beta"), namedFeed(t, s, "Gamma")
+	restore := blockItemWrites(t, s)
+
+	jobs.refresh(ctx, a)
+	events := h.take()
+	if len(events) != 1 || events[0].Kind != notify.NotSaved || events[0].Feed != "Alpha" || events[0].FeedID != a.ID || events[0].Error == "" {
+		t.Fatalf("first hold: %+v", events)
+	}
+	if !strings.Contains(events[0].Error, "disk full") && !strings.Contains(events[0].Error, "PostgreSQL") {
+		t.Errorf("the event does not say why: %q", events[0].Error)
+	}
+	clock.advance(10 * time.Minute)
+	jobs.refresh(ctx, b)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("a second feed within the hour: %v", kinds(events))
+	}
+	clock.advance(2 * time.Hour)
+	// Alpha's second hold continues its streak: Retry keeps the count.
+	jobs.Retry(a.ID)
+	jobs.refresh(ctx, a)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("a held feed failing again: %v", kinds(events))
+	}
+	jobs.refresh(ctx, c)
+	if events := h.take(); len(events) != 1 || events[0].Feed != "Gamma" {
+		t.Fatalf("a new streak after the hour: %+v", events)
+	}
+
+	// A stored result ends the streak; the next hold starts a new one, which
+	// is still subject to the hour.
+	restore()
+	jobs.refresh(ctx, a)
+	restore = blockItemWrites(t, s)
+	defer restore()
+	clock.advance(time.Minute)
+	jobs.refresh(ctx, a)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("within the hour of the last alert: %v", kinds(events))
+	}
+	clock.advance(time.Hour)
+	jobs.refresh(ctx, b)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("Beta is still in its first streak: %v", kinds(events))
+	}
+}
+
+// When the library cannot be read, the tick ends before any refresh, so no
+// feed event could report it. The tick reports it, hourly while it lasts, and
+// its end once.
+func TestDatabaseOutageIsReportedHourlyAndItsEndOnce(t *testing.T) {
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	broken, err := store.Open(filepath.Join(t.TempDir(), "broken.db"), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.DB.Close()
+	jobs := New(broken, newPageFetcher(listPage(1), nil), 1, 10*time.Second)
+	h, clock := alerting(jobs, 3)
+	captureLog(t)
+	ctx := context.Background()
+	tick := func(times int) []notify.Event {
+		for range times {
+			jobs.tick(ctx)
+		}
+		return h.take()
+	}
+
+	events := tick(5)
+	if len(events) != 1 || events[0].Kind != notify.DBUnavailable || events[0].Error == "" || events[0].Feed != "" {
+		t.Fatalf("outage: %+v", events)
+	}
+	clock.advance(59 * time.Minute)
+	if events := tick(3); len(events) != 0 {
+		t.Fatalf("within the hour: %v", kinds(events))
+	}
+	clock.advance(time.Minute)
+	if events := tick(3); len(events) != 1 || events[0].Kind != notify.DBUnavailable {
+		t.Fatalf("an hour on: %v", kinds(events))
+	}
+
+	jobs.Store = s
+	if events := tick(3); len(events) != 1 || events[0] != (notify.Event{Kind: notify.DBAvailable}) {
+		t.Fatalf("recovery: %+v", events)
+	}
+
+	// A second outage within the hour is not announced, so neither is its end.
+	jobs.Store = broken
+	clock.advance(10 * time.Minute)
+	if events := tick(3); len(events) != 0 {
+		t.Fatalf("a second outage within the hour: %v", kinds(events))
+	}
+	jobs.Store = s
+	if events := tick(3); len(events) != 0 {
+		t.Fatalf("the end of an unannounced outage: %v", kinds(events))
+	}
+
+	// A tick cut short by shutdown is not an outage.
+	jobs.Store = broken
+	clock.advance(2 * time.Hour)
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	jobs.tick(canceled)
+	if events := h.take(); len(events) != 0 {
+		t.Fatalf("shutdown raised %v", kinds(events))
+	}
+}
+
+// Notify must never hold up a refresh: a slow or unreachable notification
+// service fills the queue, and the next event is dropped instead.
+func TestFullNotificationQueueDoesNotDelayARefresh(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	n, err := notify.New("http://127.0.0.1:9/never-started", notify.JSON, "", "http://localhost:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	// Never started, so nothing drains the queue.
+	for range notify.QueueSize {
+		n.Notify(notify.Event{Kind: notify.Recovered, Feed: "Filler"})
+	}
+	jobs := New(s, &interruptingFetcher{err: errors.New("source unavailable")}, 1, 10*time.Second)
+	jobs.Notifier, jobs.NotifyAfter = n, 1
+	f := namedFeed(t, s, "Evening news")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		jobs.refresh(ctx, f)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refresh waited for room in the notification queue")
+	}
+	if stored := reload(t, s, f.ID); stored.Failures != 1 || stored.Error == "" {
+		t.Errorf("the refresh stored failures=%d error=%q", stored.Failures, stored.Error)
+	}
+	if _, _, dropped := n.Stats(); dropped != 1 {
+		t.Errorf("dropped %d events; want the failing event counted", dropped)
+	}
+}

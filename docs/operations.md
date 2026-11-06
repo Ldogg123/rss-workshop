@@ -10,7 +10,7 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 docker compose logs --tail 30 rss-workshop
 ```
 
-The dashboard reports saved items, refresh status, due feeds, and fetch capacity. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. A FlareSolverr failure on a card, in a preview or in Diagnostics names the step that failed, such as a DNS lookup, a refused connection or an address that is not the FlareSolverr API; [FlareSolverr troubleshooting](flaresolverr.md#troubleshooting) says what to check for each. A card marked **Waiting to retry** is [held after a failed save](#waiting-to-retry-after-a-failed-save), and one marked **Quiet** has [stopped changing](#quiet-feeds).
+The dashboard reports saved items, refresh status, due feeds, fetch capacity, and whether [notifications](#notifications) are on. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. A FlareSolverr failure on a card, in a preview or in Diagnostics names the step that failed, such as a DNS lookup, a refused connection or an address that is not the FlareSolverr API; [FlareSolverr troubleshooting](flaresolverr.md#troubleshooting) says what to check for each. A card marked **Waiting to retry** is [held after a failed save](#waiting-to-retry-after-a-failed-save), and one marked **Quiet** has [stopped changing](#quiet-feeds).
 
 ### The library dashboard
 
@@ -41,11 +41,11 @@ Quiet reads the same modification time readers receive as `Last-Modified`, which
 | Level | Reports |
 | --- | --- |
 | `debug` | Everything below, plus scheduler activity when feeds are due |
-| `info` (default) | Startup configuration, sign-ins, shutdown, and each completed or discarded refresh |
-| `warn` | Only problems: failed refreshes with their reason, and rejected sign-ins |
+| `info` (default) | Startup configuration, sign-ins, shutdown, each completed or discarded refresh, and each notification sent |
+| `warn` | Only problems: failed refreshes with their reason, rejected sign-ins, and [notifications](#notifications) that could not be sent |
 | `error` | Only failures: the server stopping, the database errors that abort a scheduler tick or discard a completed refresh, and selector library failures |
 
-The startup line summarizes the running deployment — version, commit, database backend, worker count, whether Chromium, FlareSolverr and metrics are enabled — which is the quickest way to confirm a container is running the configuration you intended.
+The startup line summarizes the running deployment — version, commit, database backend, worker count, whether Chromium, FlareSolverr and metrics are enabled, and which [notification](#notifications) format is in use (`notifications=off` when none) — which is the quickest way to confirm a container is running the configuration you intended.
 
 A failed refresh logs the feed title, its consecutive failure count, and the reason; a successful one logs the item count, HTTP status, and duration. Feed titles appear because they are your own labels, but source URLs, reader links, passwords and session cookies are never logged. A run of `login rejected` lines with a remote address is worth investigating.
 
@@ -82,6 +82,8 @@ Aggregates cover the library, saved stories, and refresh/Chromium/FlareSolverr c
 | `rss_workshop_feed_last_changed_timestamp_seconds` | When a feed's published output last changed, the time readers receive as `Last-Modified`; `0` means it has published nothing |
 | `rss_workshop_feed_items` | Stories saved for one feed |
 | `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
+| `rss_workshop_notifications_total` | [Notification](#notifications) messages by `result`: `sent`, or `failed` after every attempt. `0` while notifications are off |
+| `rss_workshop_notification_events_dropped_total` | Notification events dropped because more than 256 waited for a slow service |
 
 An alert for one feed that stops changing, with your own threshold rather than the dashboard's:
 
@@ -100,6 +102,80 @@ An alert for one feed that stops changing, with your own threshold rather than t
 Because the series name your feeds, the token is a real credential: keep it out of shared dashboards and rotate it by changing `METRICS_TOKEN` and recreating the service. Metrics never include reader links, source URLs, or story content. A library beyond 1,000 feeds keeps every aggregate, but per-feed series cover only the first 1,000 feeds by title, so a scrape stays bounded. Feeds after that have no per-feed series; `rss_workshop_feeds` still counts them.
 
 These examples use the default published browser image, or the matching image selected by `RSS_IMAGE` in `.env`. Include any static, PostgreSQL, VPN, storage, or development build overrides used by your deployment.
+
+### Notifications
+
+RSS Workshop can tell you when a feed breaks without Prometheus: it sends a message to an [ntfy](https://ntfy.sh) topic, which pushes it to a phone or desktop, or posts JSON to any webhook you choose. Configure it in `.env`, or export the variables for a native run, then recreate the container with `docker compose up -d`:
+
+```dotenv
+NOTIFY_URL=https://ntfy.example.net/rss-alerts
+NOTIFY_FORMAT=ntfy
+NOTIFY_TOKEN=
+NOTIFY_AFTER_FAILURES=3
+```
+
+`NOTIFY_URL` is the topic URL for ntfy, or for `NOTIFY_FORMAT=json` (the default) any `http` or `https` URL that accepts a JSON `POST`. `NOTIFY_TOKEN` is optional and is sent as `Authorization: Bearer` with every message in either format, for example an access token for a topic your ntfy server protects. `NOTIFY_AFTER_FAILURES` (1–100, default 3) is how many refreshes in a row must fail before a feed counts as failing. Startup stops with an error that names the setting, never its value, if the URL is not an absolute `http` or `https` URL with a host, or carries credentials (`user:password@`) or a fragment, or if a token is set without a URL or holds spaces, line breaks or other characters outside printable ASCII.
+
+The startup line reports `notifications=ntfy`, `json` or `off`, never the address. While notifications are on, the dashboard's status line says so and offers **Send test notification**, which sends a fixed message with no feed data at once, at most once every 10 seconds, and shows why it failed if it does; the route is `POST /api/notifications/test`, with the session, Origin and CSRF checks of every other change. The address can only be set in the environment, so it never reaches the database or its backups.
+
+The address is trusted configuration, like `FLARESOLVERR_URL`: it may be on your own network, and `ALLOW_CIDRS` does not apply to it. Environment proxy variables are ignored, a redirect is treated as a failure rather than followed, and HTTPS certificates are verified against the system's CA certificates as usual, so a self-signed certificate is refused.
+
+#### Events
+
+| Event | Sent when |
+| --- | --- |
+| `failing` | A feed's refreshes have failed `NOTIFY_AFTER_FAILURES` times in a row. Once per streak, when the count reaches that number, with the error its card shows |
+| `recovered` | A feed at or past that count refreshes successfully |
+| `not_saved` | The database refused a finished refresh, for example because its disk is full, and the feed started [waiting to retry](#waiting-to-retry-after-a-failed-save). At most one an hour across every feed, because such a database usually refuses every feed's results |
+| `db_unavailable` | The scheduler cannot read the library at all, for example while PostgreSQL is down or the SQLite file cannot be read. No feed refreshes then, so no other event would report it. Repeated at most once an hour while it lasts |
+| `db_available` | The scheduler can read the library again after a `db_unavailable` was sent |
+
+Events are collected for 60 seconds and sent as one message, so an outage that fails every feed at once sends one notification. A message lists at most 20 events, the database events first, and counts the rest as `...and 12 more`; an ntfy message is also kept within 4,000 bytes. A refresh thrown away because its feed was edited or deleted while it ran sends nothing, nor does a FlareSolverr feed that waits for a free solver slot, which is not a failure. Paused feeds do not refresh, and [quiet feeds](#quiet-feeds) are not notified.
+
+`failing` and `recovered` follow the failure count stored with each feed, the **Failures in a row** on its card, so a restart neither repeats an alert nor misses a recovery. Saving a feed in the editor resets that count, so a feed that still fails after an edit is reported again when it reaches the threshold. **Pause**, **Resume** and **Refresh** keep the count, and Resume continues the backoff, so a feed already past the threshold stays silent until it recovers. A changed `NOTIFY_AFTER_FAILURES` applies from the next refresh: a feed already past the new number is not reported as failing, but its recovery is.
+
+#### Message formats
+
+With `NOTIFY_FORMAT=ntfy`, each message is a `POST` of plain text to `NOTIFY_URL`, with the headers `Title: RSS Workshop`, `Priority: high` and `Tags: warning` when something failed (`Priority: default` otherwise), and `Click` set to `PUBLIC_BASE_URL`, so tapping it opens the library. Feed titles appear only in the body, never in a header.
+
+With `NOTIFY_FORMAT=json`, each message is a `POST` with `Content-Type: application/json`:
+
+```json
+{
+  "title": "RSS Workshop",
+  "message": "Failing: Evening news - 3 refreshes in a row failed. Error: source returned HTTP 503\n\nLibrary: https://rss.example.net",
+  "body": "Failing: Evening news - 3 refreshes in a row failed. Error: source returned HTTP 503\n\nLibrary: https://rss.example.net",
+  "dashboard": "https://rss.example.net",
+  "events": [
+    {"event": "failing", "feed": "Evening news", "feed_id": "4f1c…", "failures": 3, "error": "source returned HTTP 503"}
+  ],
+  "more": 0
+}
+```
+
+`message` and `body` carry the same text, one line per event, for services that read one or the other. `events` lists the events the text lists, and `more` counts those it leaves out. `feed` and `feed_id` are empty for database events; `failures` is the failed refreshes in a row for `failing` and `recovered`, and `0` otherwise; `error` is empty when there is none. To reach a chat service or email, point `NOTIFY_URL` at a bridge or automation tool that accepts a JSON webhook and forwards these fields.
+
+Any `2xx` answer counts as delivered, and only its first 4 KiB is read. Each attempt has 10 seconds. A failure that may pass — no connection, a timeout, or HTTP 408, 429 or 5xx — is tried three times in all, 2 and then 4 seconds apart; any other answer, such as 401, is not repeated. A message that still fails is not resent, and because `failing` is sent only as the count reaches the threshold, the card, Diagnostics and [metrics](#metrics) remain the record. When the app stops, it sends what is waiting at once, for at most 2 seconds.
+
+#### Privacy
+
+A message carries feed titles, failure counts, the error a card shows with URLs removed, and `PUBLIC_BASE_URL`; never source URLs, reader links or tokens, story text, or diagnostics samples. Titles can still reveal what you follow, and they go to whoever runs the notification service, so prefer one you host yourself. Treat `NOTIFY_URL` and `NOTIFY_TOKEN` as passwords: a topic on a public ntfy server works as one, since anyone who knows its name can read it, and webhook URLs often embed a token. `docker compose config` prints both.
+
+#### Troubleshooting
+
+Each delivery is logged by format and outcome, never by address:
+
+- `notification sent kind=ntfy events=2` — the service accepted a message.
+- `notification failed kind=json events=1 attempts=3 reason=status status=503` — the service answered with an error. `401` or `403` points to `NOTIFY_TOKEN` or the topic's permissions, `404` to the path in `NOTIFY_URL`, and `5xx` to the service itself.
+- `reason=redirect` — the address answers with a redirect, for example from `http` to `https`; put the final address in `NOTIFY_URL`.
+- `reason=dns` — the host name does not resolve from RSS Workshop, for example a container name on a Docker network the app has not joined.
+- `reason=refused`, `reason=unreachable` or `reason=timeout` — nothing answers at that host and port, or a firewall is in the way. In Docker, `localhost` is the app's own container; use the service's name on a shared network or the host's address. Behind [Gluetun](gluetun.md#postgresql-and-flaresolverr), a notification server on your own network needs a firewall exception.
+- `reason=tls` — the certificate is not trusted or does not match the host name.
+- `reason=closed` or `reason=connection` — the connection failed before a complete answer.
+- `reason=canceled` — the app stopped before the message could be sent.
+- `notifications dropped events=40 reason="queue full"` — more than 256 events waited while the service was slow or down; the next message counts them among those it does not list.
+
+A failed **Send test notification** gives the same cause on the dashboard, in words.
 
 ### Feed diagnostics
 
