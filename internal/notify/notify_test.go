@@ -339,6 +339,94 @@ func TestFullQueueDropsWithoutBlocking(t *testing.T) {
 	}
 }
 
+// One window keeps at most 256 feed events however many arrive, as the
+// operations guide documents, and counts the rest. Server-wide events are kept
+// beyond that, so the one that says the database is down is always listed,
+// and the priority reflects every event, listed or only counted.
+func TestBatchBoundsFeedEventsButKeepsDatabaseEvents(t *testing.T) {
+	var b batch
+	for range 256 + 7 {
+		b.add(Event{Kind: Recovered, Feed: "Filler", Failures: 3})
+	}
+	b.add(Event{Kind: Failing, Feed: "Counted only", Failures: 3})
+	b.add(Event{Kind: DBUnavailable, Error: "database is locked"})
+	if len(b.events) != 256+1 || b.extra != 7+1 {
+		t.Fatalf("kept %d events and counted %d; want 257 and 8", len(b.events), b.extra)
+	}
+	if b.events[256].Kind != DBUnavailable || !b.alert {
+		t.Fatalf("the database event was not kept, or the alert was lost: %+v alert=%v", b.events[256], b.alert)
+	}
+	// The scheduler sends a few server-wide events an hour, so a bound far
+	// above that still applies to them.
+	for range 100 {
+		b.add(Event{Kind: NotSaved, Feed: "x"})
+	}
+	if len(b.events) != 256+maxGlobal || b.extra != 7+1+100-(maxGlobal-1) {
+		t.Fatalf("kept %d events and counted %d", len(b.events), b.extra)
+	}
+}
+
+// A message lists the database events first and raises the ntfy priority
+// for them, even when a large library's feed events fill the window or the
+// queue before they arrive.
+func TestDatabaseEventsSurviveABusyWindow(t *testing.T) {
+	recovered := Event{Kind: Recovered, Feed: "Filler", Failures: 3}
+	for _, tc := range []struct {
+		name    string
+		started bool // the worker drains the queue as events arrive
+		feeds   int
+		then    Event
+		first   string
+		dropped uint64
+	}{
+		// More feed events than one window keeps, as when a large library
+		// recovers together, then the database goes down.
+		{"past the window's limit", true, 266, Event{Kind: DBUnavailable, Error: "database is locked"}, "Database unavailable: ", 0},
+		// A slow service lets the queue fill before the database event.
+		{"full queue", false, QueueSize + 10, Event{Kind: DBUnavailable, Error: "database is locked"}, "Database unavailable: ", 10},
+		{"full queue, not saved", false, QueueSize, Event{Kind: NotSaved, Feed: "Alpha", Error: "disk full"}, "Not saved: Alpha", 0},
+		// A failing event dropped from a full queue cannot be listed, but the
+		// message still says something failed.
+		{"dropped failure", false, QueueSize, failing("Dropped", 3), "Recovered: Filler", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				e := &endpoint{}
+				n := fake(t, Ntfy, e)
+				defer n.Close()
+				if tc.started {
+					n.Start()
+				}
+				for i := range tc.feeds {
+					n.Notify(recovered)
+					if tc.started && i%64 == 63 {
+						synctest.Wait()
+					}
+				}
+				synctest.Wait()
+				n.Notify(tc.then)
+				n.Start()
+				time.Sleep(Window)
+				synctest.Wait()
+				seen := e.seen()
+				if len(seen) != 1 {
+					t.Fatalf("got %d messages", len(seen))
+				}
+				body := string(seen[0].body)
+				if !strings.HasPrefix(body, tc.first) {
+					t.Errorf("the message starts %.60q; want %q", body, tc.first)
+				}
+				if p, tags := seen[0].header.Get("Priority"), seen[0].header.Get("Tags"); p != "high" || tags != "warning" {
+					t.Errorf("Priority %q, Tags %q; want high and warning", p, tags)
+				}
+				if _, _, dropped := n.Stats(); dropped != tc.dropped {
+					t.Errorf("dropped %d events; want %d", dropped, tc.dropped)
+				}
+			})
+		})
+	}
+}
+
 // A message that fails in a way that may pass is tried three times in all,
 // two and then four seconds apart; one the service refuses outright is not
 // repeated.
@@ -571,6 +659,21 @@ func TestCloseFlushesWithinTheGrace(t *testing.T) {
 		n.Close()
 		if elapsed := time.Since(start); elapsed != 0 || len(fast.seen()) != 1 {
 			t.Fatalf("closing took %v and sent %d messages; want the pending event sent at once", elapsed, len(fast.seen()))
+		}
+
+		// Server-wide events wait in a queue of their own, which the flush
+		// empties too. The worker may take either queue, or the stop, first,
+		// so this repeats to cover each order.
+		for range 20 {
+			both := &endpoint{}
+			n = fake(t, JSON, both)
+			n.Notify(Event{Kind: DBAvailable})
+			n.Notify(failing("Pending", 3))
+			n.Start()
+			n.Close()
+			if seen := both.seen(); len(seen) != 1 || !bytes.Contains(seen[0].body, []byte("Database available again")) || !bytes.Contains(seen[0].body, []byte("Failing: Pending")) {
+				t.Fatalf("closing sent %d messages; want one with both pending events", len(seen))
+			}
 		}
 
 		hung := &endpoint{respond: func(_ int, r *http.Request) (*http.Response, error) {

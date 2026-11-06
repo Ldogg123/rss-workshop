@@ -83,7 +83,7 @@ Aggregates cover the library, saved stories, and refresh/Chromium/FlareSolverr c
 | `rss_workshop_feed_items` | Stories saved for one feed |
 | `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
 | `rss_workshop_notifications_total` | [Notification](#notifications) messages by `result`: `sent`, or `failed` after every attempt. `0` while notifications are off |
-| `rss_workshop_notification_events_dropped_total` | Notification events dropped because more than 256 waited for a slow service |
+| `rss_workshop_notification_events_dropped_total` | Notification events dropped because more than 256 feed events, or 8 database events, waited for a slow service |
 
 An alert for one feed that stops changing, with your own threshold rather than the dashboard's:
 
@@ -130,7 +130,7 @@ The address is trusted configuration, like `FLARESOLVERR_URL`: it may be on your
 | `db_unavailable` | The scheduler cannot read the library at all, for example while PostgreSQL is down or the SQLite file cannot be read. No feed refreshes then, so no other event would report it. Repeated at most once an hour while it lasts |
 | `db_available` | The scheduler can read the library again after a `db_unavailable` was sent |
 
-Events are collected for 60 seconds and sent as one message, so an outage that fails every feed at once sends one notification. A message lists at most 20 events, the database events first, and counts the rest as `...and 12 more`; an ntfy message is also kept within 4,000 bytes. A refresh thrown away because its feed was edited or deleted while it ran sends nothing, nor does a FlareSolverr feed that waits for a free solver slot, which is not a failure. Paused feeds do not refresh, and [quiet feeds](#quiet-feeds) are not notified.
+Events are collected for 60 seconds and sent as one message, so an outage that fails every feed at once sends one notification. A message lists at most 20 events, the database events first, and counts the rest as `...and 12 more`; an ntfy message is also kept within 4,000 bytes. A window keeps at most 256 feed events; the database events are always kept, so a busy window cannot hide them. A refresh thrown away because its feed was edited or deleted while it ran sends nothing, nor does a FlareSolverr feed that waits for a free solver slot, which is not a failure. Paused feeds do not refresh, and [quiet feeds](#quiet-feeds) are not notified.
 
 `failing` and `recovered` follow the failure count stored with each feed, the **Failures in a row** on its card, so a restart neither repeats an alert nor misses a recovery. Nor does a restart cause one: a refresh cut short because the app is stopping is [discarded](#log-detail), not counted as a failure. Saving a feed in the editor resets that count, so a feed that still fails after an edit is reported again when it reaches the threshold. A feed reported as failing still reports its recovery after an edit, with the failures since the save, unless the app has restarted since the alert: the save cleared the count a restart reads. **Pause**, **Resume** and **Refresh** keep the count, and Resume continues the backoff, so a feed already past the threshold stays silent until it recovers. A changed `NOTIFY_AFTER_FAILURES` applies from the next refresh: a feed already past the new number is not reported as failing, but its recovery is, and a feed reported as failing that is now below a raised number recovers without a message.
 
@@ -173,7 +173,7 @@ Each delivery is logged by format and outcome, never by address:
 - `reason=tls` — the certificate is not trusted or does not match the host name.
 - `reason=closed` or `reason=connection` — the connection failed before a complete answer.
 - `reason=canceled` — the app stopped before the message could be sent.
-- `notifications dropped kind=json events=40 reason="queue full"` — more than 256 events waited while the service was slow or down; the next message counts them among those it does not list.
+- `notifications dropped kind=json events=40 reason="queue full"` — more than 256 feed events, or 8 database events, waited while the service was slow or down; the next message counts them among those it does not list.
 
 A failed **Send test notification** gives the same cause on the dashboard, in words.
 

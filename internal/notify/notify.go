@@ -74,9 +74,9 @@ const (
 )
 
 const (
-	// QueueSize bounds the events waiting for the worker. Notify never waits
-	// for room: a refresh must not stall on a slow notification service, so
-	// an event that finds the queue full is counted and dropped.
+	// QueueSize bounds the feed events waiting for the worker. Notify never
+	// waits for room: a refresh must not stall on a slow notification
+	// service, so an event that finds the queue full is counted and dropped.
 	QueueSize = 256
 	// Window is how long the worker collects events into one message, so a
 	// burst of failures, as when a network outage hits every feed, sends one
@@ -87,7 +87,12 @@ const (
 	// FlushGrace bounds how long Close waits to deliver what is pending.
 	FlushGrace = 2 * time.Second
 
-	maxBatch       = QueueSize // events kept for one message; later ones are only counted
+	maxBatch = QueueSize // feed events kept for one message; later ones are only counted
+	// maxGlobal bounds the server-wide events, which have a queue of their
+	// own and are kept beside maxBatch. The scheduler sends a few an hour at
+	// most, so each one is kept and listed first, however many feed events
+	// the window holds.
+	maxGlobal      = 8
 	attemptTimeout = 10 * time.Second
 	maxAttempts    = 3
 	maxResponse    = 4 << 10
@@ -113,6 +118,7 @@ type Notifier struct {
 	window    time.Duration
 
 	queue    chan Event
+	urgent   chan Event // server-wide events, which a burst of feed events cannot crowd out
 	stop     chan struct{}
 	done     chan struct{}
 	ctx      context.Context
@@ -123,6 +129,7 @@ type Notifier struct {
 
 	sent, failed, dropped atomic.Uint64
 	unlogged              atomic.Uint64 // dropped since the last log line
+	alertDropped          atomic.Bool   // a dropped event needed attention
 }
 
 // New checks the settings and builds the HTTP client. Its errors never repeat
@@ -165,6 +172,7 @@ func New(endpoint, format, token, dashboard string) (*Notifier, error) {
 		backoff: []time.Duration{2 * time.Second, 4 * time.Second},
 		window:  Window,
 		queue:   make(chan Event, QueueSize),
+		urgent:  make(chan Event, maxGlobal),
 		stop:    make(chan struct{}), done: make(chan struct{}),
 		ctx: ctx, cancel: cancel,
 	}, nil
@@ -190,6 +198,9 @@ func (n *Notifier) Stats() (sent, failed, dropped uint64) {
 
 // Notify queues an event without waiting. A full queue drops it; the drop is
 // counted, logged with the next message and listed in it as one more event.
+// Server-wide events have a queue of their own, so feed events that fill
+// theirs while the service is slow cannot drop the one that says the
+// database is down.
 func (n *Notifier) Notify(e Event) {
 	if n == nil {
 		return
@@ -197,11 +208,18 @@ func (n *Notifier) Notify(e Event) {
 	e.Feed = truncate(oneLine(e.Feed), maxTitle)
 	e.FeedID = truncate(oneLine(e.FeedID), maxTitle)
 	e.Error = truncate(oneLine(diagnostics.SafeText(e.Error, 4*maxError)), maxError)
+	queue := n.queue
+	if global(e.Kind) {
+		queue = n.urgent
+	}
 	select {
-	case n.queue <- e:
+	case queue <- e:
 	default:
 		n.dropped.Add(1)
 		n.unlogged.Add(1)
+		if alerting(e.Kind) {
+			n.alertDropped.Store(true)
+		}
 	}
 }
 
@@ -243,18 +261,27 @@ func (n *Notifier) Test(ctx context.Context) error {
 	return n.deliver(ctx, n.compose([]Event{{Kind: Test}}, 0), 1)
 }
 
-// batch collects one message's events.
+// batch collects one message's events: up to maxBatch feed events and up to
+// maxGlobal server-wide ones, so a window full of feed events still lists the
+// database's. Later events are only counted.
 type batch struct {
-	events []Event
-	extra  int // events beyond maxBatch, counted only
+	events  []Event
+	globals int  // server-wide events among events
+	extra   int  // events past those bounds, counted only
+	alert   bool // whether any event added, kept or counted, needs attention
 }
 
 func (b *batch) add(e Event) {
-	if len(b.events) < maxBatch {
-		b.events = append(b.events, e)
+	b.alert = b.alert || alerting(e.Kind)
+	switch {
+	case global(e.Kind) && b.globals < maxGlobal:
+		b.globals++
+	case !global(e.Kind) && len(b.events)-b.globals < maxBatch:
+	default:
+		b.extra++
 		return
 	}
-	b.extra++
+	b.events = append(b.events, e)
 }
 
 func (n *Notifier) run() {
@@ -262,6 +289,8 @@ func (n *Notifier) run() {
 	for {
 		var b batch
 		select {
+		case e := <-n.urgent:
+			b.add(e)
 		case e := <-n.queue:
 			b.add(e)
 		case <-n.stop:
@@ -272,6 +301,8 @@ func (n *Notifier) run() {
 	collect:
 		for {
 			select {
+			case e := <-n.urgent:
+				b.add(e)
 			case e := <-n.queue:
 				b.add(e)
 			case <-window.C:
@@ -291,14 +322,15 @@ func (n *Notifier) run() {
 func (n *Notifier) flush(b *batch) {
 	for {
 		select {
+		case e := <-n.urgent:
+			b.add(e)
 		case e := <-n.queue:
 			b.add(e)
-			continue
 		default:
+			n.send(b)
+			return
 		}
-		break
 	}
-	n.send(b)
 }
 
 func (n *Notifier) send(b *batch) {
@@ -307,10 +339,14 @@ func (n *Notifier) send(b *batch) {
 		slog.Warn("notifications dropped", "kind", n.format, "events", dropped, "reason", "queue full")
 		b.extra += int(dropped)
 	}
+	b.alert = n.alertDropped.Swap(false) || b.alert
 	if len(b.events) == 0 && b.extra == 0 {
 		return
 	}
-	_ = n.deliver(n.ctx, n.compose(b.events, b.extra), maxAttempts)
+	m := n.compose(b.events, b.extra)
+	// An event only counted still decides how urgent the message is.
+	m.alert = m.alert || b.alert
+	_ = n.deliver(n.ctx, m, maxAttempts)
 }
 
 // message is what one request carries.
@@ -327,6 +363,9 @@ func (m message) count() int { return len(m.events) + m.more }
 // global events concern the whole server, so they are listed before any feed.
 func global(k Kind) bool { return k != Failing && k != Recovered }
 
+// alerting events report something that needs attention.
+func alerting(k Kind) bool { return k == Failing || k == NotSaved || k == DBUnavailable }
+
 func (n *Notifier) compose(events []Event, extra int) message {
 	events = slices.Clone(events)
 	slices.SortStableFunc(events, func(a, b Event) int {
@@ -341,7 +380,7 @@ func (n *Notifier) compose(events []Event, extra int) message {
 	m := message{}
 	var b strings.Builder
 	for i, e := range events {
-		m.alert = m.alert || e.Kind == Failing || e.Kind == NotSaved || e.Kind == DBUnavailable
+		m.alert = m.alert || alerting(e.Kind)
 		m.test = m.test || e.Kind == Test
 		if m.more > 0 {
 			continue
