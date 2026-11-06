@@ -47,7 +47,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 	metric("rss_workshop_build_info", "Build identity of the running server.", "gauge")
 	value("rss_workshop_build_info", `{version="`+escapeLabel(a.Version)+`"}`, 1)
 
-	enabled, due, held, failing, items := 0, 0, 0, 0, 0
+	enabled, due, held, quiet, failing, items := 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, f := range feeds {
 		items += f.Count
@@ -58,8 +58,12 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 			if !f.NextRun.After(now) {
 				due++
 			}
+			// As in the library listing, a held feed is not quiet: its latest
+			// refresh was never stored.
 			if a.Scheduler.Held(f.ID) {
 				held++
+			} else if f.IsQuiet(now) {
+				quiet++
 			}
 		}
 		if f.Failures > 0 {
@@ -74,6 +78,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		{"rss_workshop_feeds_enabled", "Feeds set to refresh automatically.", enabled},
 		{"rss_workshop_feeds_due", "Enabled feeds whose next refresh is due.", due},
 		{"rss_workshop_feeds_held", "Enabled feeds waiting to retry a refresh the database could not store.", held},
+		{"rss_workshop_feeds_quiet", "Enabled feeds that keep refreshing successfully but whose published output has not changed for the quiet threshold.", quiet},
 		{"rss_workshop_feeds_failing", "Feeds whose last refresh failed.", failing},
 		{"rss_workshop_items", "Stories saved across all feeds.", items},
 	} {
@@ -119,6 +124,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		{"rss_workshop_feed_failures", "Consecutive failed refreshes for this feed.", "gauge"},
 		{"rss_workshop_feed_enabled", "Whether this feed refreshes automatically.", "gauge"},
 		{"rss_workshop_feed_last_success_timestamp_seconds", "Unix time of this feed's last successful refresh, or 0.", "gauge"},
+		{"rss_workshop_feed_last_changed_timestamp_seconds", "Unix time this feed's published output last changed, or 0.", "gauge"},
 	} {
 		metric(m.name, m.help, m.kind)
 		for _, f := range feeds {
@@ -130,12 +136,10 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 				value(m.name, labels, f.Failures)
 			case "rss_workshop_feed_enabled":
 				value(m.name, labels, boolValue(f.Enabled))
+			case "rss_workshop_feed_last_success_timestamp_seconds":
+				value(m.name, labels, timestamp(f.LastSuccess))
 			default:
-				success := int64(0)
-				if !f.LastSuccess.IsZero() {
-					success = f.LastSuccess.Unix()
-				}
-				value(m.name, labels, strconv.FormatInt(success, 10))
+				value(m.name, labels, timestamp(f.LastChanged))
 			}
 		}
 	}
@@ -143,6 +147,14 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(b.String()))
+}
+
+// timestamp is a time as Unix seconds, or 0 for one that never happened.
+func timestamp(t time.Time) string {
+	if t.IsZero() {
+		return "0"
+	}
+	return strconv.FormatInt(t.Unix(), 10)
 }
 
 func boolValue(v bool) int {

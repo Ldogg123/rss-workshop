@@ -31,6 +31,8 @@ Editing a library filter works like editing a feed's rules. Saved stories are ke
 
 A library filter that feeds still use cannot be deleted. Remove it from those feeds first; the library shows which feeds use each filter.
 
+**Duplicate** on a feed card keeps the copy linked to the same library filters, so later edits to them apply to both feeds. A [recipe export](recipe-portability.md) copies their rules into the recipe instead.
+
 ## Preview before saving
 
 **Preview items** distinguishes matched card elements, valid extracted stories, included stories, and filtered stories. It shows the included items and up to 20 excluded-title examples with reasons. The counters cover the complete result even when there are more examples.

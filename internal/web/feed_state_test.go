@@ -239,8 +239,10 @@ func TestListedFeedCanBeSentBack(t *testing.T) {
 		}
 		for _, f := range out.Feeds {
 			if string(f["id"]) == strconv.Quote(id) {
-				if _, ok := f["held"]; !ok {
-					t.Fatal("the listing no longer reports held; this test no longer covers it")
+				for _, key := range []string{"held", "quiet", "last_changed"} {
+					if _, ok := f[key]; !ok {
+						t.Fatalf("the listing no longer reports %s; this test no longer covers it", key)
+					}
 				}
 				return f
 			}
