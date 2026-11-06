@@ -19,6 +19,7 @@ import (
 	"github.com/antchfx/xpath"
 	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 	"rss-workshop/internal/diagnostics"
 	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
@@ -463,6 +464,44 @@ func content(n *html.Node, base *url.URL) string {
 	_ = html.Render(&b, doc)
 	return policy.Sanitize(b.String())
 }
+
+// showsImage reports whether a description already displays image, as an img
+// element whose src, decoded by the parser, is exactly that address. A content
+// selector covering the whole card includes the story's image, and content()
+// writes the same address into its src, so prepending the image again showed it
+// twice. Nothing else counts: a link to the image, as lightboxes use, does not
+// display it, and a resized variant or another attribute's address may not be
+// the same picture, so those keep the prepended copy they always had.
+func showsImage(description, image string) bool {
+	// Sanitized markup writes tags in lower case, and escaped attribute text
+	// has no tags at all, so this only skips parsing what cannot match.
+	if !strings.Contains(description, "<img") {
+		return false
+	}
+	nodes, err := html.ParseFragment(strings.NewReader(description), &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body})
+	if err != nil {
+		return false
+	}
+	var found func(*html.Node) bool
+	found = func(n *html.Node) bool {
+		if n.Type == html.ElementNode && n.Data == "img" && attr(n, "src") == image {
+			return true
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if found(c) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, n := range nodes {
+		if found(n) {
+			return true
+		}
+	}
+	return false
+}
+
 func Run(body []byte, effective string, r model.Recipe) (model.Preview, error) {
 	return RunAt(body, effective, r, time.Now())
 }
@@ -599,7 +638,7 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: %s; image omitted", i+1,
 				fieldMismatch("Image", "an HTTP(S) image URL", raw, im, imageField, "")))
 		}
-		if it.Image != "" {
+		if it.Image != "" && !showsImage(it.HTML, it.Image) {
 			it.HTML = "<p><img src=\"" + html.EscapeString(it.Image) + "\" alt=\"\"></p>" + it.HTML
 		}
 		selector = "Date"

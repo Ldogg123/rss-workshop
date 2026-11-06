@@ -401,6 +401,62 @@ func TestInlineImageAddressIsEscaped(t *testing.T) {
 	}
 }
 
+// AGENTS.md: the image is published inline only once in the body. A content
+// selector that covers the card's image used to get it a second time on top.
+// Only an img showing exactly that address counts, so every other description
+// keeps the bytes it had.
+func TestADescriptionShowingTheImageDoesNotGetItAgain(t *testing.T) {
+	lead := `<p><img src="https://example.com/big.jpg" alt=""></p>`
+	for _, tc := range []struct {
+		name, card    string
+		content       model.Field
+		image         model.Field
+		wantImage     string
+		wantHTML      string
+		wantPrepended bool
+	}{
+		// The card's first image is the story's image, and the description holds it.
+		{name: "automatic image", card: `<div class="c"><img src="/i.jpg?w=1&amp;h=2"><p>Text</p></div>`, content: model.Field{Selector: ".c"},
+			wantImage: "https://example.com/i.jpg?w=1&h=2", wantHTML: `<div><img src="https://example.com/i.jpg?w=1&amp;h=2"/><p>Text</p></div>`},
+		{name: "explicit image selector", card: `<div class="c"><img src="/i.jpg?w=1&amp;h=2"><p>Text</p></div>`, content: model.Field{Selector: ".c"}, image: model.Field{Selector: "img"},
+			wantImage: "https://example.com/i.jpg?w=1&h=2", wantHTML: `<div><img src="https://example.com/i.jpg?w=1&amp;h=2"/><p>Text</p></div>`},
+		{name: "the card itself", card: `<img data-src="/big.jpg" src="/blank.gif">`, content: model.Field{Selector: "."},
+			wantImage: "https://example.com/big.jpg", wantHTML: `<article><h2>Story</h2><a href="https://example.com/story" rel="nofollow">Read</a><img src="https://example.com/big.jpg"/></article>`},
+
+		// A lightbox thumbnail links to the image but shows another one.
+		{name: "lightbox", card: `<div class="c"><a href="/big.jpg"><img src="/thumb.jpg"></a></div>`, content: model.Field{Selector: ".c"}, image: model.Field{Selector: ".c a", Attr: "href"},
+			wantImage: "https://example.com/big.jpg", wantHTML: `<div><a href="https://example.com/big.jpg" rel="nofollow"><img src="https://example.com/thumb.jpg"/></a></div>`, wantPrepended: true},
+		{name: "text link", card: `<div class="c"><a href="/big.jpg">Enlarge big.jpg</a></div>`, content: model.Field{Selector: ".c"}, image: model.Field{Selector: ".c a", Attr: "href"},
+			wantImage: "https://example.com/big.jpg", wantHTML: `<div><a href="https://example.com/big.jpg" rel="nofollow">Enlarge big.jpg</a></div>`, wantPrepended: true},
+		{name: "another image", card: `<img class="lead" src="/big.jpg"><div class="c"><img src="/other.jpg"></div>`, content: model.Field{Selector: ".c"}, image: model.Field{Selector: ".lead"},
+			wantImage: "https://example.com/big.jpg", wantHTML: `<div><img src="https://example.com/other.jpg"/></div>`, wantPrepended: true},
+		{name: "a resized variant", card: `<div class="c"><img src="/big.jpg?w=200" data-full="/big.jpg"></div>`, content: model.Field{Selector: ".c"}, image: model.Field{Selector: "img", Attr: "data-full"},
+			wantImage: "https://example.com/big.jpg", wantHTML: `<div><img src="https://example.com/big.jpg?w=200"/></div>`, wantPrepended: true},
+		// Attribute content is escaped text, never markup.
+		{name: "escaped attribute text", card: `<div class="c" data-image="/big.jpg" data-html='&lt;img src="https://example.com/big.jpg"&gt;'></div>`, content: model.Field{Selector: ".c", Attr: "data-html"}, image: model.Field{Selector: ".c", Attr: "data-image"},
+			wantImage: "https://example.com/big.jpg", wantHTML: `&lt;img src=&#34;https://example.com/big.jpg&#34;&gt;`, wantPrepended: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"}, Link: model.Field{Selector: "h2 + a"}, Content: tc.content, Image: tc.image}
+			p, err := RunAt([]byte(`<article><h2>Story</h2><a href="/story">Read</a>`+tc.card+`</article>`), "https://example.com/", r, imageTestTime)
+			if err != nil || len(p.Items) != 1 {
+				t.Fatalf("items %+v, err %v", p.Items, err)
+			}
+			it := p.Items[0]
+			if it.Image != tc.wantImage {
+				t.Fatalf("image %q, want %q", it.Image, tc.wantImage)
+			}
+			want := tc.wantHTML
+			if tc.wantPrepended {
+				want = strings.Replace(lead, "https://example.com/big.jpg", tc.wantImage, 1) + want
+			}
+			if it.HTML != want {
+				t.Fatalf("html\n got %q\nwant %q", it.HTML, want)
+			}
+		})
+	}
+}
+
 // The limits below are written out, because changing them changes which stories
 // keep an image and which pages fail.
 func TestImageAddressLimits(t *testing.T) {
