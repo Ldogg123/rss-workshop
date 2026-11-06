@@ -24,7 +24,7 @@ The settings are read once at startup. After changing them, recreate the app con
 docker compose up -d --no-build --pull never --wait
 ```
 
-Use the same `-f` Compose files as your original installation, in the same order; add `sudo` if Docker access requires it. For a native executable, stop it and start it again with the new values exported. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `-f compose.yaml -f compose.static.yaml`. With `RSS_IMAGE` blank, that override selects the matching published static image. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.
+Use the same `-f` Compose files as your original installation, in the same order; add `sudo` if Docker access requires it. `docker compose restart` is not enough, because it restarts the existing container with the environment it was created with. For a native executable, stop it and start it again with the new values exported. The default image includes local Chromium, while FlareSolverr runs separately. This integration also works with the static-only runtime selected by `-f compose.yaml -f compose.static.yaml`. With `RSS_IMAGE` blank, that override selects the matching published static image. RSS Workshop does not install, upgrade, or reconfigure the FlareSolverr service.
 
 ## Using it
 
@@ -62,7 +62,7 @@ To test the service from the app, open **Choose elements visually** with **Page 
 
 | Message begins with | What to check |
 | --- | --- |
-| `FlareSolverr is not configured on this server` | `FLARESOLVERR_URL` is blank in the environment the server started with. Set it as described under [configuration](#configuration) and restart the server. |
+| `FlareSolverr is not configured on this server` | `FLARESOLVERR_URL` is blank in the environment the server started with. Set it as described under [configuration](#configuration), then recreate the container or start the native executable again; `docker compose restart` keeps the old environment. |
 | `FlareSolverr DNS lookup failed` | The host name does not resolve where RSS Workshop runs. A Compose service name resolves only for containers on the same Docker network; otherwise use a LAN address or a name your DNS knows. |
 | `FlareSolverr connection refused` | The host answered but nothing listens on that port: FlareSolverr is stopped, still starting, or on another port (8191 by default). Inside a container, `localhost` is RSS Workshop's own container unless both share Gluetun's network. |
 | `FlareSolverr connection timed out` | Nothing answered at that address: a wrong IP address, a host that is down, or a firewall dropping the connection, such as Gluetun's outbound firewall without a `FIREWALL_OUTBOUND_SUBNETS` exception. |

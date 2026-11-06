@@ -16,7 +16,7 @@ func testFlareSolverrSelector(t *testing.T, tab context.Context, static *fixture
 	err := chromedp.Run(tab,
 		chromedp.Evaluate(`(()=>{const mode=document.querySelector('#recipe-form [name="mode"]');mode.value='flaresolverr';mode.dispatchEvent(new Event('change',{bubbles:true}))})()`, nil),
 		chromedp.Evaluate(`(()=>{const tip=document.querySelector('#fetch-mode-help');flaresolverrAvailable=false;renderHelp();
-		 const missing=tip.classList.contains('diagnostic')&&tip.textContent.includes('FLARESOLVERR_URL')&&tip.textContent.includes('docs/flaresolverr.md');
+		 const missing=tip.classList.contains('diagnostic')&&tip.textContent.includes('FLARESOLVERR_URL')&&tip.textContent.includes('docker compose up -d')&&tip.textContent.includes('docs/flaresolverr.md');
 		 flaresolverrAvailable=true;renderHelp();return missing&&!tip.classList.contains('diagnostic')})()`, &correct),
 	)
 	if err != nil || !correct {

@@ -202,6 +202,13 @@ func TestFlareSolverrMissingConfiguration(t *testing.T) {
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "flaresolverr") {
 			t.Fatal("missing solver should give a clear configuration error", err)
 		}
+		// docker compose restart keeps the environment a container was
+		// created with, so the advice has to be to recreate it.
+		for _, want := range []string{"FLARESOLVERR_URL", "docker compose up -d", "native", "docs/flaresolverr.md"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("configuration error %q does not mention %q", err, want)
+			}
+		}
 	}
 	if active, _ := jobs.Stats(); active != 0 || static.calls.Load() != 0 {
 		t.Fatal("missing solver leaked a slot or fetched statically")

@@ -527,7 +527,7 @@ func (s *Scheduler) extract(ctx context.Context, f model.Feed, preview bool) (r 
 
 func (s *Scheduler) solve(ctx context.Context, rawURL string) (fetch.Result, error) {
 	if s.FlareSolverr == nil {
-		return fetch.Result{}, errors.New("FlareSolverr is not configured on this server: set FLARESOLVERR_URL, in .env for Docker Compose or exported for a native run, and restart the server; see docs/flaresolverr.md")
+		return fetch.Result{}, errors.New("FlareSolverr is not configured on this server: set FLARESOLVERR_URL, in .env for Docker Compose or exported for a native run, then recreate the container with docker compose up -d or start the native server again; see docs/flaresolverr.md")
 	}
 	// The remote browser always returns a fresh document; HTTP validators from a
 	// previous static fetch cannot be reused for this request.

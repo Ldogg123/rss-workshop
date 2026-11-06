@@ -44,7 +44,7 @@
  function pageModeHelp(){
   const mode=$('#selector-mode').value, tip=$('#selector-mode-help');
   tip.hidden=mode==='static';
-  tip.textContent=mode==='flaresolverr'?(flaresolverrAvailable?'Uses the configured external browser. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. Set FLARESOLVERR_URL and restart the server to load this page version; see docs/flaresolverr.md.'):(browserAvailable?'Uses Chromium and the feed’s wait settings.':'Chromium is not configured on this server.');
+  tip.textContent=mode==='flaresolverr'?(flaresolverrAvailable?'Uses the configured external browser. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. To load this page version, set FLARESOLVERR_URL, then recreate the container with docker compose up -d or start the native server again; see docs/flaresolverr.md.'):(browserAvailable?'Uses Chromium and the feed’s wait settings.':'Chromium is not configured on this server.');
  }
  async function loadSnapshot(){
   clear();const current=revision;abort=new AbortController();state.textContent='Loading page…';$('#selector-load').disabled=true;
