@@ -34,13 +34,15 @@ func testNotificationsUI(t *testing.T, tab context.Context, service *receiver) {
 	 return document.documentElement.dataset.theme==='dark'&&b.title.includes('no feed data')&&style.color===other.color&&style.borderColor===other.borderColor&&style.backgroundColor===other.backgroundColor})()`,
 		"the test button lacks its help or the dark theme's colors")
 
+	// Every load redraws the status line and shows or hides the button, so it
+	// is clicked as a user would, once it is shown and enabled.
 	before := len(service.received())
-	must(chromedp.Evaluate(`document.querySelector('#test-notification').click()`, nil),
+	must(clickQuery("#test-notification"),
 		chromedp.Poll(`document.querySelector('#notice').classList.contains('success')&&document.querySelector('#notice').textContent.startsWith('Test notification sent.')&&!document.querySelector('#test-notification').disabled`, nil))
 	if got := len(service.received()) - before; got != 1 {
 		t.Fatalf("the test button sent %d notifications", got)
 	}
-	must(chromedp.Evaluate(`document.querySelector('#test-notification').click()`, nil),
+	must(clickQuery("#test-notification"),
 		chromedp.Poll(`!document.querySelector('#notice').hidden&&!document.querySelector('#notice').classList.contains('success')&&document.querySelector('#notice').textContent.includes('try again in')`, nil))
 	if got := len(service.received()) - before; got != 1 {
 		t.Fatalf("a second click within ten seconds sent %d notifications in all", got)
