@@ -112,8 +112,10 @@ function feedCard(f){
  if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
  if(held)card.append(node('p','Waiting to retry a failed database write. The last refresh could not be saved; it is retried after a delay, or now with Refresh.','diagnostic feed-held'));
  if(status==='quiet'){
-  const days=Math.max(0,Math.floor((Date.now()-stamp(f.last_changed))/864e5));
-  card.append(node('p',`Output unchanged for ${days} day${days===1?'':'s'}. Refreshes keep succeeding, but nothing they publish has changed. Check that the page still lists new stories, or preview the recipe from Edit.`,'feed-quiet'));
+  // As the server measures it: from the last new story, or from the last
+  // output change of a feed that has stored none.
+  const days=Math.max(0,Math.floor((Date.now()-(stamp(f.last_new)??stamp(f.last_changed)))/864e5));
+  card.append(node('p',`No new story for ${days} day${days===1?'':'s'}. Refreshes keep succeeding, but none has found a story this feed did not already have. Check that the page still lists new stories, or preview the recipe from Edit.`,'feed-quiet'));
  }
  if(f.error)card.append(node('p',f.error,'diagnostic'));
  const actions=node('div',undefined,'feed-actions');actions.append(focusable(action('Edit',()=>openEditor(f)),'edit'),focusable(action('Duplicate',()=>openEditor(f,true)),'duplicate'),focusable(action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),'refresh'),focusable(action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}/enabled`,'POST',{enabled:!f.enabled});await load();}),'enabled'),focusable(action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'),'delete'));card.append(actions);
@@ -158,7 +160,7 @@ function openEditor(f,copy=false){
  form.reset();$('#preview').replaceChildren();$('#editor-title').textContent=copy?'Duplicate feed':editing?'Edit feed':'New feed';form.elements.id.value=editing?f.id:'';loadedEnabled=editing?f.enabled:null;
  copiedFilterIDs=copy?[...(f.filter_ids||[])]:null;$('#duplicate-hint').hidden=!copy;
  if(f){form.elements.mode.value=f.recipe.mode||"static";form.elements.wait_selector.value=f.recipe.wait_selector||"";form.elements.settle_ms.value=f.recipe.settle_ms||0;form.elements.title.value=copy?copyTitle(f.title):f.title;form.elements.url.value=f.url;form.elements.type.value=f.recipe.type;form.elements.items.value=f.recipe.items;form.elements.interval.value=f.interval/60;form.elements.enabled.checked=!copy&&f.enabled;for(const k of ['title','link','content','image','date']){form.elements[k+'_selector'].value=f.recipe[k].selector;form.elements[k+'_attr'].value=f.recipe[k].attr;}form.elements.date_layout.value=f.recipe.date_layout;form.elements.timezone.value=f.recipe.timezone;
-  const full=f.recipe.full_content;form.elements.full_selector.value=full?.selector||'';form.elements.full_attr.value=full?.attr||'';form.elements.full_browser.checked=!!full?.browser;form.elements.user_agent.value=f.recipe.user_agent||'';form.elements.accept_language.value=f.recipe.accept_language||'';}
+  const full=f.recipe.full_content;form.elements.full_selector.value=full?.selector||'';form.elements.full_attr.value=full?.attr||'';form.elements.full_browser.checked=!!full?.browser;form.elements.user_agent.value=f.recipe.user_agent||'';form.elements.accept_language.value=f.recipe.accept_language||'';form.elements.quiet_days.value=String(f.recipe.quiet_days||0);}
  window.rssFilters?.load(f?.recipe.filters,editing);window.rssLibrary?.loadFeed(f?.filter_ids);window.rssLibrary?.refresh().catch(()=>{});$('#editor').hidden=false;renderHelp();help();fullContentSummary();requestSummary();form.elements.title.focus();
 }
 function readForm(){const v=new FormData(form);const recipe={mode:v.get('mode'),wait_selector:v.get('wait_selector'),settle_ms:Number(v.get('settle_ms')),type:v.get('type'),items:v.get('items'),date_layout:v.get('date_layout'),timezone:v.get('timezone')};for(const k of ['title','link','content','image','date'])recipe[k]={selector:v.get(k+'_selector'),attr:v.get(k+'_attr')};const filters=window.rssFilters?.read();if(filters)recipe.filters=filters;
@@ -168,6 +170,8 @@ function readForm(){const v=new FormData(form);const recipe={mode:v.get('mode'),
  // User-Agent applies and no Accept-Language is sent.
  const userAgent=(v.get('user_agent')||'').trim();if(userAgent)recipe.user_agent=userAgent;
  const language=(v.get('accept_language')||'').trim();if(language)recipe.accept_language=language;
+ // Automatic is left out, as the server stores it.
+ const quietDays=Number(v.get('quiet_days')||0);if(quietDays)recipe.quiet_days=quietDays;
  const out={title:v.get('title'),url:v.get('url'),interval:Number(v.get('interval'))*60,enabled:form.elements.enabled.checked,recipe};
  // Omitted while the library is unavailable, which keeps the feed's current
  // filters; a copy sends the ones it was opened with.

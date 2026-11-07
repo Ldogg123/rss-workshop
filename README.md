@@ -85,11 +85,11 @@ Screenshots use sample feeds.
 
 Sites change their markup, and a feed that quietly stops updating is the usual symptom.
 
-- The library marks a feed **Quiet** when its refreshes keep succeeding but its published output has not changed for two weeks, or for ten refresh intervals if that is longer. Search the library by name or site, filter it by status, and sort it by last change, last success or failures to find the feeds that need a look.
+- The library marks a feed **Quiet** when its refreshes keep succeeding but none has found a new story for two weeks, or for ten refresh intervals if that is longer; each feed can choose its own time, or never. Search the library by name or site, filter it by status, and sort it by last change, last success or failures to find the feeds that need a look.
 - **Preview items** explains why a story was rejected, field by field.
 - A saved feed’s **Diagnostics** shows its last 50 refreshes with fetch mode, HTTP status, timing, match counts and field samples.
 - `docker compose logs -f rss-workshop` reports each refresh and the reason for any failure; set `LOG_LEVEL` to `warn` for problems only.
-- Setting `METRICS_TOKEN` exposes `/metrics` for Prometheus, including per-feed failure counts, last-success and last-change times, and a count of quiet feeds, so an alert can name the feed that broke.
+- Setting `METRICS_TOKEN` exposes `/metrics` for Prometheus, including per-feed failure counts, the times of the last success, last change and last new story, and a count of quiet feeds, so an alert can name the feed that broke.
 - Without Prometheus, setting `NOTIFY_URL` sends a message to an ntfy topic or a JSON webhook when a feed starts failing or recovers, or when the database stops storing or serving the library.
 
 ![Per-feed refresh diagnostics](docs/screenshots/diagnostics.png)

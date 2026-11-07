@@ -19,13 +19,13 @@
 </div>
 <div class="library-summary"><p id="feed-count" class="meta" role="status"></p>
 <details id="status-help"><summary>What each status means</summary><dl class="status-help">
-<dt>Active</dt><dd>Refreshing on schedule, and its published output changed recently.</dd>
-<dt>Quiet</dt><dd>Refreshes keep succeeding, but the published output has not changed for {{.QuietDays}} days, or for {{.QuietIntervals}} refresh intervals when that is longer. The site may have stopped publishing, or the selectors may match a part of the page that no longer changes: check the page and preview the recipe. Any change to a story counts, so a feed whose stories keep changing is never quiet. For a site that publishes rarely, a longer refresh interval raises the threshold.</dd>
+<dt>Active</dt><dd>Refreshing on schedule, and it found a new story recently, or it is set never to be marked Quiet.</dd>
+<dt>Quiet</dt><dd>Refreshes keep succeeding, but none has found a new story for {{.QuietDays}} days, or for {{.QuietIntervals}} refresh intervals when that is longer, or for the time the feed sets under Mark as Quiet after. The site may have stopped publishing, or the selectors may match a part of the page that no longer lists new stories: check the page and preview the recipe. Only a story the feed did not already have counts: edited stories do not, nor do stories its filters leave out. For a site that publishes rarely, choose a longer time or Never under Mark as Quiet after in its editor.</dd>
 <dt>Needs attention</dt><dd>The latest refresh failed, and the card shows why. Readers keep the last good output.</dd>
 <dt>Waiting to retry</dt><dd>The database could not save the latest refresh. It is retried after a delay, or at once with Refresh.</dd>
 <dt>Pending</dt><dd>Not refreshed successfully yet, so readers get no stories.</dd>
 <dt>Paused</dt><dd>Not refreshing automatically. Readers still get its saved stories.</dd>
-<dt>Last change</dt><dd>When the feed’s published output last changed. A refresh that finds nothing new leaves it alone.</dd>
+<dt>Last change</dt><dd>When the feed’s published output last changed, edits to its stories included. A refresh that changes nothing leaves it alone.</dd>
 </dl></details></div>
 </div>
 <div id="feeds"></div><div id="no-matches" class="panel empty" hidden><h2>No feeds match.</h2><p>Change the search or the status, or show every feed.</p><button id="show-all-feeds" class="secondary" type="button">Show all feeds</button></div><div id="empty" class="panel empty" hidden><div class="empty-icon">◔</div><h2>Your first feed starts here.</h2><p>Add a page URL, select its article cards, and preview the results.</p><button id="empty-new">Create a feed</button></div></section>
@@ -66,6 +66,8 @@
 <p id="filter-count" class="hint" aria-live="polite" data-max-keywords="{{.MaxKeywords}}" data-max-nodes="{{.MaxNodes}}" data-max-keyword-characters="{{.MaxKeywordCharacters}}" data-max-depth="{{.MaxDepth}}"></p><p id="filter-error" class="diagnostic" role="alert" hidden></p>
 </details>
 <div id="apply-filter-history" hidden><label class="check"><input id="apply-filters-to-history" type="checkbox">Remove already-saved stories that do not match these filters</label><p class="hint">Applies when you save this edit. Removed stories can be discovered again if they match a later recipe; their first-seen dates may change. Leave unchecked to keep saved stories.</p></div>
+<label>Mark as Quiet after<select name="quiet_days" aria-describedby="quiet-days-help"><option value="0">Automatic</option>{{range .QuietDayChoices}}<option value="{{.}}">{{.}} days</option>{{end}}<option value="{{.QuietNever}}">Never</option></select></label>
+<p class="hint" id="quiet-days-help">How long refreshes may go without finding a new story before the library marks this feed Quiet. Automatic waits {{.QuietDays}} days, or {{.QuietIntervals}} refresh intervals when that is longer; a chosen time waits at least one refresh interval and an hour. Choose Never for a site that publishes rarely. This changes nothing readers receive.</p>
 <label class="check"><input name="enabled" type="checkbox" checked>Refresh automatically</label>
 <div class="actions"><button id="preview-button" type="button" class="secondary">Preview items</button><button type="submit">Save feed</button></div>
 <p class="hint">RSS and Atom links allow anyone who has the link to read the feed.</p>

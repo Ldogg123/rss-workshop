@@ -25,6 +25,7 @@
    // A recipe's own request headers change what its sources see, so name them here.
    if(feed.recipe.user_agent)item.append(node('p',`User-Agent: ${feed.recipe.user_agent}`,'meta'));
    if(feed.recipe.accept_language)item.append(node('p',`Accept-Language: ${feed.recipe.accept_language}`,'meta'));
+   if(feed.recipe.quiet_days)item.append(node('p',`Mark as Quiet after: ${feed.recipe.quiet_days<0?'Never':feed.recipe.quiet_days+' days'}`,'meta'));
    const selectors=node('details'),summary=node('summary','Recipe selectors');selectors.append(summary);
    const mapping=node('dl',undefined,'import-mapping');
    for(const [label,value] of [['Items',`${feed.recipe.type.toUpperCase()}: ${feed.recipe.items}`],...['title','link','content','image','date'].map(field=>{

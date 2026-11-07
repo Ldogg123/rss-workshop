@@ -10,7 +10,7 @@ docker compose exec -T rss-workshop /rss-workshop -healthcheck
 docker compose logs --tail 30 rss-workshop
 ```
 
-The dashboard reports saved items, refresh status, due feeds, fetch capacity, and whether [notifications](#notifications) are on. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. A FlareSolverr failure on a card, in a preview or in Diagnostics names the step that failed, such as a DNS lookup, a refused connection or an address that is not the FlareSolverr API; [FlareSolverr troubleshooting](flaresolverr.md#troubleshooting) says what to check for each. A card marked **Waiting to retry** is [held after a failed save](#waiting-to-retry-after-a-failed-save), and one marked **Quiet** has [stopped changing](#quiet-feeds).
+The dashboard reports saved items, refresh status, due feeds, fetch capacity, and whether [notifications](#notifications) are on. Chromium/FlareSolverr capacity indicates configuration, not remote-site health. A FlareSolverr failure on a card, in a preview or in Diagnostics names the step that failed, such as a DNS lookup, a refused connection or an address that is not the FlareSolverr API; [FlareSolverr troubleshooting](flaresolverr.md#troubleshooting) says what to check for each. A card marked **Waiting to retry** is [held after a failed save](#waiting-to-retry-after-a-failed-save), and one marked **Quiet** has [stopped finding new stories](#quiet-feeds).
 
 ### The library dashboard
 
@@ -24,15 +24,24 @@ The toolbar above the cards narrows and orders the library without contacting th
 
 The dashboard reloads the library every 10 seconds and keeps the search, the selections and the keyboard focus while it does. The browser remembers the status and sort for the next visit, in its own storage; the search starts empty each time. A browser that blocks site storage gets the defaults instead. When nothing matches, **Show all feeds** clears the search and the status.
 
-**Duplicate** on a card opens the editor with a copy of the feed: its address, schedule, fetch mode and render settings, its own User-Agent and Accept-Language, selectors, date settings, full article content, its own story filters and the same [library filters](filtering.md#library-filters), linked rather than copied. The name becomes `Copy of` and the original name, shortened to fit the 200-byte limit. Nothing is saved until you choose **Save feed**, which adds a new feed with its own reader links and no saved stories, through the same validation and size limits as any new feed; the original is not changed. The copy starts paused, like an import, unless you check **Refresh automatically**, and it never offers to remove saved stories. A reader subscribed to both feeds sees the stories they share twice.
+**Duplicate** on a card opens the editor with a copy of the feed: its address, schedule, fetch mode and render settings, its own User-Agent and Accept-Language, selectors, date settings, full article content, its own story filters and the same [library filters](filtering.md#library-filters), linked rather than copied, and its **Mark as Quiet after** setting. The name becomes `Copy of` and the original name, shortened to fit the 200-byte limit. Nothing is saved until you choose **Save feed**, which adds a new feed with its own reader links and no saved stories, through the same validation and size limits as any new feed; the original is not changed. The copy starts paused, like an import, unless you check **Refresh automatically**, and it never offers to remove saved stories. A reader subscribed to both feeds sees the stories they share twice.
 
 ### Quiet feeds
 
-A refresh that finds nothing new succeeds, so a feed can stop delivering stories without ever failing: the site may have stopped publishing, moved its news to another page, or started serving a page whose matched cards never change. The dashboard marks such a feed **Quiet** when it is enabled, its latest refresh succeeded, and its published output has not changed for **14 days, or 10 refresh intervals if that is longer**. A feed refreshed every 15 minutes, every hour or every day is quiet after 14 days; one refreshed every 2 days after 20, and one refreshed weekly after 70. A source that answers `304 Not Modified` indefinitely counts as unchanged.
+A refresh that finds nothing new succeeds, so a feed can stop delivering stories without ever failing: the site may have stopped publishing, moved its news to another page, or started serving a page whose matched cards never change. The dashboard marks such a feed **Quiet** when it is enabled, its latest refresh succeeded, and no refresh has found a new story for **14 days, or 10 refresh intervals if that is longer**, unless the feed sets its own time. A feed refreshed every 15 minutes, every hour or every day is quiet after 14 days; one refreshed every 2 days after 20, and one refreshed weekly after 70. A source that answers `304 Not Modified` indefinitely finds no new story.
 
-The card says how long its output has been unchanged. Open the source page to see whether it still lists new stories, then **Edit** and **Preview items** to check the selectors. Some sites publish rarely: there is no per-feed switch to silence the badge, but a longer refresh interval raises the threshold, and also fetches the site less often.
+The card says how long it has been since the last new story. Open the source page to see whether it still lists new stories, then **Edit** and **Preview items** to check the selectors.
 
-Quiet reads the same modification time readers receive as `Last-Modified`, which moves when anything the feed publishes changes, not only when a story is added: an edited story, a new image, a story removed by retention, or a change to the feed's title, address or refresh interval. A feed whose stories change on every refresh, such as one with a relative age or a comment count in its descriptions, is therefore never quiet. Pausing and resuming keep the time, and so does a change to the list-page selectors until a refresh with them publishes something different. It is computed from the stored feed alone, so the dashboard's 10-second poll adds no database work for it. A feed [waiting to retry](#waiting-to-retry-after-a-failed-save) is not quiet, because its latest refresh was never stored. `GET /api/feeds` reports each feed's `last_changed` time and `quiet` flag.
+Some sites publish rarely, and some daily ones are worth noticing sooner. **Mark as Quiet after** in the feed's editor replaces the automatic time with 7, 30, 90 or 365 days without a new story, and **Never** stops marking the feed Quiet, which also leaves it out of `rss_workshop_feeds_quiet`. A chosen time ignores the 10-interval rule but always lasts at least one refresh interval and an hour, so a feed refreshed weekly and set to 7 days waits 7 days and an hour: it is not marked Quiet before its next refresh has had the chance to find a story. The setting is part of the recipe, so exports, imports and **Duplicate** carry it. Saving a change publishes nothing, but, like any edit, it drops the source's conditional-request validators, so the next refresh fetches the whole page once.
+
+A new story is one the feed did not have saved, stored by a refresh and kept by `MAX_ITEMS` retention. Only that counts:
+
+- Changes to saved stories do not: an edited title or description, a relative age or a comment count that changes on every refresh, a new image or article body. Nor do stories that retention removes, or a change to the feed's title, address or refresh interval. Each of these changes what readers receive, and its `Last-Modified`, which the card's **Last change** shows, but none adds a story, so a feed whose descriptions change on every refresh still turns quiet once its stories stop being new.
+- Stories that the feed's [filters](filtering.md) leave out are never saved, so a filtered feed is quiet when no story has passed its filters for that long. A feed that has never saved a story, such as one whose filters have left out every story, counts instead from the last change to its output: the latest change to its title, address or refresh interval, or, if none was made, its first successful refresh. For such a feed an edit therefore restarts the count, which it no longer does once the feed has saved a story.
+- A story is new when its identity is: its link, or its title in a recipe without a Link selector. A source whose links change on every visit, for example with a tracking parameter, therefore adds a new story at every refresh, and such a feed is never quiet; **Preview items** shows the links it extracts.
+- Nothing remembers a deleted story, so one that a later refresh stores again, and retention keeps, counts as new. After retention removed it, that takes a source that still lists it, with a date that now places it among the `MAX_ITEMS` newest, as after raising `MAX_ITEMS`. A page that lists more stories without a date than `MAX_ITEMS` keeps does that at each refresh the source answers in full, because such stories are dated when first seen, as [full article content](atom.md#full-article-content) explains, so such a feed is never quiet; raise `MAX_ITEMS` above the number of stories the page lists. After saving with **Remove already-saved stories that do not match these filters** removed it, the story must also pass the feed's filters again, which takes a change to the filters, the selectors or the story itself.
+
+Pausing and resuming keep the time, and so does any edit to a feed that has saved a story. It is computed from the stored feed alone, so the dashboard's 10-second poll adds no database work for it. A feed [waiting to retry](#waiting-to-retry-after-a-failed-save) is not quiet, because its latest refresh was never stored. `GET /api/feeds` reports each feed's `last_new` time, its `last_changed` time and its `quiet` flag. On a database upgraded from v1.2 or older, each feed's last new story starts at the time it first saw the most recently added of its saved stories.
 
 ### Log detail
 
@@ -79,12 +88,13 @@ Aggregates cover the library, saved stories, refresh/Chromium/FlareSolverr capac
 | `rss_workshop_feeds_due` | Enabled feeds whose next refresh is due |
 | `rss_workshop_feeds_failing` | Feeds whose last refresh failed, paused ones included |
 | `rss_workshop_feeds_held` | Enabled feeds [waiting to retry](#waiting-to-retry-after-a-failed-save) a refresh the database could not store. They still count in `rss_workshop_feeds_due`, because their stored schedule says they are due |
-| `rss_workshop_feeds_quiet` | Feeds the dashboard marks [quiet](#quiet-feeds): still refreshing, but with output unchanged past the threshold. It counts the whole library |
+| `rss_workshop_feeds_quiet` | Feeds the dashboard marks [quiet](#quiet-feeds): still refreshing, but without a new story past the threshold. It counts the whole library |
 | `rss_workshop_items` | Stories saved across all feeds |
 | `rss_workshop_feed_enabled` | `1` for a feed that refreshes automatically, `0` for a paused one |
 | `rss_workshop_feed_failures` | Consecutive failures for one feed |
 | `rss_workshop_feed_last_success_timestamp_seconds` | Alert when a feed has not succeeded for too long; `0` means it never has |
 | `rss_workshop_feed_last_changed_timestamp_seconds` | When a feed's published output last changed, the time readers receive as `Last-Modified`; `0` means it has published nothing |
+| `rss_workshop_feed_last_new_story_timestamp_seconds` | When a refresh last saved a [new story](#quiet-feeds) for a feed; `0` means it has saved none |
 | `rss_workshop_feed_items` | Stories saved for one feed |
 | `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
 | `rss_workshop_browser_active` / `_capacity` | Chromium jobs running and allowed; `0` without Chromium |
@@ -94,19 +104,21 @@ Aggregates cover the library, saved stories, refresh/Chromium/FlareSolverr capac
 | `rss_workshop_notifications_total` | [Notification](#notifications) messages by `result`: `sent`, or `failed` after every attempt. `0` while notifications are off |
 | `rss_workshop_notification_events_dropped_total` | Notification events dropped because more than 256 feed events, or 8 database events, waited for a slow service |
 
-An alert for one feed that stops changing, with your own threshold rather than the dashboard's:
+An alert for one feed that stops finding new stories, with your own threshold rather than the dashboard's:
 
 ```yaml
-- alert: FeedOutputUnchanged
+- alert: FeedNoNewStory
   expr: |
-    (time() - rss_workshop_feed_last_changed_timestamp_seconds > 7 * 86400)
+    (time() - rss_workshop_feed_last_new_story_timestamp_seconds > 7 * 86400)
     and on (id) rss_workshop_feed_enabled == 1
     and on (id) rss_workshop_feed_failures == 0
-    and on (id) rss_workshop_feed_last_changed_timestamp_seconds > 0
+    and on (id) rss_workshop_feed_last_new_story_timestamp_seconds > 0
   for: 1h
   annotations:
-    summary: "{{ $labels.feed }} has published nothing new for a week"
+    summary: "{{ $labels.feed }} has found no new story for a week"
 ```
+
+It leaves out feeds that have never saved a story. It also ignores **Mark as Quiet after**, which no metric reports, so exclude a feed set to Never by its `id` label, or alert on `rss_workshop_feeds_quiet`, which follows each feed's setting but does not name the feed. `rss_workshop_feed_last_changed_timestamp_seconds` in its place alerts when the output stops changing instead, which a story whose text changes at every refresh prevents.
 
 Because the series name your feeds, the token is a real credential: keep it out of shared dashboards and rotate it by changing `METRICS_TOKEN` and recreating the service. Metrics never include reader links, source URLs, or story content. A library beyond 1,000 feeds keeps every aggregate, but per-feed series cover only the first 1,000 feeds by title, so a scrape stays bounded. Feeds after that have no per-feed series; `rss_workshop_feeds` still counts them.
 
@@ -377,7 +389,7 @@ Source bodies are limited to 4 MiB, both as received and once decoded to UTF-8, 
 
 The editor's **Refresh automatically** checkbox is saved with the rest of the feed, and a save, like any edit, clears the error, failure count and validators and discards a running refresh. If you leave the checkbox as it was when the editor opened, the save keeps the feed's current setting, so a feed you paused or resumed from its card while the editor was open stays that way.
 
-The card uses `POST /api/feeds/{id}/enabled` with `{"enabled": false}` or `{"enabled": true}`; it needs a signed-in session and passes the same Origin and CSRF checks as every other change. Feed saves accept an optional top-level `loaded_enabled`, the `enabled` value the editor loaded: when the two are equal, the save keeps the stored setting. A save without it sets `enabled` as sent, so a script that pauses or resumes a feed by sending its object from `GET /api/feeds` back with a different `enabled` keeps working: saves accept and ignore the state the listing reports, such as `count`, `version`, `held`, `quiet`, `last_changed` and `last_new`, the time a refresh last stored a story the feed did not already have, which includes a story that retention or history pruning removed and its source still lists.
+The card uses `POST /api/feeds/{id}/enabled` with `{"enabled": false}` or `{"enabled": true}`; it needs a signed-in session and passes the same Origin and CSRF checks as every other change. Feed saves accept an optional top-level `loaded_enabled`, the `enabled` value the editor loaded: when the two are equal, the save keeps the stored setting. A save without it sets `enabled` as sent, so a script that pauses or resumes a feed by sending its object from `GET /api/feeds` back with a different `enabled` keeps working: saves accept and ignore the state the listing reports, such as `count`, `version`, `held`, `quiet`, `last_changed` and `last_new`, the time a refresh last stored a story the feed did not already have, which includes a story that retention or history pruning removed and a later refresh stored again.
 
 ### Waiting to retry after a failed save
 

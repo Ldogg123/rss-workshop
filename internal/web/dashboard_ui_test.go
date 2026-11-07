@@ -51,7 +51,8 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 		}
 	}()
 	// add stores a feed with the given refreshes, then sets the times the
-	// sorts compare, so feeds stored in the same second still differ.
+	// sorts compare, so feeds stored in the same second still differ. changed
+	// is also when its story was first seen, and so its last new story.
 	add := func(f model.Feed, runs []error, succeeded, changed time.Time, next time.Duration) string {
 		t.Helper()
 		enabled := f.Enabled
@@ -78,7 +79,7 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 			}
 		}
 		if !changed.IsZero() {
-			queries = append(queries, fmt.Sprintf("UPDATE feeds SET last_changed=%d WHERE id='%s'", changed.Unix(), id), fmt.Sprintf("UPDATE items SET last_changed=%d WHERE feed_id='%s'", changed.Unix(), id))
+			queries = append(queries, fmt.Sprintf("UPDATE feeds SET last_changed=%[1]d,last_new=%[1]d WHERE id='%[2]s'", changed.Unix(), id), fmt.Sprintf("UPDATE items SET first_seen=%[1]d,last_changed=%[1]d WHERE feed_id='%[2]s'", changed.Unix(), id))
 		}
 		if enabled {
 			queries = append(queries, fmt.Sprintf("UPDATE feeds SET enabled=TRUE,next_run=%d WHERE id='%s'", now.Add(next).Unix(), id))
@@ -92,6 +93,11 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	}
 	quiet := add(model.Feed{Title: "Morning briefing", URL: "https://alpha.example/zebra-desk", Interval: 3600, Enabled: true, Recipe: recipe},
 		[]error{nil}, now.Add(-30*time.Minute), now.Add(-20*24*time.Hour-time.Hour), 2*time.Hour)
+	// Its story's text changed two days ago, such as a comment count, which
+	// changes the output but is not a new story: it stays quiet for 20 days.
+	if _, err := s.DB.Exec(fmt.Sprintf("UPDATE feeds SET last_changed=%d WHERE id='%s'", now.Add(-2*24*time.Hour).Unix(), quiet)); err != nil {
+		t.Fatal(err)
+	}
 	failing := add(model.Feed{Title: "Beta bulletin", URL: "https://beta.example/news", Interval: 3600, Enabled: true, Recipe: recipe},
 		[]error{nil, errors.New("source unavailable"), errors.New("source unavailable")}, now.Add(-3*time.Hour), time.Time{}, time.Hour)
 	paused := add(model.Feed{Title: "Gamma gazette", URL: "https://gamma.example/news", Interval: 3600, Recipe: recipe},
@@ -112,8 +118,8 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 		"a library control has no label")
 
 	// The quiet badge and its explanation, in the dark theme's colors.
-	check(card(quiet)+`.querySelector('.badge').textContent==='Quiet'&&`+card(quiet)+`.querySelector('.feed-quiet').textContent.startsWith('Output unchanged for 20 days.')`,
-		"the quiet feed has no Quiet badge and explanation")
+	check(card(quiet)+`.querySelector('.badge').textContent==='Quiet'&&`+card(quiet)+`.querySelector('.feed-quiet').textContent.startsWith('No new story for 20 days.')`,
+		"the quiet feed has no Quiet badge and explanation, or counts from its last output change")
 	check(card(failing)+`.querySelector('.badge').textContent==='Needs attention'&&`+card(failing)+`.querySelector('.times').textContent.includes('Failures in a row2')&&!`+card(failing)+`.querySelector('.feed-quiet')`,
 		"the failing feed is not reported as failing")
 	check(card(paused)+`.querySelector('.badge').textContent==='Paused'&&!`+card(paused)+`.querySelector('.feed-quiet')`, "a paused feed is reported as quiet")
@@ -191,7 +197,7 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	full := model.Recipe{Mode: "auto", WaitSelector: "article.card", SettleMS: 750, Type: "css", Items: ".card", Title: model.Field{Selector: "h2"}, Link: model.Field{Selector: "a", Attr: "href"},
 		Content: model.Field{Selector: "p"}, Image: model.Field{Selector: "img", Attr: "data-src"}, Date: model.Field{Selector: "time", Attr: "datetime"}, DateLayout: "2006-01-02", Timezone: "UTC",
 		Filters: &model.FilterSet{Include: &model.FilterRule{Op: "contains_any", Field: "title", Keywords: []string{"story"}}}, Full: &model.FullContent{Selector: ".body", Browser: true},
-		UserAgent: "Copy-Fixture/1 (+mailto:ops@example.net)", AcceptLanguage: "fr-CA, fr;q=0.8"}
+		UserAgent: "Copy-Fixture/1 (+mailto:ops@example.net)", AcceptLanguage: "fr-CA, fr;q=0.8", QuietDays: model.QuietNever}
 	// 66 three-byte characters: 198 bytes, so "Copy of " would pass the
 	// field's 200-character limit and fail the server's 200-byte one.
 	wide := strings.Repeat("界", 66)
@@ -205,8 +211,10 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	copied := "Copy of " + strings.Repeat("界", 63) + "…"
 	check(`document.querySelector('#editor-title').textContent==='Duplicate feed'&&form.elements.id.value===''&&form.elements.title.value==='`+copied+`'&&new TextEncoder().encode(form.elements.title.value).length===200`,
 		"Duplicate did not open a new feed named within 200 bytes")
-	check(`!form.elements.enabled.checked&&!document.querySelector('#duplicate-hint').hidden&&document.querySelector('#apply-filter-history').hidden&&form.elements.items.value==='.card'&&form.elements.wait_selector.value==='article.card'&&form.elements.settle_ms.value==='750'&&form.elements.full_selector.value==='.body'&&form.elements.full_browser.checked&&form.elements.timezone.value==='UTC'&&form.elements.date_layout.value==='2006-01-02'&&form.elements.interval.value==='120'&&document.querySelector('#filter-include textarea').value==='story'&&form.elements.user_agent.value==='Copy-Fixture/1 (+mailto:ops@example.net)'&&form.elements.accept_language.value==='fr-CA, fr;q=0.8'&&document.querySelector('#request-summary').textContent==='Custom User-Agent, custom Accept-Language'`,
+	check(`!form.elements.enabled.checked&&!document.querySelector('#duplicate-hint').hidden&&document.querySelector('#apply-filter-history').hidden&&form.elements.items.value==='.card'&&form.elements.wait_selector.value==='article.card'&&form.elements.settle_ms.value==='750'&&form.elements.full_selector.value==='.body'&&form.elements.full_browser.checked&&form.elements.timezone.value==='UTC'&&form.elements.date_layout.value==='2006-01-02'&&form.elements.interval.value==='120'&&document.querySelector('#filter-include textarea').value==='story'&&form.elements.user_agent.value==='Copy-Fixture/1 (+mailto:ops@example.net)'&&form.elements.accept_language.value==='fr-CA, fr;q=0.8'&&document.querySelector('#request-summary').textContent==='Custom User-Agent, custom Accept-Language'&&form.elements.quiet_days.value==='-1'`,
 		"Duplicate did not copy the feed's settings, or offered to prune history")
+	check(`getComputedStyle(form.elements.quiet_days).backgroundColor==='rgb(17, 28, 45)'&&document.querySelector('#quiet-days-help').textContent.includes('14 days, or 10 refresh intervals')`,
+		"Mark as Quiet after ignores the dark theme or lost its help")
 	must(chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.Poll(`document.querySelector('#editor').hidden&&feeds.some(f=>f.title==='`+copied+`')`, nil))
 	feeds, err := s.List(ctx)
 	if err != nil {

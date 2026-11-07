@@ -72,14 +72,16 @@ func (a *App) Handler() http.Handler {
 	}
 	// The editor renders these bounds and rejects oversized filters before saving.
 	// They come from internal/filter so the UI cannot drift from the validator.
-	// The quiet threshold comes from internal/model for the same reason.
+	// The quiet thresholds come from internal/model for the same reason, so
+	// the select offers exactly the values validate accepts.
 	page := struct {
 		Version                                               string
 		MaxKeywords, MaxNodes, MaxDepth, MaxKeywordCharacters int
 		MaxRuns, MaxArticles                                  int
-		QuietDays, QuietIntervals                             int
+		QuietDays, QuietIntervals, QuietNever                 int
+		QuietDayChoices                                       []int
 	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns, scheduler.MaxArticlesPerRun,
-		int(model.QuietFloor / (24 * time.Hour)), model.QuietIntervals}
+		int(model.QuietFloor / (24 * time.Hour)), model.QuietIntervals, model.QuietNever, model.QuietDayChoices}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, page)
@@ -352,6 +354,9 @@ func validate(f model.Feed) error {
 	}
 	if f.Interval < 60 || f.Interval > 604800 {
 		return errors.New("refresh interval must be 60–604800 seconds")
+	}
+	if e := model.ValidateQuietDays(f.Recipe.QuietDays); e != nil {
+		return e
 	}
 	// Archives have a larger total limit, but each configuration must still fit
 	// the editor's save request so an imported paused feed can be resumed.
