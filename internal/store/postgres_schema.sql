@@ -5,7 +5,7 @@ CREATE TABLE feeds (
  last_attempt BIGINT NOT NULL DEFAULT 0, last_success BIGINT NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT '', failures BIGINT NOT NULL DEFAULT 0,
  etag BYTEA NOT NULL DEFAULT '', modified BYTEA NOT NULL DEFAULT '', version BIGINT NOT NULL DEFAULT 1,
- last_changed BIGINT NOT NULL DEFAULT 0
+ last_changed BIGINT NOT NULL DEFAULT 0, last_new BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX feeds_due ON feeds(enabled,next_run);
 CREATE TABLE items (

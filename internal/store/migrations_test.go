@@ -53,12 +53,43 @@ func releasedStore(t *testing.T, version int) (*Store, func() (*Store, error)) {
 	return &Store{DB: db, MaxItems: 10, postgres: postgres}, open
 }
 
-// legacyItems reads items with the pre-schema-4 column list. The current
-// Items() selects content_full, which a schema 1-3 database does not have, so
-// migration tests must capture "before" rows the way those releases stored them.
-func legacyItems(t *testing.T, s *Store, feedID string) []model.Item {
+// releasedGet reads a feed from a database still at a released schema, the
+// way the current Get reads it once that database is upgraded: each column
+// the schema lacks carries the value its migration starts from. Releases
+// before schema 5 have no library filter links, so their list is empty.
+func releasedGet(t *testing.T, s *Store, id string, version int) (model.Feed, error) {
 	t.Helper()
-	rows, err := s.DB.QueryContext(t.Context(), s.bind(`SELECT key,guid,title,url,html,image,published,first_seen,last_seen FROM items WHERE feed_id=? ORDER BY published DESC,key`), feedID)
+	// Schema 6 starts last_new at the newest stored story's first_seen.
+	released := strings.Replace(columns, ",last_new,", ",COALESCE((SELECT max(first_seen) FROM items WHERE feed_id=feeds.id),0),", 1)
+	if version < 5 {
+		// Schema 5 starts last_changed at last_success.
+		released = strings.Replace(released, ",last_changed,", ",last_success,", 1)
+	}
+	f, err := scan(s.DB.QueryRowContext(t.Context(), s.bind("SELECT "+released+" FROM feeds WHERE id=?"), id))
+	if err != nil {
+		return f, err
+	}
+	if version < 5 {
+		f.FilterIDs = []string{}
+		return f, nil
+	}
+	f.FilterIDs, err = s.feedFilterIDs(t.Context(), s.DB, id)
+	return f, err
+}
+
+// releasedItems reads a feed's stories from a database still at a released
+// schema, the way the current Items reads them once it is upgraded: columns
+// the schema lacks carry the values their migrations start from.
+func releasedItems(t *testing.T, s *Store, feedID string, version int) []model.Item {
+	t.Helper()
+	query := `SELECT key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed FROM items WHERE feed_id=? ORDER BY published DESC,key`
+	if version < 5 {
+		query = strings.Replace(query, ",last_changed FROM", ",0 FROM", 1)
+	}
+	if version < 4 {
+		query = strings.Replace(query, ",content_full,", ",'',", 1)
+	}
+	rows, err := s.DB.QueryContext(t.Context(), s.bind(query), feedID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,31 +97,17 @@ func legacyItems(t *testing.T, s *Store, feedID string) []model.Item {
 	out := []model.Item{}
 	for rows.Next() {
 		var it model.Item
-		var p, f, l int64
-		if err := rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &p, &f, &l); err != nil {
+		var p, f, l, c int64
+		if err := rows.Scan(&it.Key, &it.GUID, &it.Title, &it.URL, &it.HTML, &it.Image, &it.FullHTML, &p, &f, &l, &c); err != nil {
 			t.Fatal(err)
 		}
-		it.Published, it.FirstSeen, it.LastSeen = stamp(p), stamp(f), stamp(l)
+		it.Published, it.FirstSeen, it.LastSeen, it.LastChanged = stamp(p), stamp(f), stamp(l), stamp(c)
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
 	return out
-}
-
-// legacyGet reads a feed the way releases before schema 5 could: they have no
-// library filter links, which the current Get reads. An upgraded feed has an
-// empty list, so the result compares equal to the current Get after migration.
-//
-// Releases before schema 5 also had no last_changed. The migration starts it
-// at last_success, so the expected feed carries that value.
-func legacyGet(t *testing.T, s *Store, id string) (model.Feed, error) {
-	t.Helper()
-	legacyColumns := strings.Replace(columns, "version,last_changed,", "version,last_success,", 1)
-	f, err := scan(s.DB.QueryRowContext(t.Context(), s.bind("SELECT "+legacyColumns+" FROM feeds WHERE id=?"), id))
-	f.FilterIDs = []string{}
-	return f, err
 }
 
 // legacyInsertItem stores one item the way schema 1-3 did, deriving the same
@@ -108,7 +125,7 @@ func legacyInsertItem(t *testing.T, s *Store, feedID, key, title string) {
 // Keep every released schema in this matrix as new migrations are added. The
 // current opener must upgrade the entire chain without an intermediate binary.
 func TestEveryReleasedSchemaPreservesStoredRowsAcrossDirectUpgrade(t *testing.T) {
-	for _, original := range []int{1, 2, 3, 4, 5} {
+	for original := 1; original < currentSchema; original++ {
 		t.Run(strconv.Itoa(original), func(t *testing.T) {
 			legacy, open := releasedStore(t, original)
 			ctx := t.Context()
@@ -155,6 +172,19 @@ VALUES(?,?,?,?,?,?,?,?,?,?)`), id, legacy.opaque(key+"\x00\xff"), id+"-guid-"+st
 					t.Fatal(err)
 				}
 			}
+			if original >= 5 {
+				// Output change times, a library filter and the feeds using it.
+				for _, query := range []string{
+					"UPDATE feeds SET last_changed=1400000400",
+					"UPDATE items SET last_changed=1400000200",
+					`INSERT INTO filters(id,name,rules) VALUES('kept-filter','Kept filter','{"exclude":{"op":"contains_any","field":"title","keywords":["sponsored"]}}')`,
+					"INSERT INTO feed_filters(feed_id,filter_id,position) SELECT id,'kept-filter',0 FROM feeds",
+				} {
+					if _, err := tx.ExecContext(ctx, query); err != nil {
+						t.Fatal("cannot seed released schema 5 state", err)
+					}
+				}
+			}
 			if err := tx.Commit(); err != nil {
 				t.Fatal(err)
 			}
@@ -168,7 +198,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?)`), id, legacy.opaque(key+"\x00\xff"), id+"-guid-"+st
 					t.Fatal("direct upgrade or reopen failed", err)
 				}
 				var current int
-				if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&current); err != nil || current != 5 {
+				if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&current); err != nil || current != currentSchema {
 					s.DB.Close()
 					t.Fatal("direct upgrade did not reach current schema", err)
 				}
@@ -199,6 +229,12 @@ func releasedRows(t *testing.T, db *sql.DB, version int) map[string][][]any {
 	}
 	if version >= 4 {
 		queries["items"] = "SELECT feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen FROM items ORDER BY feed_id,guid"
+	}
+	if version >= 5 {
+		queries["feeds"] = "SELECT id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version,last_changed FROM feeds ORDER BY id"
+		queries["items"] = "SELECT feed_id,key,guid,title,url,html,image,content_full,published,first_seen,last_seen,last_changed FROM items ORDER BY feed_id,guid"
+		queries["filters"] = "SELECT id,name,rules FROM filters ORDER BY id"
+		queries["feed_filters"] = "SELECT feed_id,filter_id,position FROM feed_filters ORDER BY feed_id,filter_id"
 	}
 	out := make(map[string][][]any, len(queries))
 	for table, query := range queries {
@@ -247,11 +283,11 @@ func TestSchemaOneMigrationPreservesLibraryAndRunSummaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	beforeFeed, err := legacyGet(t, legacy, id)
+	beforeFeed, err := releasedGet(t, legacy, id, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeItems := legacyItems(t, legacy, id)
+	beforeItems := releasedItems(t, legacy, id, 1)
 	if err := legacy.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +297,7 @@ func TestSchemaOneMigrationPreservesLibraryAndRunSummaries(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Close() })
 	var version int
-	if err = s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 5 {
+	if err = s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != currentSchema {
 		t.Fatal("migration did not advance schema version", err)
 	}
 	afterFeed, err := s.Get(ctx, id)
@@ -333,7 +369,7 @@ func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := legacyGet(t, legacy, id)
+	f, err := releasedGet(t, legacy, id, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,11 +384,11 @@ func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyInsertItem(t, legacy, f.ID, "saved", "Saved story")
-	beforeFeed, err := legacyGet(t, legacy, f.ID)
+	beforeFeed, err := releasedGet(t, legacy, f.ID, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeItems := legacyItems(t, legacy, f.ID)
+	beforeItems := releasedItems(t, legacy, f.ID, 2)
 	beforeRuns, err := legacy.Runs(ctx, f.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -364,8 +400,8 @@ func TestSchemaTwoMigrationPreservesDiagnosticsAndHistory(t *testing.T) {
 	}
 	defer s.DB.Close()
 	var version int
-	if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != 5 {
-		t.Fatal("schema 2 did not migrate to 3", err)
+	if err := s.DB.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil || version != currentSchema {
+		t.Fatal("schema 2 did not reach the current schema", err)
 	}
 	afterFeed, err := s.Get(ctx, f.ID)
 	if err != nil || !reflect.DeepEqual(afterFeed, beforeFeed) {
@@ -418,7 +454,7 @@ CREATE TRIGGER prevent_version_three BEFORE UPDATE ON schema_version FOR EACH RO
 }
 
 func TestUnsupportedSchemaDoesNotMigrateOrChangeJournal(t *testing.T) {
-	for _, version := range []int{0, 6, 99} {
+	for _, version := range []int{0, currentSchema + 1, 99} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			legacy, open := legacyStore(t)
 			if _, err := legacy.DB.ExecContext(t.Context(), legacy.bind("UPDATE schema_version SET version=?"), version); err != nil {

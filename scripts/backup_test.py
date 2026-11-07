@@ -22,7 +22,7 @@ import backup
 ROOT = Path(__file__).resolve().parents[1]
 
 
-CURRENT_SCHEMA = 5
+CURRENT_SCHEMA = 6
 CURRENT_COUNTS = {"feeds": 1, "items": 1, "runs": 1, "filters": 1, "feed_filters": 1}
 
 

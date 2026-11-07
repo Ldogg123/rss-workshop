@@ -55,7 +55,14 @@ type Feed struct {
 	// what reader responses advertise as their modification time. The library
 	// listing reports it; like LastSuccess, saves and previews accept and
 	// ignore it, because only the store moves it.
-	LastChanged  time.Time `json:"last_changed"`
+	LastChanged time.Time `json:"last_changed"`
+	// LastNew is when a stored refresh last inserted a story this feed did not
+	// have stored, and that retention kept; zero if none is known. A story
+	// that retention or history pruning removed counts again if its source
+	// still lists it; a changed story does not move it. It is reported state
+	// like LastChanged, which saves and previews accept and ignore, and reader
+	// output never reads it.
+	LastNew      time.Time `json:"last_new"`
 	Error        string    `json:"error"`
 	Failures     int       `json:"failures"`
 	ETag         string    `json:"-"`

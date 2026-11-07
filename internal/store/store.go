@@ -108,15 +108,15 @@ func ID() string {
 	return hex.EncodeToString(b)
 }
 
-const columns = `id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version,last_changed,(SELECT count(*) FROM items WHERE feed_id=feeds.id)`
+const columns = `id,rss_token,title,url,recipe,interval,enabled,next_run,last_attempt,last_success,error,failures,etag,modified,version,last_changed,last_new,(SELECT count(*) FROM items WHERE feed_id=feeds.id)`
 
 type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (model.Feed, error) {
 	var f model.Feed
 	var r string
-	var next, attempt, success, changed int64
-	e := row.Scan(&f.ID, &f.RSSToken, &f.Title, &f.URL, &r, &f.Interval, &f.Enabled, &next, &attempt, &success, &f.Error, &f.Failures, &f.ETag, &f.LastModified, &f.Version, &changed, &f.Count)
+	var next, attempt, success, changed, added int64
+	e := row.Scan(&f.ID, &f.RSSToken, &f.Title, &f.URL, &r, &f.Interval, &f.Enabled, &next, &attempt, &success, &f.Error, &f.Failures, &f.ETag, &f.LastModified, &f.Version, &changed, &added, &f.Count)
 	if e != nil {
 		return f, e
 	}
@@ -125,6 +125,7 @@ func scan(row scanner) (model.Feed, error) {
 	f.LastAttempt = stamp(attempt)
 	f.LastSuccess = stamp(success)
 	f.LastChanged = stamp(changed)
+	f.LastNew = stamp(added)
 	return f, e
 }
 func stamp(n int64) time.Time {
@@ -265,12 +266,12 @@ func (s *Store) CompleteWithDiagnostics(ctx context.Context, f model.Feed, items
 	}
 	defer tx.Rollback()
 	var version int
-	var lastChanged int64
-	versionQuery := "SELECT version,last_changed FROM feeds WHERE id=?"
+	var lastChanged, lastNew int64
+	versionQuery := "SELECT version,last_changed,last_new FROM feeds WHERE id=?"
 	if s.postgres {
 		versionQuery += " FOR UPDATE"
 	}
-	if e = tx.QueryRowContext(ctx, s.bind(versionQuery), f.ID).Scan(&version, &lastChanged); e != nil {
+	if e = tx.QueryRowContext(ctx, s.bind(versionQuery), f.ID).Scan(&version, &lastChanged, &lastNew); e != nil {
 		if errors.Is(e, sql.ErrNoRows) {
 			return ErrDeleted
 		}
@@ -359,6 +360,17 @@ RETURNING last_changed,first_seen`), f.ID, s.opaque(it.Key), guid, readableText(
 		}
 		// Inserted or changed stories that retention kept.
 		changed = changed || len(touched) > 0
+		// A story this feed did not have stored, kept by retention, is new,
+		// including one an earlier refresh or history pruning removed; a
+		// changed story, or one retention removed again, is not. last_new
+		// takes the new rows' first_seen, as the schema 6 upgrade did, and
+		// reader output never reads it.
+		for _, inserted := range touched {
+			if inserted {
+				lastNew = now.Unix()
+				break
+			}
+		}
 		if removed > 0 {
 			slog.Info("stories removed by retention", "feed", f.Title, "feed_id", f.ID,
 				"removed", removed, "max_items", s.MaxItems)
@@ -367,7 +379,7 @@ RETURNING last_changed,first_seen`), f.ID, s.opaque(it.Key), guid, readableText(
 		if changed || lastChanged == 0 {
 			lastChanged = changedAt
 		}
-		if _, e = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_success=?,etag=?,modified=?,last_changed=? WHERE id=?"), now.Unix(), s.opaque(etag), s.opaque(modified), lastChanged, f.ID); e != nil {
+		if _, e = tx.ExecContext(ctx, s.bind("UPDATE feeds SET last_success=?,etag=?,modified=?,last_changed=?,last_new=? WHERE id=?"), now.Unix(), s.opaque(etag), s.opaque(modified), lastChanged, lastNew, f.ID); e != nil {
 			return e
 		}
 	}

@@ -150,6 +150,10 @@ CREATE TRIGGER prevent_run_insert BEFORE INSERT ON runs FOR EACH ROW EXECUTE FUN
 	if err != nil || !reflect.DeepEqual(current, f) {
 		t.Fatal("failed run insert committed schedule or validators", err)
 	}
+	// The story would have been new, so this also holds last_new back.
+	if !current.LastNew.IsZero() || !current.LastChanged.IsZero() {
+		t.Fatal("failed run insert recorded a new story or changed output", current.LastNew, current.LastChanged)
+	}
 	items, err := s.Items(t.Context(), f.ID)
 	if err != nil || len(items) != 0 {
 		t.Fatal("failed run insert committed extracted items", err)

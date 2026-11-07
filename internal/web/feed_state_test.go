@@ -239,7 +239,7 @@ func TestListedFeedCanBeSentBack(t *testing.T) {
 		}
 		for _, f := range out.Feeds {
 			if string(f["id"]) == strconv.Quote(id) {
-				for _, key := range []string{"held", "quiet", "last_changed"} {
+				for _, key := range []string{"held", "quiet", "last_changed", "last_new"} {
 					if _, ok := f[key]; !ok {
 						t.Fatalf("the listing no longer reports %s; this test no longer covers it", key)
 					}
@@ -253,11 +253,13 @@ func TestListedFeedCanBeSentBack(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		f := listed()
 		f["enabled"] = json.RawMessage(strconv.FormatBool(enabled))
+		// Reported state is not a setting: only a refresh moves it.
+		f["last_new"] = json.RawMessage(`"2030-01-02T03:04:05Z"`)
 		if w := h.request("PUT", "/api/feeds/"+id, jsonBody(t, f)); w.Code != http.StatusOK {
 			t.Fatalf("saving the listed feed with enabled=%v = %d %s", enabled, w.Code, w.Body.String())
 		}
 		got, err := h.app.Store.Get(ctx, id)
-		if err != nil || got.Enabled != enabled || got.Title != "Scripted" || !reflect.DeepEqual(got.Recipe, recipe) {
+		if err != nil || got.Enabled != enabled || got.Title != "Scripted" || !reflect.DeepEqual(got.Recipe, recipe) || !got.LastNew.IsZero() {
 			t.Fatalf("after saving the listed feed with enabled=%v: %+v, %v", enabled, got, err)
 		}
 	}

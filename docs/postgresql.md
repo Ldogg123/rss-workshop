@@ -106,7 +106,7 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
-The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.0.0 database moves from schema 4 to schema 5 the first time this version runs, while a v1.1.0 or v1.1.1 database is already at schema 5 and opens unchanged; retain a pre-upgrade dump to roll back, because an older release cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates. See [upgrade compatibility](operations.md#upgrades).
+The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.1.0, v1.1.1 or v1.2.0 database moves from schema 5 to schema 6 the first time this version runs, and an older one takes every step in the same transaction; retain a pre-upgrade dump to roll back, because an older release, v1.2.0 included, cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates. See [upgrade compatibility](operations.md#upgrades).
 
 For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 

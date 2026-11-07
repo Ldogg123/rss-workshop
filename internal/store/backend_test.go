@@ -210,7 +210,7 @@ func TestPostgresConcurrentRecipeInvalidation(t *testing.T) {
 			deadline := time.Now().Add(3 * time.Second)
 			for {
 				var blocked bool
-				if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE 'SELECT version,last_changed FROM feeds%')`, blockerPID).Scan(&blocked); err != nil {
+				if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE 'SELECT version,last_changed,last_new FROM feeds%')`, blockerPID).Scan(&blocked); err != nil {
 					t.Fatal(err)
 				}
 				if blocked {

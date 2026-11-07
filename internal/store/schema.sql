@@ -1,12 +1,12 @@
 CREATE TABLE schema_version(version INTEGER NOT NULL);
-INSERT INTO schema_version VALUES(5);
+INSERT INTO schema_version VALUES(6);
 CREATE TABLE feeds (
  id TEXT PRIMARY KEY, rss_token TEXT NOT NULL UNIQUE, title TEXT NOT NULL, url TEXT NOT NULL, recipe TEXT NOT NULL,
  interval INTEGER NOT NULL, enabled INTEGER NOT NULL, next_run INTEGER NOT NULL,
  last_attempt INTEGER NOT NULL DEFAULT 0, last_success INTEGER NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
  etag TEXT NOT NULL DEFAULT '', modified TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1,
- last_changed INTEGER NOT NULL DEFAULT 0
+ last_changed INTEGER NOT NULL DEFAULT 0, last_new INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX feeds_due ON feeds(enabled,next_run);
 CREATE TABLE items (
