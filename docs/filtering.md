@@ -1,6 +1,6 @@
 # Story filters
 
-Use **Story filters** in the feed editor to save stories that match your interests. Filtering runs after CSS/XPath extraction, so the selectors still choose the repeating cards and their fields. A [feed source](feed-sources.md) is filtered the same way once its entries are read; there, description rules read the full post when an entry carries one, and its summary otherwise.
+Use **Story filters** in the feed editor to save stories that match your interests. Filtering runs after CSS/XPath extraction, so the selectors still choose the repeating cards and their fields. A [feed source](feed-sources.md) is filtered the same way once its entries are read; there, description rules read the full post when an entry carries one, and its summary otherwise, never a fetched article.
 
 ## Include and exclude rules
 

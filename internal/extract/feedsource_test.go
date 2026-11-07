@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"rss-workshop/internal/feed"
 	"rss-workshop/internal/model"
 )
 
@@ -297,6 +298,158 @@ func TestFeedSourceBounds(t *testing.T) {
 	}
 }
 
+// An address too long to publish is not an image, and never fails the feed: a
+// feed source has no selector to narrow, so the story is kept without one and
+// the next candidate is tried.
+func TestFeedSourceOverlongImagesAreUnusable(t *testing.T) {
+	long := "https://cdn.example/" + strings.Repeat("a", 8200) + ".jpg"
+	body := `<rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>` +
+		`<item><title>Long thumbnail</title><link>https://long.example/1</link><description>Short.</description><media:thumbnail url="` + long + `"/></item>` +
+		`<item><title>Long inline image</title><link>https://long.example/2</link><content:encoded><![CDATA[<p>text</p><img src="` + long + `">]]></content:encoded></item>` +
+		`<item><title>Long, then usable</title><link>https://long.example/3</link><description>Short.</description><media:thumbnail url="` + long + `"/><media:thumbnail url="https://cdn.example/ok.jpg"/></item>` +
+		`</channel></rss>`
+	p := runFeedSource(t, []byte(body), "https://long.example/rss", feedRecipe())
+	if len(p.Items) != 3 || len(p.Warnings) != 0 {
+		t.Fatalf("items %d, warnings %q", len(p.Items), p.Warnings)
+	}
+	for _, it := range p.Items[:2] {
+		if it.Image != "" || strings.HasPrefix(it.HTML, "<p><img") {
+			t.Errorf("%s: image %.40q, description %.60q", it.Title, it.Image, it.HTML)
+		}
+	}
+	if got := p.Items[2]; got.Image != "https://cdn.example/ok.jpg" {
+		t.Errorf("the usable thumbnail after a long one: %.60q", got.Image)
+	}
+}
+
+// A description that shows nothing once sanitized, such as a post that is only
+// a video embed or a tracking image, gives way to the entry's summary, which
+// then titles an untitled entry and is what filters read.
+func TestFeedSourceFallsBackFromAnEmptyDescription(t *testing.T) {
+	const embed = `<figure class="wp-block-embed"><div><iframe src="https://www.youtube.com/embed/x"></iframe></div></figure>`
+	body := `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>` +
+		`<item><title>Bridges</title><link>https://embed.example/1</link><description>Watch our video about bridges</description><content:encoded><![CDATA[<iframe src="https://www.youtube.com/embed/x"></iframe>]]></content:encoded></item>` +
+		`<item><link>https://embed.example/2</link><description>An untitled video about tunnels</description><content:encoded><![CDATA[` + embed + `]]></content:encoded></item>` +
+		`<item><title>Pixel</title><link>https://embed.example/3</link><description>Bridges seen from a boat</description><content:encoded><![CDATA[<img src="https://stats.example/p.gif" width="1px" height="1px" alt="">]]></content:encoded></item>` +
+		`<item><title>Picture only</title><link>https://embed.example/4</link><description>Its summary</description><content:encoded><![CDATA[<img src="https://embed.example/photo.jpg" alt="">]]></content:encoded></item>` +
+		`<item><title>Embed without a summary</title><link>https://embed.example/5</link><content:encoded><![CDATA[` + embed + `]]></content:encoded></item>` +
+		`</channel></rss>`
+	p := runFeedSource(t, []byte(body), "https://embed.example/rss", feedRecipe())
+	got := []string{}
+	for _, it := range p.Items {
+		got = append(got, it.Title+": "+it.HTML)
+	}
+	want := []string{
+		"Bridges: Watch our video about bridges",
+		"An untitled video about tunnels: An untitled video about tunnels",
+		"Pixel: Bridges seen from a boat",
+		// A picture is something to show, so the post itself is kept.
+		`Picture only: <img src="https://embed.example/photo.jpg" alt=""/>`,
+		// Without a summary, the post is kept as it sanitizes.
+		"Embed without a summary: <figure><div></div></figure>",
+	}
+	if !slices.Equal(got, want) || len(p.Warnings) != 0 {
+		t.Fatalf("stories\n%q\nwant\n%q\nwarnings %q", got, want, p.Warnings)
+	}
+
+	r := feedRecipe()
+	r.Filters = &model.FilterSet{Include: &model.FilterRule{Op: "contains_any", Field: "description", Keywords: []string{"bridges"}}}
+	if p = runFeedSource(t, []byte(body), "https://embed.example/rss", r); len(p.Items) != 2 || p.Items[0].Title != "Bridges" || p.Items[1].Title != "Pixel" {
+		t.Fatalf("a description filter did not read the summary: %+v", p.Items)
+	}
+
+	atom := `<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:embed.example,1</id><link href="https://embed.example/6"/><summary>An Atom summary</summary>` +
+		`<content type="html">&lt;iframe src="https://www.youtube.com/embed/x"&gt;&lt;/iframe&gt;</content></entry></feed>`
+	if p = runFeedSource(t, []byte(atom), "https://embed.example/atom", feedRecipe()); len(p.Items) != 1 || p.Items[0].Title != "An Atom summary" || p.Items[0].HTML != "An Atom summary" {
+		t.Fatalf("untitled Atom embed: %+v", p.Items)
+	}
+}
+
+// What a server prints after the root element, such as a PHP notice or an
+// injected script, is not part of the feed, and a second document after it
+// does not change how the first is read. A stray end tag inside the feed still
+// fails it, rather than ending it early.
+func TestFeedSourceIgnoresContentAfterTheRoot(t *testing.T) {
+	const doc = `<?xml version="1.0"?><rss><channel>` +
+		`<item><title>A</title><link>https://after.example/a</link><guid>g-a</guid></item>` +
+		`<item><title>B</title><link>https://after.example/b</link></item>` +
+		`</channel></rss>`
+	for name, tail := range map[string]string{
+		"PHP notice":   "\n<br />\n<b>Notice</b>:  Undefined index: x in <b>/var/www/feed.php</b> on line <b>12</b><br />\n",
+		"script":       `<script>if (a < b && c) { track(); }</script>`,
+		"Atom root":    `<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>other</id><title>C</title></entry></feed>`,
+		"second RSS":   `<rss><channel><item><title>C</title><link>https://after.example/c</link></item></channel></rss>`,
+		"unclosed tag": "<br>",
+	} {
+		p := runFeedSource(t, []byte(doc+tail), "https://after.example/rss", feedRecipe())
+		if len(p.Items) != 2 || p.Items[0].URL != "https://after.example/a" || p.Items[0].Key != guidKey("g-a") || p.Items[1].Key != "https://after.example/b" {
+			t.Errorf("%s: %+v", name, p.Items)
+		}
+	}
+	// A self-closing root is the whole feed too.
+	p, err := RunAt([]byte(`<rss/><br />`), "https://after.example/rss", feedRecipe(), observed)
+	if err != nil || len(p.Items) != 0 || !slices.Equal(p.Warnings, []string{"The feed lists no entries"}) {
+		t.Fatalf("self-closing root: %+v, %v", p, err)
+	}
+	stray := `<rss><channel><item><title>A</title><description>x</b> y</description></item><item><title>B</title></item></channel></rss>`
+	if _, err := RunAt([]byte(stray), "https://after.example/rss", feedRecipe(), observed); err == nil || !strings.Contains(err.Error(), "line 1") {
+		t.Fatalf("a stray end tag ended the feed early: %v", err)
+	}
+}
+
+// RSS gives a title no type. A less-than sign is literal unless the title
+// reads as markup, so titles about code keep their words, and the app's own
+// output, which escapes them, reads back unchanged.
+func TestFeedSourceRSSTitles(t *testing.T) {
+	for raw, want := range map[string]string{
+		"Why std::vector&lt;bool&gt; is special":           "Why std::vector<bool> is special",
+		"Use the &lt;details&gt; element":                  "Use the <details> element",
+		"<![CDATA[Use the <details> element]]>":            "Use the <details> element",
+		"Use the &lt;code&gt; element":                     "Use the <code> element",
+		"if x&lt;y then swap":                              "if x<y then swap",
+		"Vec&lt;T&gt; vs Box&lt;T&gt; in Rust":             "Vec<T> vs Box<T> in Rust",
+		"a &lt; b":                                         "a < b",
+		"&lt;b&gt;Bold&lt;/b&gt; news":                     "Bold news",
+		"<![CDATA[<em>Big</em> <a href=\"/x\">news</a>]]>": "Big news",
+		"Line<br/>break":                                   "Line break",
+		"Raw <b>bold</b> title":                            "Raw bold title",
+		"AT&amp;amp;T":                                     "AT&T",
+		"&lt;b&gt;Unclosed":                                "<b>Unclosed",
+		"&lt;b&gt;Mixed&lt;/b&gt; &lt;T&gt;":               "<b>Mixed</b> <T>",
+	} {
+		body := "<rss><channel><item><title>" + raw + "</title><link>https://titles.example/1</link></item></channel></rss>"
+		p := runFeedSource(t, []byte(body), "https://titles.example/rss", feedRecipe())
+		if len(p.Items) != 1 || p.Items[0].Title != want {
+			t.Errorf("%s: %+v, want %q", raw, p.Items, want)
+		}
+	}
+
+	titles := []string{"Vec<T> vs Box<T> in Rust", "if x<y then swap", "Use the <b> element", "AT&T <3"}
+	items := []model.Item{}
+	for i, title := range titles {
+		items = append(items, model.Item{Title: title, URL: fmt.Sprintf("https://titles.example/%d", i), GUID: fmt.Sprintf("urn:test:%d", i), HTML: "x", Published: observed})
+	}
+	source := model.Feed{ID: "1", RSSToken: "token", Title: "Own output", URL: "https://titles.example/"}
+	rss, _, err := feed.Render(source, items, "", "RSS Workshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	atom, _, err := feed.RenderAtom(source, items, "https://reader.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string][]byte{"RSS": rss, "Atom": atom} {
+		p := runFeedSource(t, out, "https://reader.example/feeds/x", feedRecipe())
+		got := []string{}
+		for _, it := range p.Items {
+			got = append(got, it.Title)
+		}
+		if !slices.Equal(got, titles) {
+			t.Errorf("%s read back as %q, want %q", name, got, titles)
+		}
+	}
+}
+
 // A well-formed feed with no entries has not failed: it keeps saved history
 // without backing off. Entries that all fail their checks are an empty page.
 func TestFeedSourceEmptyAndUnusableFeeds(t *testing.T) {
@@ -336,6 +489,58 @@ func TestFeedSourceIdentity(t *testing.T) {
 	want := []string{guidKey("g-1"), "https://identity.example/b", fmt.Sprintf("title:%x", sha256.Sum256([]byte("Third")))}
 	if !slices.Equal(before, want) || !slices.Equal(after, want) {
 		t.Fatalf("keys before %q, after %q, want %q", before, after, want)
+	}
+}
+
+// Smaller rules from docs/feed-sources.md and docs/dates.md, one entry each. A
+// change to any of them gives some feed's stories other links, identities,
+// dates, images or titles.
+func TestFeedSourceDocumentedRules(t *testing.T) {
+	const (
+		rss  = `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>%s</channel></rss>`
+		atom = `<feed xmlns="http://www.w3.org/2005/Atom">%s</feed>`
+	)
+	for _, tc := range []struct {
+		name, body string
+		check      func(model.Item) bool
+	}{
+		{"a guid that is not a permalink is not the link", fmt.Sprintf(rss, `<item><title>t</title><guid isPermaLink="false">https://rules.example/not-a-page</guid></item>`),
+			func(it model.Item) bool { return it.URL == "" && it.Key == guidKey("https://rules.example/not-a-page") }},
+		{"itunes:image", fmt.Sprintf(rss, `<item><title>t</title><link>https://rules.example/1</link><itunes:image href="https://rules.example/cover.jpg"/></item>`),
+			func(it model.Item) bool { return it.Image == "https://rules.example/cover.jpg" }},
+		{"Atom 0.3 issued", fmt.Sprintf(atom, `<entry><title>t</title><id>a</id><modified>2026-11-06T00:00:00Z</modified><issued>2026-11-05T00:00:00Z</issued></entry>`),
+			func(it model.Item) bool { return it.Published.Equal(at("2026-11-05T00:00:00Z")) }},
+		{"Atom 0.3 modified alone", fmt.Sprintf(atom, `<entry><title>t</title><id>a</id><modified>2026-11-06T00:00:00Z</modified></entry>`),
+			func(it model.Item) bool { return it.Published.Equal(at("2026-11-06T00:00:00Z")) }},
+		{"published before an earlier updated", fmt.Sprintf(atom, `<entry><title>t</title><id>a</id><updated>2026-11-06T00:00:00Z</updated><published>2026-11-05T00:00:00Z</published></entry>`),
+			func(it model.Item) bool { return it.Published.Equal(at("2026-11-05T00:00:00Z")) }},
+		{"RSS channel xml:base", `<rss><channel xml:base="https://base.example/news/"><item><title>t</title><link>story.html</link></item></channel></rss>`,
+			func(it model.Item) bool { return it.URL == "https://base.example/news/story.html" }},
+		{"Atom content of type text/html", fmt.Sprintf(atom, `<entry><title>t</title><id>a</id><content type="text/html">&lt;p&gt;Markup&lt;/p&gt;</content></entry>`),
+			func(it model.Item) bool { return it.HTML == "<p>Markup</p>" }},
+		{"Atom content in base64", fmt.Sprintf(atom, `<entry><title>t</title><id>a</id><summary>Summary</summary><content type="text/html" mode="base64">PHA+SGlkZGVuPC9wPg==</content></entry>`),
+			func(it model.Item) bool { return it.HTML == "Summary" }},
+		{"IANA alternate relation", fmt.Sprintf(atom, `<entry><title>t</title><id>a</id><link rel="http://www.iana.org/assignments/relation/alternate" href="https://rules.example/iana"/></entry>`),
+			func(it model.Item) bool { return it.URL == "https://rules.example/iana" }},
+		{"RDF with an undeclared rdf prefix", `<rdf:RDF xmlns="http://purl.org/rss/1.0/"><item rdf:about="https://rules.example/about"><title>t</title></item></rdf:RDF>`,
+			func(it model.Item) bool { return it.Key == guidKey("https://rules.example/about") }},
+		{"content namespace without its trailing slash", `<rss xmlns:c="http://purl.org/rss/1.0/modules/content"><channel><item><title>t</title><link>https://rules.example/1</link><description>Teaser</description><c:encoded>Full</c:encoded></item></channel></rss>`,
+			func(it model.Item) bool { return it.HTML == "Full" }},
+		{"a pixel sized in px", fmt.Sprintf(rss, `<item><title>t</title><link>https://rules.example/1</link><description><![CDATA[<img src="https://stats.example/p.gif" width="1px" height="1px"><img src="https://rules.example/real.jpg">]]></description></item>`),
+			func(it model.Item) bool { return it.Image == "https://rules.example/real.jpg" }},
+		{"an RSS item outside the channel", `<rss><item><title>t</title><link>https://rules.example/loose</link></item></rss>`,
+			func(it model.Item) bool { return it.URL == "https://rules.example/loose" }},
+		{"blocks in a derived title", fmt.Sprintf(rss, `<item><link>https://rules.example/1</link><description><![CDATA[<p>One</p><p>Two</p>]]></description></item>`),
+			func(it model.Item) bool { return it.Title == "One Two" }},
+		{"styles in an HTML title", fmt.Sprintf(atom, `<entry><title type="html">Styled&lt;style&gt;p{color:red}&lt;/style&gt;&lt;script&gt;x()&lt;/script&gt; title</title><id>a</id></entry>`),
+			func(it model.Item) bool { return it.Title == "Styled title" }},
+		{"an id that is a web address but not a usable link", fmt.Sprintf(atom, `<entry><title>t</title><id>https://user@rules.example/1</id></entry>`),
+			func(it model.Item) bool { return it.URL == "" && it.Key == guidKey("https://user@rules.example/1") }},
+	} {
+		p := runFeedSource(t, []byte(tc.body), "https://rules.example/feed", feedRecipe())
+		if len(p.Items) != 1 || !tc.check(p.Items[0]) {
+			t.Errorf("%s: %+v, warnings %q", tc.name, p.Items, p.Warnings)
+		}
 	}
 }
 

@@ -58,6 +58,7 @@ func TestFeedSourceDecodesByTheXMLDeclaration(t *testing.T) {
 		"/mostly-utf8":       {"application/rss+xml", `<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Café crème brûlée</title></rss>`},
 		"/utf16-label":       {"application/xml", "<?xml version='1.0' encoding='UTF-16'?><rss><title>Caf\xe9</title></rss>"},
 		"/late-declaration":  {"application/xml", strings.Repeat(" ", 1024) + `<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Caf` + "\xe9</title></rss>"},
+		"/leading-newline":   {"application/xml", "\r\n<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><rss><title>Caf\xe9</title></rss>"},
 		"/meta-is-not-xml":   {"application/xml", metaOnly},
 		"/unknown-encoding":  {"application/xml", `<?xml version="1.0" encoding="x-made-up"?><rss><title>Caf` + "\xe9</title></rss>"},
 		"/declaration-later": {"application/xml", "<rss><?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><title>Caf\xe9</title></rss>"},
@@ -71,6 +72,8 @@ func TestFeedSourceDecodesByTheXMLDeclaration(t *testing.T) {
 		{"/mostly-utf8", `<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Café crème brûlée</title></rss>`, `<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Café crème brûlée</title></rss>`},
 		{"/utf16-label", "<?xml version='1.0' encoding='UTF-16'?><rss><title>Caf\xe9</title></rss>", "<?xml version='1.0' encoding='UTF-16'?><rss><title>Caf\xe9</title></rss>"},
 		{"/late-declaration", strings.Repeat(" ", 1024) + `<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Caf` + "\xe9</title></rss>", strings.Repeat(" ", 1024) + `<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Caf` + "\xe9</title></rss>"},
+		// Feeds served after a stray line break are common.
+		{"/leading-newline", "\r\n<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><rss><title>Café</title></rss>", "\r\n<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><rss><title>Caf\xe9</title></rss>"},
 		// A feed's <meta> is text, not a declaration; a page's is.
 		{"/meta-is-not-xml", metaOnly, strings.Replace(metaOnly, "\xe9", "é", 1)},
 		{"/unknown-encoding", `<?xml version="1.0" encoding="x-made-up"?><rss><title>Caf` + "\xe9</title></rss>", `<?xml version="1.0" encoding="x-made-up"?><rss><title>Caf` + "\xe9</title></rss>"},

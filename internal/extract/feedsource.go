@@ -134,6 +134,7 @@ func readFeed(body []byte, base *url.URL) (feedDocument, error) {
 	d.Entity = xml.HTMLEntity
 	d.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
 	root, parent, depth := "", "", 0
+read:
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
@@ -150,6 +151,12 @@ func readFeed(body []byte, base *url.URL) (feedDocument, error) {
 			depth++
 			switch depth {
 			case 1:
+				if root != "" {
+					// An element after the root, such as a notice or a script
+					// a server printed after the feed, or a second document,
+					// is not part of it and must not change how it is read.
+					break read
+				}
 				switch {
 				case v.Name.Local == "rss":
 				case v.Name.Local == "RDF" && (v.Name.Space == nsRDF || v.Name.Space == "rdf"):
@@ -184,6 +191,9 @@ func readFeed(body []byte, base *url.URL) (feedDocument, error) {
 			depth--
 			doc.entries = append(doc.entries, e)
 		case xml.EndElement:
+			// The root closing does not end reading: without Strict, a stray
+			// end tag inside the feed closes every open element, the root
+			// included, and only the next token reports it.
 			depth--
 		}
 	}
@@ -288,6 +298,37 @@ func visibleText(markup string) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
+// titleTags are the inline elements an RSS title is read as markup for.
+var titleTags = map[string]bool{"a": true, "abbr": true, "b": true, "br": true, "cite": true, "code": true, "em": true, "i": true, "kbd": true, "mark": true, "q": true, "s": true, "small": true, "span": true, "strong": true, "sub": true, "sup": true, "u": true}
+
+// rssTitle is an RSS or RDF title as text. RSS defines no type for it: some
+// feeds escape markup into it, and others mean a less-than sign literally, as
+// in std::vector<bool> or "the <details> element", which reading it as HTML
+// would drop. It is markup only when written unescaped, or when it closes a
+// tag and every tag is a common inline element; otherwise a '<' is text.
+// Character references are decoded either way.
+func rssTitle(c feedChild) string {
+	if len(c.Kids) > 0 {
+		return visibleText(c.Inner)
+	}
+	z := html.NewTokenizer(strings.NewReader(c.Text))
+	closed, inline := false, true
+	for tt := z.Next(); tt != html.ErrorToken && inline; tt = z.Next() {
+		switch tt {
+		case html.EndTagToken, html.SelfClosingTagToken:
+			closed = true
+			fallthrough
+		case html.StartTagToken:
+			name, _ := z.TagName()
+			inline = titleTags[string(name)]
+		}
+	}
+	if closed && inline {
+		return visibleText(c.Text)
+	}
+	return visibleText(strings.ReplaceAll(c.Text, "<", "&lt;"))
+}
+
 // feedFields are an entry's values before they become an item.
 type feedFields struct {
 	title, link, id string
@@ -336,7 +377,7 @@ func readEntry(e feedEntry, atom bool, base *url.URL) (feedFields, *url.URL) {
 		switch {
 		case own && n.Local == "title":
 			if !atom {
-				set(&f.title, visibleText(elementHTML(c)))
+				set(&f.title, rssTitle(c))
 			} else if kind := xmlAttr(c.Attrs, "type"); (kind == "" || kind == "text") && len(c.Kids) == 0 {
 				set(&f.title, strings.Join(strings.Fields(c.Text), " "))
 			} else {
@@ -427,6 +468,24 @@ func pixel(n *html.Node) bool {
 	return false
 }
 
+// shows reports whether a sanitized description displays anything: text, or
+// an image that is not 0 or 1 pixel. Sizes are read from the entry's own
+// markup in node, because sanitizing drops a width such as 1px.
+func shows(node *html.Node, sanitized string) bool {
+	if visibleText(sanitized) != "" {
+		return true
+	}
+	if !strings.Contains(sanitized, "<img") {
+		return false
+	}
+	for _, img := range selectNodes(node, "css", "img") {
+		if !pixel(img) {
+			return true
+		}
+	}
+	return false
+}
+
 // runFeed maps a feed's entries to items for add, which applies the limits
 // and filters a web page's cards get, so a preview and a refresh agree.
 func runFeed(body []byte, base *url.URL, r model.Recipe, loc *time.Location, out *model.Preview, add func(model.Item) error) error {
@@ -453,14 +512,30 @@ func runFeed(body []byte, base *url.URL, r model.Recipe, loc *time.Location, out
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Entry %d skipped: its link is not an HTTP(S) URL", i+1))
 			continue
 		}
+		// A full post can be too long to publish where its summary is not, and
+		// a post that is only an embed, such as a video, sanitizes to nothing
+		// where its summary has text. A later candidate replaces an earlier one
+		// only when it fits where that did not, or shows something where that
+		// showed nothing.
 		var description *html.Node
+		kept := -1
 		for _, markup := range []string{f.content, f.summary, f.media} {
 			if strings.TrimSpace(markup) == "" {
 				continue
 			}
-			// A full post can be too long to publish where its summary is not.
-			description = feedBody(markup)
-			if it.HTML = content(description, entryBase); len(it.HTML) <= MaxArticleBytes {
+			node := feedBody(markup)
+			sanitized := content(node, entryBase)
+			rank := 0
+			if len(sanitized) <= MaxArticleBytes {
+				rank = 1
+				if shows(node, sanitized) {
+					rank = 2
+				}
+			}
+			if rank > kept {
+				description, it.HTML, kept = node, sanitized, rank
+			}
+			if kept == 2 {
 				break
 			}
 		}

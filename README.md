@@ -55,7 +55,7 @@ Already have a feed for the site? Choose **Source → RSS or Atom feed** instead
 
 To build another feed from the same site, such as a different section, or to try other selectors without touching a working feed, choose **Duplicate** on its card. The editor opens a copy with every setting and the same library filters; nothing is saved until you save it, and the copy gets its own reader links.
 
-Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and three ready-made recipes covering every field, XPath, filtering and full article content. Serve it, import the recipes, and preview: see [examples](docs/examples/).
+Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and four ready-made recipes covering every field, XPath, filtering, full article content and an RSS feed source. Serve it, import the recipes, and preview: see [examples](docs/examples/).
 
 Reader requests serve saved stories and never fetch the source, so a slow or broken site cannot stall your reader, and a failed refresh keeps the last good output. Anyone holding a feed link can read it; **Reset feed links** revokes a feed’s existing URLs.
 

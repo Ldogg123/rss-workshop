@@ -19,17 +19,17 @@ RSS 0.9x and 2.0, RSS 1.0 (RDF) and Atom are read. JSON Feed is not.
 
 | Story field | Read from |
 | --- | --- |
-| Title | The entry's title, as text: markup in an RSS title is reduced to its text, and an Atom title follows its `type`. An entry without one, as Mastodon and other microblog feeds publish, takes the first 100 characters of its description's text. |
+| Title | The entry's title, as text. An RSS title is read as markup only when it holds unescaped elements, or when it closes a tag and every tag is a common inline element such as `<b>` or `<em>`; otherwise a `<` in it is text, as in `std::vector<bool>`. An Atom title follows its `type`. An entry without one, as Mastodon and other microblog feeds publish, takes the first 100 characters of its description's text. |
 | Link | RSS `link`, else a `guid` that is a permalink web address. Atom's first `alternate` link, else an `id` that is a web address. Relative links resolve against `xml:base` and the feed's own address. |
-| Description | `content:encoded` or Atom `content`, else `description` or `summary`, else `media:description`. Markup is sanitized and made absolute as a web page's description is. A description over 256 KiB falls back to the summary. |
+| Description | `content:encoded` or Atom `content`, else `description` or `summary`, else `media:description`. Markup is sanitized and made absolute as a web page's description is. A description over 256 KiB falls back to the summary, and so does one that shows nothing once sanitized, such as a post that is only a video embed or a tracking image. |
 | Image | The first image the entry declares: `media:thumbnail`, `media:content` that is an image, the same inside `media:group`, an image enclosure, or `itunes:image`. Otherwise the first image in the description that is not 0 or 1 pixel wide or high, as tracking images are. As for web pages, the image is shown at the top of the description unless the description already shows it. |
 | Date | `pubDate`, `published` or `issued`, then `dc:date`, then `updated` or `modified`, with the recipe's Go date layout and time zone. See [publication dates](dates.md#feed-sources). |
 
-Filters match what is published: a description rule reads the full post when the entry carries one in `content:encoded` or Atom `content`, and the summary otherwise.
+[Story filters](filtering.md) read the entry's own description, chosen as above: the full post when the entry carries one in `content:encoded` or Atom `content`, and the summary otherwise. As for a web page, they never read a fetched [full article](atom.md#full-article-content), so an exclude rule for a word that appears only on the article page keeps the story.
 
 ## Story identity
 
-A story is identified by its `guid`, Atom `id` or `rdf:about`, else by its link, else by its title, which is what feed readers do. Entries that share one link therefore stay separate stories, and a story whose source edits its text, link or update time keeps its identity, its GUID in your feed and its publication date. A source that changes its identifiers, for example after moving to new software, publishes every story again under new GUIDs until retention removes the old ones; feed readers subscribed to the source directly see the same.
+A story is identified by its `guid`, Atom `id` or `rdf:about`, else by its link, else by its title, which is what feed readers do. Entries that share one link therefore stay separate stories. A story with a `guid`, `id` or `rdf:about` keeps its identity, its GUID in your feed and its publication date when its source edits its text, link or update time. One identified by its link gets a new identity if the link changes, and one identified by its title if the title changes: readers then see it again as a new story. A source that changes its identifiers, for example after moving to new software, publishes every story again under new GUIDs until retention removes the old ones; feed readers subscribed to the source directly see the same.
 
 ## Fetching
 
@@ -45,6 +45,7 @@ Article pages are web pages: they are requested as HTML and fetched as plain HTM
 - A document that cannot be read as XML fails the refresh with `feed is not well-formed XML (line N)`: one malformed entry fails the whole feed. Saved stories are kept and the feed backs off, as after any failed refresh. Errors name a line, never text from the feed, because they reach logs and notifications.
 - Characters XML does not allow, such as a control character pasted into a title, are removed rather than failing the feed, and bytes that are not UTF-8 become `�`.
 - An HTML page or a JSON Feed fails with `source is not an RSS or Atom feed`.
+- Anything after the feed's root element, such as a notice or a script a server printed after the feed, is ignored.
 - A well-formed feed with no entries is a successful refresh: saved stories are kept and nothing backs off, and Diagnostics notes that the feed lists no entries. If it stays empty, the library marks the feed [Quiet](operations.md#quiet-feeds).
 - An entry is skipped, with a warning in the preview and Diagnostics, when its link is not a web address, when it has neither a title nor description text, when it repeats an earlier entry's identity, or when it is too large to store as a story. A feed whose entries are all skipped fails like a page with no valid stories.
 
