@@ -14,6 +14,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # The value that restores the old User-Agent, with the spaces and parentheses
 # an operator's .env would carry.
 FIXTURE_USER_AGENT = 'GoRSS/0.1 (+self-hosted feed builder)'
+# Notification settings as an operator's .env would carry them: a webhook URL
+# with its token in the query, which Compose must pass through unchanged.
+FIXTURE_NOTIFY = {
+    'NOTIFY_URL': 'https://hooks.invalid/rss-alerts?token=synthetic-webhook-token&x=1',
+    'NOTIFY_FORMAT': 'ntfy',
+    'NOTIFY_TOKEN': 'tk_synthetic-notify-token',
+    'NOTIFY_AFTER_FAILURES': '5',
+}
+NOTIFY_DEFAULTS = {'NOTIFY_URL': '', 'NOTIFY_FORMAT': 'json', 'NOTIFY_TOKEN': '', 'NOTIFY_AFTER_FAILURES': '3'}
 
 
 class ComposeConfigurationTests(unittest.TestCase):
@@ -28,7 +37,7 @@ class ComposeConfigurationTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
 
-    def resolve(self, *overrides, image='', postgres=False, user_agent=FIXTURE_USER_AGENT):
+    def resolve(self, *overrides, image='', postgres=False, user_agent=FIXTURE_USER_AGENT, notify=True):
         # Pass every fixture value through --env-file, including when DOCKER
         # invokes sudo and the child process does not retain environment values.
         values = {
@@ -47,6 +56,8 @@ class ComposeConfigurationTests(unittest.TestCase):
             values['RSS_IMAGE'] = image
         if user_agent is not None:
             values['FETCH_USER_AGENT'] = user_agent
+        if notify:
+            values.update(FIXTURE_NOTIFY)
         env_file = self.directory / 'fixture.env'
         env_file.write_text(''.join(f"{key}='{value}'\n" for key, value in values.items()))
         # An allowlist also excludes COMPOSE_FILE, COMPOSE_ENV_FILES and Docker
@@ -122,6 +133,10 @@ class ComposeConfigurationTests(unittest.TestCase):
         # or override may clear this one: it is the operator's way back to the
         # old User-Agent if a source reacts to the new one.
         self.assertEqual(app['environment']['FETCH_USER_AGENT'], FIXTURE_USER_AGENT)
+        # The same for notifications: without these in the service's list, a
+        # deployment configured in .env would silently send nothing.
+        for key, value in FIXTURE_NOTIFY.items():
+            self.assertEqual(app['environment'][key], value, key)
         mount = next(volume for volume in app['volumes'] if volume['target'] == '/data')
         self.assertEqual(mount['type'], 'bind')
         self.assertEqual(mount['source'], str(self.directory / 'sqlite'))
@@ -196,6 +211,13 @@ class ComposeConfigurationTests(unittest.TestCase):
                 app = self.resolve(*overrides, user_agent=None)['services']['rss-workshop']
                 self.assertEqual(app['environment']['FETCH_USER_AGENT'], '')
 
+    def test_unset_notifications_stay_off_with_the_documented_defaults(self):
+        for overrides in ((), ('compose.static.yaml',), ('compose.gluetun.yaml',)):
+            with self.subTest(overrides=overrides):
+                app = self.resolve(*overrides, notify=False)['services']['rss-workshop']
+                for key, value in NOTIFY_DEFAULTS.items():
+                    self.assertEqual(app['environment'][key], value, key)
+
     def test_unset_and_blank_image_choose_the_same_published_default(self):
         for overrides in ((), ('compose.static.yaml',)):
             with self.subTest(overrides=overrides):
@@ -251,6 +273,8 @@ class ComposeConfigurationTests(unittest.TestCase):
                 'CHROMIUM_PATH': '/operator/chromium',
                 'BROWSER_SLOTS': '99',
                 'FETCH_USER_AGENT': 'operator-agent',
+                'NOTIFY_URL': 'https://operator.invalid/private-topic',
+                'NOTIFY_TOKEN': 'operator-token',
                 'GLUETUN_CONTAINER': 'operator-vpn',
                 'PUBLIC_BASE_URL': 'https://operator.invalid',
         }):

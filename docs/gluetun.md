@@ -79,6 +79,8 @@ Database and solver service access does not require `ALLOW_CIDRS`. Leave it blan
 
 To send FlareSolverr's source requests through the VPN, configure FlareSolverr to share Gluetun too. When both apps share the same Gluetun container, use `FLARESOLVERR_URL=http://127.0.0.1:8191` (or its configured port). Routing only RSS Workshop does not route a remote solver's browser.
 
+[Notifications](operations.md#notifications) leave through Gluetun as well. A public service such as ntfy.sh is reached through the VPN like any source. A notification server on your own network is outside it: give it a narrowly scoped `FIREWALL_OUTBOUND_SUBNETS` exception, such as its single address (`192.168.1.20/32`), as for a database outside Gluetun's network. Without one, the log reports `notification failed`, usually with `reason=timeout`; a private host name may also need the DNS exemption above.
+
 ## Verify and maintain
 
 Check Gluetun's VPN health and reported exit address, sign in to RSS Workshop, and preview a public source with the desired fetch mode. The app's `/readyz` checks database readiness; it does not verify VPN egress. Saved RSS/Atom output can remain available during a fetch outage.

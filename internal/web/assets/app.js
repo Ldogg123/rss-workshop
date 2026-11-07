@@ -42,10 +42,20 @@ async function showApp(){ $('#login-panel').hidden=true;$('#workspace').hidden=f
 async function load(){
  const out=await api('/feeds');feeds=out.feeds;browserAvailable=out.browser?.capacity>0;flaresolverrAvailable=out.flaresolverr?.capacity>0;
  $('#queue').textContent=`${feeds.length} feed${feeds.length===1?'':'s'} · ${out.active} of ${out.capacity} refresh slots in use · ${out.due} due · Chromium ${browserAvailable?`${out.browser.active}/${out.browser.capacity} slots`:"not configured"} · FlareSolverr ${flaresolverrAvailable?`${out.flaresolverr.active}/${out.flaresolverr.capacity} slots`:"not configured"}`;
+ renderNotifications(out.notifications);
  if(!$('#editor').hidden)renderHelp();
  $('#empty').hidden=feeds.length>0;$('#export-recipes').hidden=feeds.length===0;renderLibrary();
  window.dispatchEvent(new CustomEvent('rss-feeds-loaded',{detail:feeds.map(f=>f.id)}));
 }
+// Notifications are set up in the server's environment, never here; the
+// dashboard only says which channel is on and offers a test message.
+const notificationLabels={json:'JSON webhook',ntfy:'ntfy'};
+function renderNotifications(kind){
+ const on=Object.hasOwn(notificationLabels,kind);
+ $('#notifications').textContent=`Notifications: ${on?notificationLabels[kind]:'off'}`;
+ $('#test-notification').hidden=!on;
+}
+$('#test-notification').onclick=()=>busy($('#test-notification'),async()=>{await api('/notifications/test','POST',{});notice('Test notification sent. Check that it arrived where NOTIFY_URL delivers.',true);});
 // The library toolbar filters and sorts the feeds the last load fetched, so
 // changing it requests nothing, and the poll redraws with what is selected.
 // Status and sort are remembered in this browser; the search is not, so a

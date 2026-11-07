@@ -71,6 +71,13 @@ type Scheduler struct {
 	// was saved after the read, and would start it again straight away.
 	finished map[string]time.Time
 	wg       sync.WaitGroup
+
+	// Notifier, when set, hears when a feed reaches NotifyAfter failed
+	// refreshes in a row or recovers from that, and when the database stops
+	// storing results or serving the library.
+	Notifier    Notifier
+	NotifyAfter int
+	alerts      alerts
 }
 
 type hold struct {
@@ -318,9 +325,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 			// be on the line: rotation would otherwise discard the first
 			// occurrence, which is the one that says what actually broke.
 			slog.Error("scheduler database read failed", "error", e)
+			s.alertListed(e)
 		}
 		return
 	}
+	s.alertListed(nil)
 	s.dispatch(ctx, fs, listed)
 }
 
@@ -341,6 +350,7 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 		}
 	}
 	s.forgetHolds(fs)
+	s.alerts.forget(fs)
 	s.forgetFinished(listed)
 	for _, f := range fs {
 		if !f.Enabled || f.NextRun.After(time.Now()) {
@@ -422,11 +432,22 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 			}
 		}
 	}
+	if e != nil && parent.Err() != nil {
+		// The server is stopping, so the failure describes the shutdown rather
+		// than the source. Storing it would count a failure the source never
+		// had, back the feed off and, at the threshold, send a failing alert
+		// for a healthy feed. Nothing is written, so the feed is still due and
+		// refreshes when the server starts again. A result that succeeded
+		// before the shutdown is stored as usual.
+		slog.Info("refresh discarded", "feed", f.Title, "feed_id", f.ID, "reason", "server stopping", "duration", time.Since(start))
+		return
+	}
 	var he *fetch.HTTPError
 	if errors.As(e, &he) {
 		r.RetryAfter = he.RetryAfter
 	}
-	// Use a short independent context to record a timed-out or canceled job.
+	// Use a short independent context to record a timed-out job, or one that
+	// finished as the server began to stop.
 	saveCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	switch err := s.Store.CompleteWithDiagnostics(saveCtx, f, items, r.ETag, r.LastModified, r.Status, e, r.RetryAfter, p.Diagnostics); {
@@ -454,9 +475,11 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 		wait := s.hold(f.ID)
 		slog.Error("refresh not saved", "feed", f.Title, "feed_id", f.ID, "error", err,
 			"retry_in", wait, "note", "nothing was stored, including this feed's schedule")
+		s.alertNotSaved(f, err)
 		return
 	}
 	s.released(f.ID)
+	s.alertRefresh(f, e)
 	// A failure is the line an operator actually needs, so it carries the reason
 	// and rises above the routine ones. Titles are the operator's own labels;
 	// source URLs and reader tokens stay out of the log.

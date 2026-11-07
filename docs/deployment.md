@@ -146,6 +146,10 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `LOG_MAX_FILES` | `3` | Container log files retained per service |
 | `UPGRADE_BACKUP` | `true` | `true` saves a verified copy of an SQLite database in `backups/` before upgrading its schema; `false` upgrades without one. See [automatic copy](operations.md#automatic-copy-before-an-sqlite-upgrade) |
 | `METRICS_TOKEN` | empty | Enables `/metrics` and is required to scrape it; blank returns 404. See [metrics](operations.md#metrics) |
+| `NOTIFY_URL` | empty | Secret. ntfy topic URL or JSON webhook for [health notifications](operations.md#notifications); blank sends none. An absolute `http` or `https` URL without credentials or a fragment. Trusted configuration: it may be a private address, and `ALLOW_CIDRS` does not apply |
+| `NOTIFY_FORMAT` | `json` | `ntfy` or `json` |
+| `NOTIFY_TOKEN` | empty | Secret. Optional bearer token sent with each notification, at most 4,096 printable ASCII characters without spaces; needs `NOTIFY_URL` |
+| `NOTIFY_AFTER_FAILURES` | `3` | 1–100 failed refreshes in a row before a feed counts as failing |
 
 Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters in a connection URI's user name, password and query values, as [PostgreSQL setup](postgresql.md#existing-postgresql-server) shows. Recreate the container after environment changes; restarting the process invalidates login sessions.
 

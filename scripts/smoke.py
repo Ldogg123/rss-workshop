@@ -30,7 +30,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 import backup  # noqa: E402
 fixture = (ROOT / 'testdata/cards.html').read_bytes()
-state = {'body': fixture, 'requests': 0, 'agents': set()}
+state = {'body': fixture, 'requests': 0, 'agents': set(), 'notifications': []}
 # FETCH_USER_AGENT as the docs suggest for restoring the old User-Agent, so the
 # fixture can tell a configured static request from the built-in default.
 USER_AGENT = 'GoRSS/0.1 (+self-hosted feed builder)'
@@ -75,6 +75,20 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class NotificationReceiver(http.server.BaseHTTPRequestHandler):
+    """A notification service that records what the app sends it."""
+
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        state['notifications'].append({'path': self.path, 'headers': dict(self.headers),
+                                       'body': self.rfile.read(length)})
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
 def wait_for(fn):
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
@@ -101,7 +115,13 @@ def smoke_environment(tmp, password, base, port, postgres_mode, compose_mode):
                 POSTGRES_DATA_DIR=str(pathlib.Path(tmp) / 'postgres-data'),
                 DATABASE_URL=database_url, PUBLIC_BASE_URL=base, LISTEN_ADDR=f'127.0.0.1:{port}',
                 ALLOW_CIDRS='127.0.0.1/32', STATIC_WORKERS='2', FETCH_TIMEOUT='5s',
-                FETCH_USER_AGENT=USER_AGENT)
+                FETCH_USER_AGENT=USER_AGENT,
+                # The checks read info lines in the text format, whatever an
+                # operator's shell exports.
+                LOG_LEVEL='info', LOG_FORMAT='text',
+                # Never an operator's notification service; main() points these
+                # at its own receiver.
+                NOTIFY_URL='', NOTIFY_TOKEN='', NOTIFY_FORMAT='json', NOTIFY_AFTER_FAILURES='1')
 
 
 def main():
@@ -117,6 +137,12 @@ def main():
         raise ValueError('Native PostgreSQL smoke requires RSS_TEST_POSTGRES_URL pointing to an empty disposable test database')
     source = http.server.ThreadingHTTPServer(('0.0.0.0' if compose_mode else '127.0.0.1', 0), Fixture)
     threading.Thread(target=source.serve_forever, daemon=True).start()
+    receiver = http.server.ThreadingHTTPServer(('0.0.0.0' if compose_mode else '127.0.0.1', 0), NotificationReceiver)
+    threading.Thread(target=receiver.serve_forever, daemon=True).start()
+    # NOTIFY_URL and NOTIFY_TOKEN are secrets: neither may reach a log line or
+    # a message. The path and query stand in for a webhook's embedded token.
+    notify_secret = secrets.token_hex(8)
+    notify_token = 'smoke-token-' + secrets.token_hex(8)
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -142,6 +168,9 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='rss-smoke-') as tmp:
         env = smoke_environment(tmp, password, base, port, postgres_mode, compose_mode)
+        env['NOTIFY_URL'] = 'http://%s:%d/smoke-topic-%s?auth=smoke-query-%s' % (
+            'host.docker.internal' if compose_mode else '127.0.0.1', receiver.server_port, notify_secret, notify_secret)
+        env['NOTIFY_TOKEN'] = notify_token
         compose = None
         source_host = '127.0.0.1'
         if compose_mode:
@@ -156,7 +185,8 @@ def main():
             image = os.environ.get('RSS_SMOKE_IMAGE', 'rss-workshop:browser-check' if browser_mode else 'rss-workshop:static-check')
             override.write_text('services:\n  rss-workshop:\n    image: ' + image + '\n    pull_policy: never\n    ports: !override\n      - "127.0.0.1:' + str(port) + ':8080"\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n')
             env_file = pathlib.Path(tmp) / 'compose.env'
-            env_keys = ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_HASH', 'PUBLIC_BASE_URL', 'ALLOW_CIDRS', 'STATIC_WORKERS', 'FETCH_TIMEOUT', 'FETCH_USER_AGENT', 'DATABASE_URL', 'RSS_DATA_DIR', 'POSTGRES_DATA_DIR']
+            env_keys = ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_HASH', 'PUBLIC_BASE_URL', 'ALLOW_CIDRS', 'STATIC_WORKERS', 'FETCH_TIMEOUT', 'FETCH_USER_AGENT', 'DATABASE_URL', 'RSS_DATA_DIR', 'POSTGRES_DATA_DIR',
+                        'LOG_LEVEL', 'LOG_FORMAT', 'NOTIFY_URL', 'NOTIFY_TOKEN', 'NOTIFY_FORMAT', 'NOTIFY_AFTER_FAILURES']
             if postgres_mode:
                 env['POSTGRES_PASSWORD'] = secrets.token_hex(24)
                 env['DATABASE_URL'] = 'postgres://rss_workshop:' + env['POSTGRES_PASSWORD'] + '@postgres:5432/rss_workshop?sslmode=disable'
@@ -261,6 +291,20 @@ def main():
                     proc = subprocess.Popen([str(ROOT / 'bin/rss-workshop')], env=env, stdout=log, stderr=log)
                 wait_for(lambda: request('/readyz')[0] == 200)
 
+            def server_log():
+                if compose:
+                    return compose_run('logs', '--no-color', 'rss-workshop', stdout=subprocess.PIPE).stdout.decode()
+                return (pathlib.Path(tmp) / 'server.log').read_text(errors='replace')
+
+            def notified(kind):
+                """The messages so far that carry an event of this kind."""
+                found = []
+                for message in state['notifications']:
+                    payload = json.loads(message['body'])
+                    if any(event['event'] == kind for event in payload['events']):
+                        found.append((message, payload))
+                return found
+
             def login():
                 nonlocal csrf
                 code, body, _ = request('/api/login', 'POST', {'password': password})
@@ -288,6 +332,17 @@ def main():
                 assert request('/assets/app.js')[0] == 200
                 login()
                 assert not data('/api/feeds')['feeds'], 'Smoke tests require an empty disposable database; existing feeds were left unchanged'
+                # Compose passes the notification settings through, and the
+                # test button reaches the service with the bearer token.
+                assert data('/api/feeds')['notifications'] == 'json'
+                code, body, _ = request('/api/notifications/test', 'POST', {})
+                assert code == 200, (code, body)
+                tests = notified('test')
+                assert len(tests) == 1 and len(state['notifications']) == 1, state['notifications']
+                message, payload = tests[0]
+                assert message['path'] == '/smoke-topic-%s?auth=smoke-query-%s' % (notify_secret, notify_secret), message['path']
+                assert message['headers'].get('Authorization') == 'Bearer ' + notify_token
+                assert payload['dashboard'] == base and payload['message'] == payload['body']
                 recipe = {'title': 'Smoke fixture', 'url': f'http://{source_host}:{source.server_port}/cards.html',
                           'interval': 60, 'enabled': True,
                           'recipe': {'mode': 'auto' if browser_mode else 'static', 'wait_selector': 'article' if browser_mode else '', 'type': 'css', 'items': 'article', 'title': {'selector': 'h2'},
@@ -347,6 +402,21 @@ def main():
                 assert code == 200 and retained_atom == updated_atom, 'Empty scrape changed saved Atom output'
                 assert retained_atom_headers['Etag'] == updated_atom_headers['Etag']
                 stop()
+                # NOTIFY_AFTER_FAILURES=1 makes that failure an alert. It waits
+                # in the coalescing window, and shutdown sends it at once.
+                wait_for(lambda: notified('failing'))
+                failing = notified('failing')
+                assert len(failing) == 1, failing
+                message, payload = failing[0]
+                event = next(event for event in payload['events'] if event['event'] == 'failing')
+                assert event['feed'] == 'Smoke fixture' and event['feed_id'] == feed_id and event['failures'] == 1 and event['error'], event
+                reader_token = rss_path.rsplit('/', 1)[1].removesuffix('.xml')
+                for private in (f'{source_host}:{source.server_port}', '/cards.html', reader_token, notify_secret, notify_token):
+                    assert private.encode() not in message['body'], 'Notification carried ' + private
+                logged = server_log()
+                assert 'notifications=json' in logged and 'msg="notification sent"' in logged, 'Notifications were not reported in the log'
+                for secret in (notify_secret, notify_token):
+                    assert secret not in logged, 'The log revealed NOTIFY_URL or NOTIFY_TOKEN'
                 start()
                 assert request('/api/feeds')[0] == 401, 'Restart failed to invalidate session'
                 assert request(rss_path)[1] == updated, 'Restart lost persisted output'
@@ -440,7 +510,7 @@ def main():
                     assert database_snapshot('rss_workshop') == before_restore, 'Restored app wrote to the original database'
                 variant = (('browser Compose' if browser_mode else 'static Compose') if compose else 'native')
                 backend = 'PostgreSQL' if postgres_mode else 'SQLite'
-                print('PASS: ' + variant + ' ' + backend + ' startup, healthcheck, assets, login, preview, save, refresh, independent RSS/Atom parsing, stable IDs, ETags, configured User-Agent, read isolation, empty retention, restart persistence, recipe export/preview/import, paused copies and fresh tokens.' + (' Database outage/reconnect and pg_dump/restore passed.' if postgres_mode and compose else ''))
+                print('PASS: ' + variant + ' ' + backend + ' startup, healthcheck, assets, login, preview, save, refresh, independent RSS/Atom parsing, stable IDs, ETags, configured User-Agent, notifications, read isolation, empty retention, restart persistence, recipe export/preview/import, paused copies and fresh tokens.' + (' Database outage/reconnect and pg_dump/restore passed.' if postgres_mode and compose else ''))
             except Exception:
                 if compose:
                     subprocess.run(compose + ['logs', '--tail', '20', 'rss-workshop'] + (['postgres'] if postgres_mode else []), env=env)
@@ -464,6 +534,8 @@ def main():
                     proc.wait(timeout=10)
                 source.shutdown()
                 source.server_close()
+                receiver.shutdown()
+                receiver.server_close()
                 if cleanup_failed:
                     raise RuntimeError('Could not remove all native PostgreSQL smoke fixtures; discard the disposable test database before reuse') from None
 

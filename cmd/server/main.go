@@ -21,6 +21,7 @@ import (
 	"rss-workshop/internal/config"
 	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/flaresolverr"
+	"rss-workshop/internal/notify"
 	"rss-workshop/internal/scheduler"
 	"rss-workshop/internal/store"
 	"rss-workshop/internal/web"
@@ -125,11 +126,24 @@ func run() error {
 		defer browsers.Close()
 		jobs.Renderer = browsers
 	}
+	var notifier *notify.Notifier
+	if c.NotifyURL != "" {
+		notifier, e = notify.New(c.NotifyURL, c.NotifyFormat, c.NotifyToken, c.BaseURL)
+		if e != nil {
+			return e
+		}
+		notifier.Start()
+		// Closed explicitly after the scheduler stops, so the events of the
+		// last refreshes are sent; this covers an early return.
+		defer notifier.Close()
+		jobs.Notifier = notifier
+		jobs.NotifyAfter = c.NotifyAfterFailures
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	jobs.Start(ctx)
-	app := &web.App{Store: s, Scheduler: jobs, Auth: a, BaseURL: c.BaseURL, Browsers: browsers, Version: version, MetricsToken: c.MetricsToken}
+	app := &web.App{Store: s, Scheduler: jobs, Auth: a, BaseURL: c.BaseURL, Browsers: browsers, Version: version, MetricsToken: c.MetricsToken, Notifier: notifier}
 	srv := &http.Server{Addr: c.Listen, Handler: app.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: requestTimeout + 10*time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	done := make(chan error, 1)
 	go func() {
@@ -139,7 +153,7 @@ func run() error {
 			"database", databaseKind(c), "workers", c.Workers, "max_items", c.MaxItems,
 			"browser", browsers != nil, "flaresolverr", jobs.FlareSolverr != nil,
 			"metrics", c.MetricsToken != "", "custom_user_agent", c.FetchUserAgent != "",
-			"log_level", c.LogLevel.String())
+			"notifications", notifier.Kind(), "log_level", c.LogLevel.String())
 		done <- srv.ListenAndServe()
 	}()
 	select {
@@ -152,6 +166,9 @@ func run() error {
 	defer cancel()
 	_ = srv.Shutdown(shutdown)
 	jobs.Wait()
+	// The last refreshes may have queued events; this sends them within a
+	// bound of its own rather than waiting out the coalescing window.
+	notifier.Close()
 	slog.Info("stopped")
 	if errors.Is(e, http.ErrServerClosed) {
 		return nil
