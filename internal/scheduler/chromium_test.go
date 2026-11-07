@@ -634,6 +634,69 @@ func TestChromiumPreviewsAndPageLoadsAreNeverRefused(t *testing.T) {
 	requireSuccess(t, s, dueID)
 }
 
+// A page load and a preview have no list phase that hands an admission back,
+// so ending the job must. A page load that took the only free admission, and
+// a preview that kept it through its article pages, leave it to the next
+// refresh. Otherwise every later Chromium refresh would stay due for good,
+// with no error, backoff or notification to show for it.
+func TestChromiumPreviewsAndPageLoadsGiveTheAdmissionBack(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	pool := newChromiumPool(1)
+	page, article := "https://example.com/page", "https://example.com/articles/story-0"
+	pool.held[page], pool.held[article] = make(chan struct{}), make(chan struct{})
+	jobs := New(s, &gateFetcher{release: make(chan struct{})}, 16, 4*time.Second)
+	jobs.Renderer = pool
+
+	done := make(chan error, 1)
+	go func() { _, err := jobs.Snapshot(ctx, page, model.Recipe{Mode: "browser"}); done <- err }()
+	waitUntil(t, "the page load renders", func() bool { return pool.started(page) })
+	if rendering := jobs.renderingJobs(); len(rendering) != 1 {
+		close(pool.held[page])
+		<-done
+		t.Fatalf("a page load with the slot free holds %d Chromium admissions; want 1", len(rendering))
+	}
+	close(pool.held[page])
+	if err := <-done; err != nil {
+		t.Fatalf("page load: %v", err)
+	}
+	if rendering := jobs.renderingJobs(); len(rendering) != 0 {
+		t.Fatalf("Chromium admissions left after the page load: %v", rendering)
+	}
+
+	articles := chromiumFeed("Articles", "https://example.com/articles")
+	articles.Recipe.Link = model.Field{Selector: "a"}
+	articles.Recipe.Full = &model.FullContent{Selector: ".body", Browser: true}
+	pool.pages[articles.URL] = `<article><h2>Story</h2><a href="` + article + `">l</a></article>`
+	pool.pages[article] = `<div class="body">Previewed article</div>`
+	previewed := make(chan model.Preview, 1)
+	go func() { p, err := jobs.Preview(ctx, articles); previewed <- p; done <- err }()
+	waitUntil(t, "the preview renders its article", func() bool { return pool.started(article) })
+	if rendering := jobs.renderingJobs(); len(rendering) != 1 {
+		close(pool.held[article])
+		<-done
+		t.Fatalf("a preview rendering its article holds %d Chromium admissions; want 1", len(rendering))
+	}
+	close(pool.held[article])
+	if p, err := <-previewed, <-done; err != nil || len(p.Items) != 1 || !strings.Contains(p.Items[0].FullHTML, "Previewed article") {
+		t.Fatalf("preview: %+v, %v", p, err)
+	}
+	if rendering := jobs.renderingJobs(); len(rendering) != 0 {
+		t.Fatalf("Chromium admissions left after the preview: %v", rendering)
+	}
+
+	dueID, err := s.Save(ctx, chromiumFeed("Due", "https://example.com/due"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tickUntil(t, jobs, 5*time.Second, refreshed(s, dueID))
+	requireSuccess(t, s, dueID)
+}
+
 // A Renderer that reports no capacity, as the scheduler's other test fakes
 // do, leaves every job unadmitted, as before: due Chromium feeds all start,
 // and a feed renders its article pages four at a time.
