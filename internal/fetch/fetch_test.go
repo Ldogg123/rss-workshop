@@ -117,15 +117,15 @@ func TestUserAgent(t *testing.T) {
 	// A feed's own User-Agent, carried by its context, replaces both, through
 	// a redirect too. A blank one leaves the client's.
 	for _, path := range []string{"/page", "/moved"} {
-		if _, err := c.Fetch(WithUserAgent(context.Background(), "Feed/1 (+mailto:ops@example.net)"), srv.URL+path, "", ""); err != nil {
+		if _, err := c.Fetch(WithHeaders(context.Background(), Headers{UserAgent: "Feed/1 (+mailto:ops@example.net)"}), srv.URL+path, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := c.Fetch(WithUserAgent(context.Background(), ""), srv.URL+"/page", "", ""); err != nil {
+	if _, err := c.Fetch(WithHeaders(context.Background(), Headers{}), srv.URL+"/page", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	c.UserAgent = ""
-	if _, err := c.Fetch(WithUserAgent(context.Background(), "Feed/1 (+mailto:ops@example.net)"), srv.URL+"/page", "", ""); err != nil {
+	if _, err := c.Fetch(WithHeaders(context.Background(), Headers{UserAgent: "Feed/1 (+mailto:ops@example.net)"}), srv.URL+"/page", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	const name, old, own = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)", "GoRSS/0.1 (+self-hosted feed builder)", "Feed/1 (+mailto:ops@example.net)"
@@ -170,13 +170,13 @@ func TestCheckUserAgent(t *testing.T) {
 	}
 }
 
-// A context's User-Agent is sent exactly as given or not at all. Recipes are
-// trimmed and checked before they get here; a value that skipped that, with
-// space around it, a line break or anything else a header cannot carry as
-// written, is refused before the source is contacted. It is neither sent
-// altered nor left to fail in the transport behind a generic connection
-// error, and the error does not repeat it.
-func TestFetchRefusesAContextUserAgentItCannotSendAsGiven(t *testing.T) {
+// A context's User-Agent and Accept-Language are sent exactly as given or not
+// at all. Recipes are trimmed and checked before they get here; a value that
+// skipped that, with space around it, a line break or anything else a header
+// cannot carry as written, is refused before the source is contacted. It is
+// neither sent altered nor left to fail in the transport behind a generic
+// connection error, and the error does not repeat it.
+func TestFetchRefusesContextHeadersItCannotSendAsGiven(t *testing.T) {
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -194,11 +194,104 @@ func TestFetchRefusesAContextUserAgentItCannotSendAsGiven(t *testing.T) {
 		"Secret/é":                   "User-Agent must be at most 256 printable ASCII characters",
 		strings.Repeat("Secret", 43): "User-Agent must be at most 256 printable ASCII characters",
 	} {
-		if _, err := c.Fetch(WithUserAgent(context.Background(), ua), srv.URL+"/page", "", ""); err == nil || err.Error() != want {
+		if _, err := c.Fetch(WithHeaders(context.Background(), Headers{UserAgent: ua}), srv.URL+"/page", "", ""); err == nil || err.Error() != want {
 			t.Errorf("Fetch with User-Agent %q: %v, want %q", ua, err, want)
+		}
+	}
+	for lang, want := range map[string]string{
+		" de-CH":                  "Accept-Language must not begin or end with white space",
+		"de-CH\r\n":               "Accept-Language must not begin or end with white space",
+		"de-CH\u00a0":             "Accept-Language must not begin or end with white space",
+		"de-CH\r\nX-Injected: 1":  "Accept-Language entry 1 must be a language tag such as en or de-CH, or *, with an optional weight such as ;q=0.8",
+		"de-CH, fr;q=2":           "Accept-Language entry 2 must be a language tag such as en or de-CH, or *, with an optional weight such as ;q=0.8",
+		strings.Repeat("de,", 43): "Accept-Language must be at most 128 characters",
+	} {
+		// A valid User-Agent beside it does not let it through.
+		if _, err := c.Fetch(WithHeaders(context.Background(), Headers{UserAgent: "Feed/1", AcceptLanguage: lang}), srv.URL+"/page", "", ""); err == nil || err.Error() != want {
+			t.Errorf("Fetch with Accept-Language %q: %v, want %q", lang, err, want)
 		}
 	}
 	if n := requests.Load(); n != 0 {
 		t.Fatalf("the source received %d requests", n)
+	}
+}
+
+// An Accept-Language is a comma-separated list of language ranges, each * or a
+// language tag with an optional weight from 0 to 1. Anything else is refused,
+// with an error that names the setting, never the value: a line break above
+// all, since it would add a header of its own.
+func TestValidateAcceptLanguage(t *testing.T) {
+	for _, v := range []string{
+		"", "en", "*", "de-CH", "DE-ch", "zh-Hant-TW", "sgn-BE-FR", "es-419", "en-a-bbb-x-a-ccc",
+		"de-CH, de;q=0.9, en;q=0.8, *;q=0.1", "fr,en;Q=0.5", "en ;q=1, fr; q=0.000", "en;q=1.000,fr;q=0.,de;q=1.",
+		"abcdefgh-12345678", strings.TrimSuffix(strings.Repeat("en-GB,", 10), ","),
+		"a" + strings.Repeat("-abcdefg", 15) + "-abcdef", // 128 bytes
+	} {
+		if err := ValidateAcceptLanguage(v); err != nil {
+			t.Errorf("ValidateAcceptLanguage(%q) = %v", v, err)
+		}
+	}
+	for v, want := range map[string]string{
+		" secret":                            "Accept-Language must not begin or end with white space",
+		"secret\n":                           "Accept-Language must not begin or end with white space",
+		"secret\u00a0":                       "Accept-Language must not begin or end with white space",
+		"a" + strings.Repeat("-abcdefg", 16): "Accept-Language must be at most 128 characters",
+		strings.Repeat("secret", 22):         "Accept-Language must be at most 128 characters",
+		strings.TrimSuffix(strings.Repeat("en,", 11), ","): "Accept-Language must list at most 10 languages",
+		"secret\r\nX-Injected: 1":                          "Accept-Language entry 1 must be a language tag such as en or de-CH, or *, with an optional weight such as ;q=0.8",
+		"en,secret\tde":                                    "Accept-Language entry 2 must be a language tag such as en or de-CH, or *, with an optional weight such as ;q=0.8",
+	} {
+		if err := ValidateAcceptLanguage(v); err == nil || err.Error() != want {
+			t.Errorf("ValidateAcceptLanguage(%q) = %v, want %q", v, err, want)
+		}
+	}
+	for _, v := range []string{
+		"secretsecret", "abcdefghi", "en-123456789", "1en", "en-", "-en", "en--GB", "en_GB", "en.GB", "secrét", "*-GB", "en-*", "**", "en,", ",en", "en,,de", "en de",
+		"en;q=1.1", "en;q=2", "en;q=-0", "en;q=0.1234", "en;q=.5", "en;q=", "en;q", "en;Q =0.5", "en;q= 0.5", "en;q=0.5;x=1", "en;level=1", "en;", ";q=0.5", "en;q=0x1",
+		"Cookie: secret", "secret=1", `"secret"`,
+	} {
+		err := ValidateAcceptLanguage(v)
+		if err == nil || !strings.HasPrefix(err.Error(), "Accept-Language ") {
+			t.Errorf("ValidateAcceptLanguage(%q) = %v", v, err)
+		} else if strings.Contains(err.Error(), "secret") {
+			t.Errorf("ValidateAcceptLanguage(%q) repeated the value: %v", v, err)
+		}
+	}
+}
+
+// A context's Accept-Language is sent exactly as given, on conditional
+// requests and through a redirect too, and only when it is set: a request
+// without one, or with only a User-Agent of its own, sends none, as every
+// request did before the setting existed.
+func TestAcceptLanguageIsSentOnlyWhenSet(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Path+" "+strings.Join(r.Header.Values("Accept-Language"), "|")+" "+r.UserAgent())
+		if r.URL.Path == "/moved" {
+			http.Redirect(w, r, "/page", http.StatusFound)
+			return
+		}
+		w.Write([]byte("page"))
+	}))
+	defer srv.Close()
+	c, _ := New(time.Second, "127.0.0.1/32")
+	const lang = "de-CH, de;q=0.9, en;q=0.5"
+	for _, tc := range []struct {
+		h          Headers
+		path, etag string
+	}{
+		{Headers{}, "/page", ""},
+		{Headers{UserAgent: "Feed/1"}, "/page", ""},
+		{Headers{AcceptLanguage: lang}, "/page", ""},
+		{Headers{AcceptLanguage: lang}, "/page", `"tag"`},
+		{Headers{AcceptLanguage: lang, UserAgent: "Feed/1"}, "/moved", ""},
+	} {
+		if _, err := c.Fetch(WithHeaders(context.Background(), tc.h), srv.URL+tc.path, tc.etag, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"/page  " + DefaultUserAgent, "/page  Feed/1", "/page " + lang + " " + DefaultUserAgent, "/page " + lang + " " + DefaultUserAgent, "/moved " + lang + " Feed/1", "/page " + lang + " Feed/1"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("sources saw\n%q\nwant\n%q", got, want)
 	}
 }

@@ -29,6 +29,11 @@ type Recipe struct {
 	// send their own. Omitted when blank, so a recipe without one, and its
 	// export, is unchanged.
 	UserAgent string `json:"user_agent,omitempty"`
+	// AcceptLanguage is sent as the Accept-Language header of the same
+	// static requests, and only when set: without it they send none, as
+	// before. Chromium and FlareSolverr keep their own language settings.
+	// Omitted when blank, like UserAgent.
+	AcceptLanguage string `json:"accept_language,omitempty"`
 }
 
 // FullContent follows each item's own link and extracts the article body from
