@@ -320,13 +320,13 @@ def main():
                     prepare_storage()
                 if upgrade_smoke:
                     with contextlib.closing(sqlite3.connect(pathlib.Path(env['DATA_DIR']) / 'rss.db')) as seed:
-                        seed.executescript((ROOT / 'internal/store/testdata/schema_v4.sql').read_text())
+                        seed.executescript((ROOT / 'internal/store/testdata/schema_v5.sql').read_text())
                 start()
                 if upgrade_smoke:
-                    copies = sorted((pathlib.Path(env['DATA_DIR']) / 'backups').glob('pre-upgrade-schema-4-*'))
-                    assert len(copies) == 1, 'Startup did not save one copy before upgrading schema 4: %r' % copies
+                    copies = sorted((pathlib.Path(env['DATA_DIR']) / 'backups').glob('pre-upgrade-schema-5-*'))
+                    assert len(copies) == 1, 'Startup did not save one copy before upgrading schema 5: %r' % copies
                     manifest = backup.verify_backup(copies[0])
-                    assert manifest['schema_version'] == 4 and manifest['counts'] == {'feeds': 0, 'items': 0, 'runs': 0}, manifest
+                    assert manifest['schema_version'] == 5 and manifest['counts'] == {'feeds': 0, 'items': 0, 'runs': 0, 'filters': 0, 'feed_filters': 0}, manifest
                 subprocess.run((compose + ['exec', '-T', 'rss-workshop', '/rss-workshop', '-healthcheck']) if compose else [str(ROOT / 'bin/rss-workshop'), '-healthcheck'], env=env, check=True)
                 assert request('/')[0] == 200
                 assert request('/assets/app.js')[0] == 200

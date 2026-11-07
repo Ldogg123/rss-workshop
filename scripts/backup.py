@@ -25,7 +25,7 @@ import uuid
 
 FORMAT = "rss-workshop.sqlite-backup"
 TABLES = ("feeds", "items", "runs")
-SCHEMA_VERSIONS = (1, 2, 3, 4, 5)
+SCHEMA_VERSIONS = (1, 2, 3, 4, 5, 6)
 # Tables a later schema added, counted only in databases that have them, so
 # manifests written for earlier schemas keep verifying unchanged.
 SCHEMA_TABLES = {5: ("filters", "feed_filters")}

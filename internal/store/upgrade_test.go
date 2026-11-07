@@ -98,7 +98,12 @@ func TestUpgradeSavesVerifiedCopyOfEveryReleasedSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := map[string]int{"feeds": 1, "items": 0, "runs": 1}
+			// A copy counts the tables its own schema has, as backup.py does.
+			want := map[string]int{}
+			for _, table := range backupTables(version) {
+				want[table] = 0
+			}
+			want["feeds"], want["runs"] = 1, 1
 			if manifest.Format != "rss-workshop.sqlite-backup" || manifest.Version != 1 || manifest.SchemaVersion != version || manifest.SHA256 != sum || !reflect.DeepEqual(manifest.Counts, want) {
 				t.Fatalf("manifest: %+v", manifest)
 			}

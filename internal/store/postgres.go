@@ -120,7 +120,7 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		if _, err := tx.ExecContext(ctx, postgresSchema); err != nil {
 			return errors.New("cannot initialize PostgreSQL tables; use an empty dedicated database with schema creation permission")
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(5)"); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES($1)", currentSchema); err != nil {
 			return errors.New("cannot record PostgreSQL schema version")
 		}
 	} else if version == 1 {
@@ -151,6 +151,14 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 		// an older application from refreshing linked feeds without their rules.
 		if _, err := tx.ExecContext(ctx, schemaFivePostgres+"UPDATE schema_version SET version=5"); err != nil {
 			return errors.New("cannot migrate PostgreSQL database from schema version 4 to 5")
+		}
+		version = 5
+	}
+	if version == 5 {
+		// See schemaSixSQLite: last_new starts at the newest stored story, and
+		// the version gate keeps older applications from ignoring 1.3 recipes.
+		if _, err := tx.ExecContext(ctx, schemaSixPostgres+"UPDATE schema_version SET version=6"); err != nil {
+			return errors.New("cannot migrate PostgreSQL database from schema version 5 to 6")
 		}
 	}
 	if err := tx.Commit(); err != nil {
