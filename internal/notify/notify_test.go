@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -357,6 +358,9 @@ func TestBatchBoundsFeedEventsButKeepsDatabaseEvents(t *testing.T) {
 		b.add(Event{Kind: Recovered, Feed: "Filler", Failures: 3})
 	}
 	b.add(Event{Kind: Failing, Feed: "Counted only", Failures: 3})
+	if b.extra != 7+1 || !b.alert {
+		t.Fatalf("a failure only counted did not raise the priority: extra=%d alert=%v", b.extra, b.alert)
+	}
 	b.add(Event{Kind: DBUnavailable, Error: "database is locked"})
 	if len(b.events) != 256+1 || b.extra != 7+1 {
 		t.Fatalf("kept %d events and counted %d; want 257 and 8", len(b.events), b.extra)
@@ -681,6 +685,58 @@ func TestNtfyMessageStaysWithinItsSizeLimit(t *testing.T) {
 				}
 				if tc.link != "" && !strings.HasSuffix(body, "Library: "+tc.link) || tc.link == "" && strings.Contains(body, "Library:") {
 					t.Errorf("the message does not end with the right link:\n%s", body)
+				}
+			})
+		})
+	}
+}
+
+// Lines that fill an ntfy message almost to its limit leave room for the
+// count of the events left out only through what compose reserves for it:
+// the count's fixed text, and its digits.
+func TestNtfyMessageKeepsRoomForTheCount(t *testing.T) {
+	// The bytes of a line other than its title.
+	fixed := len(describe(Event{Kind: Failing, Failures: 3})) + 1
+	for _, tc := range []struct {
+		name   string
+		events int
+		widths []int // the first lines' lengths in bytes; the rest have 200
+	}{
+		// MaxLines lines of 4,000 bytes in all, and one more, so the count
+		// has a single digit.
+		{"one digit", MaxLines + 1, nil},
+		// 19 lines of 3,985 bytes, and more events than the queue holds, so
+		// the count runs to four digits and needs 18 bytes: 3 more than its
+		// fixed text alone would leave.
+		{"four digits", QueueSize + 1044, append(slices.Repeat([]int{210}, 18), 205)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				e := &endpoint{}
+				n, err := New("https://notify.example/topic", Ntfy, "", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				n.client.Transport = e
+				defer n.Close()
+				for i := range tc.events {
+					width := 200
+					if i < len(tc.widths) {
+						width = tc.widths[i]
+					}
+					n.Notify(Event{Kind: Failing, Feed: strings.Repeat("x", width-fixed), FeedID: "id", Failures: 3})
+				}
+				n.Start()
+				time.Sleep(Window)
+				synctest.Wait()
+				seen := e.seen()
+				if len(seen) != 1 {
+					t.Fatalf("got %d messages", len(seen))
+				}
+				body := string(seen[0].body)
+				lines := strings.Count(body, "Failing: ")
+				if len(body) > 4000 || !strings.HasSuffix(body, "\n...and "+strconv.Itoa(tc.events-lines)+" more.") {
+					t.Fatalf("a %d-byte message with %d lines; want at most 4,000 bytes, ending with the count:\n%s", len(body), lines, body[max(0, len(body)-80):])
 				}
 			})
 		})
