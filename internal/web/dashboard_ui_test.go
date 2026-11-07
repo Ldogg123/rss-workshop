@@ -197,7 +197,7 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	full := model.Recipe{Mode: "auto", WaitSelector: "article.card", SettleMS: 750, Type: "css", Items: ".card", Title: model.Field{Selector: "h2"}, Link: model.Field{Selector: "a", Attr: "href"},
 		Content: model.Field{Selector: "p"}, Image: model.Field{Selector: "img", Attr: "data-src"}, Date: model.Field{Selector: "time", Attr: "datetime"}, DateLayout: "2006-01-02", Timezone: "UTC",
 		Filters: &model.FilterSet{Include: &model.FilterRule{Op: "contains_any", Field: "title", Keywords: []string{"story"}}}, Full: &model.FullContent{Selector: ".body", Browser: true},
-		UserAgent: "Copy-Fixture/1 (+mailto:ops@example.net)", AcceptLanguage: "fr-CA, fr;q=0.8"}
+		UserAgent: "Copy-Fixture/1 (+mailto:ops@example.net)", AcceptLanguage: "fr-CA, fr;q=0.8", QuietDays: model.QuietNever}
 	// 66 three-byte characters: 198 bytes, so "Copy of " would pass the
 	// field's 200-character limit and fail the server's 200-byte one.
 	wide := strings.Repeat("界", 66)
@@ -211,8 +211,10 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	copied := "Copy of " + strings.Repeat("界", 63) + "…"
 	check(`document.querySelector('#editor-title').textContent==='Duplicate feed'&&form.elements.id.value===''&&form.elements.title.value==='`+copied+`'&&new TextEncoder().encode(form.elements.title.value).length===200`,
 		"Duplicate did not open a new feed named within 200 bytes")
-	check(`!form.elements.enabled.checked&&!document.querySelector('#duplicate-hint').hidden&&document.querySelector('#apply-filter-history').hidden&&form.elements.items.value==='.card'&&form.elements.wait_selector.value==='article.card'&&form.elements.settle_ms.value==='750'&&form.elements.full_selector.value==='.body'&&form.elements.full_browser.checked&&form.elements.timezone.value==='UTC'&&form.elements.date_layout.value==='2006-01-02'&&form.elements.interval.value==='120'&&document.querySelector('#filter-include textarea').value==='story'&&form.elements.user_agent.value==='Copy-Fixture/1 (+mailto:ops@example.net)'&&form.elements.accept_language.value==='fr-CA, fr;q=0.8'&&document.querySelector('#request-summary').textContent==='Custom User-Agent, custom Accept-Language'`,
+	check(`!form.elements.enabled.checked&&!document.querySelector('#duplicate-hint').hidden&&document.querySelector('#apply-filter-history').hidden&&form.elements.items.value==='.card'&&form.elements.wait_selector.value==='article.card'&&form.elements.settle_ms.value==='750'&&form.elements.full_selector.value==='.body'&&form.elements.full_browser.checked&&form.elements.timezone.value==='UTC'&&form.elements.date_layout.value==='2006-01-02'&&form.elements.interval.value==='120'&&document.querySelector('#filter-include textarea').value==='story'&&form.elements.user_agent.value==='Copy-Fixture/1 (+mailto:ops@example.net)'&&form.elements.accept_language.value==='fr-CA, fr;q=0.8'&&document.querySelector('#request-summary').textContent==='Custom User-Agent, custom Accept-Language'&&form.elements.quiet_days.value==='-1'`,
 		"Duplicate did not copy the feed's settings, or offered to prune history")
+	check(`getComputedStyle(form.elements.quiet_days).backgroundColor==='rgb(17, 28, 45)'&&document.querySelector('#quiet-days-help').textContent.includes('14 days, or 10 refresh intervals')`,
+		"Mark as Quiet after ignores the dark theme or lost its help")
 	must(chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.Poll(`document.querySelector('#editor').hidden&&feeds.some(f=>f.title==='`+copied+`')`, nil))
 	feeds, err := s.List(ctx)
 	if err != nil {

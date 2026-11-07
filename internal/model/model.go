@@ -34,6 +34,11 @@ type Recipe struct {
 	// before. Chromium and FlareSolverr keep their own language settings.
 	// Omitted when blank, like UserAgent.
 	AcceptLanguage string `json:"accept_language,omitempty"`
+	// QuietDays replaces the automatic Quiet threshold for this feed: one of
+	// QuietDayChoices, or QuietNever to never mark it quiet. Like any recipe
+	// setting it publishes nothing. Omitted when 0, the automatic threshold,
+	// so a recipe without one, and its export, is unchanged.
+	QuietDays int `json:"quiet_days,omitempty"`
 }
 
 // FullContent follows each item's own link and extracts the article body from

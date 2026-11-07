@@ -92,3 +92,58 @@ func TestQuietMeasuresFromTheLastNewStory(t *testing.T) {
 		t.Error("a feed that never stored a story is not quiet after the threshold")
 	}
 }
+
+// A recipe's QuietDays replaces the automatic threshold, interval multiple
+// included, and QuietNever turns Quiet off however long the feed has gone
+// without a new story.
+func TestQuietDaysReplaceTheAutomaticThreshold(t *testing.T) {
+	day := 24 * time.Hour
+	for _, c := range []struct {
+		days, interval int
+		want           time.Duration
+		flagged        bool
+	}{
+		{0, 900, 14 * day, true},
+		{0, 604800, 70 * day, true},
+		{7, 900, 7 * day, true},
+		{7, 604800, 7 * day, true},
+		{30, 900, 30 * day, true},
+		{365, 604800, 365 * day, true},
+		{QuietNever, 900, 0, false},
+	} {
+		f := Feed{Interval: c.interval, Recipe: Recipe{QuietDays: c.days}}
+		if got, flagged := f.QuietThreshold(); got != c.want || flagged != c.flagged {
+			t.Errorf("QuietThreshold with quiet_days %d every %d s = %v, %v; want %v, %v", c.days, c.interval, got, flagged, c.want, c.flagged)
+		}
+	}
+
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	succeeded := now.Add(-time.Hour)
+	f := Feed{Enabled: true, Interval: 900, LastAttempt: succeeded, LastSuccess: succeeded, LastChanged: succeeded, LastNew: now.Add(-8 * day)}
+	if f.IsQuiet(now) {
+		t.Fatal("eight days without a new story is quiet at the automatic threshold")
+	}
+	f.Recipe.QuietDays = 7
+	if !f.IsQuiet(now) {
+		t.Error("eight days without a new story is not quiet with quiet_days 7")
+	}
+	f.Recipe.QuietDays = QuietNever
+	f.LastNew = now.Add(-10 * 365 * day)
+	if f.IsQuiet(now) {
+		t.Error("a feed set never to be quiet is quiet")
+	}
+}
+
+func TestOnlyTheEditorsQuietDaysAreValid(t *testing.T) {
+	for _, days := range []int{0, QuietNever, 7, 30, 90, 365} {
+		if err := ValidateQuietDays(days); err != nil {
+			t.Errorf("ValidateQuietDays(%d) = %v", days, err)
+		}
+	}
+	for _, days := range []int{-2, 1, 3, 14, 31, 366, 1 << 40} {
+		err := ValidateQuietDays(days)
+		if err == nil || err.Error() != "Mark as Quiet after (quiet_days) must be 0 for automatic, -1 for never, or 7, 30, 90 or 365 days" {
+			t.Errorf("ValidateQuietDays(%d) = %v", days, err)
+		}
+	}
+}

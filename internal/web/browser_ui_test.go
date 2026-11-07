@@ -102,6 +102,8 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		// them, and the export and import below carry them with the recipe.
 		chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value=' UI-Fixture/1 (+mailto:ops@example.net) '`, nil),
 		chromedp.Evaluate(`document.querySelector('#recipe-form [name="accept_language"]').value=' de-CH, de;q=0.9 '`, nil),
+		// A recipe setting that publishes nothing, carried the same way.
+		chromedp.SetValue(`#recipe-form [name="quiet_days"]`, "30"),
 		chromedp.Click("#preview-button"), chromedp.WaitVisible("#preview .preview-item"),
 		// The visual selector's page load is recorded as it is sent.
 		chromedp.Evaluate(`window.snapshotRequests=[];{const send=window.fetch;window.fetch=(url,init)=>{if(String(url).endsWith('/selector/snapshot'))snapshotRequests.push(JSON.parse(init.body).recipe);return send.call(window,url,init)}};void 0`, nil),
@@ -136,6 +138,10 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	var headers bool
 	if e = chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value==='UI-Fixture/1 (+mailto:ops@example.net)'&&document.querySelector('#recipe-form [name="accept_language"]').value==='de-CH, de;q=0.9'&&document.querySelector('#request-summary').textContent==='Custom User-Agent, custom Accept-Language'`, &headers)); e != nil || !headers {
 		t.Fatal("saving and reopening lost the request settings", e)
+	}
+	var quietDays string
+	if e = chromedp.Run(tab, chromedp.Value(`#recipe-form [name="quiet_days"]`, &quietDays)); e != nil || quietDays != "30" {
+		t.Fatal("saving and reopening lost Mark as Quiet after", quietDays, e)
 	}
 	if card == "article.card" {
 		assertFlareSolverrEditMode(t, tab)

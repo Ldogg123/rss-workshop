@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -340,5 +341,162 @@ func TestListingReportsLastChangedAndLastNew(t *testing.T) {
 	}
 	if got := string(out.Feeds[0]["quiet"]); got != "false" {
 		t.Fatalf("quiet for a feed that never refreshed = %s", got)
+	}
+}
+
+// A feed's own Quiet threshold is a recipe setting. Only automatic, never and
+// the editor's choices are accepted, wherever a recipe is, so a stored value
+// is always one the editor's select can show and send back. Saving one
+// changes which feeds the library and metrics call quiet, and nothing that
+// readers receive.
+func TestRecipeQuietDays(t *testing.T) {
+	ctx := context.Background()
+	h := newPortabilityHarness(t)
+	h.app.MetricsToken = metricsToken
+	s := h.app.Store
+	f := userAgentFeed("")
+	f.Enabled = true
+	f.Recipe.QuietDays = 7
+	w := h.request("POST", "/api/feeds", feedJSON(t, f))
+	var saved struct{ ID string }
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); w.Code != http.StatusOK || err != nil {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	id := saved.ID
+	stored, err := s.Get(ctx, id)
+	if err != nil || stored.Recipe.QuietDays != 7 {
+		t.Fatalf("stored quiet_days %d, %v", stored.Recipe.QuietDays, err)
+	}
+	if err := s.Complete(ctx, stored, []model.Item{{Key: "a", Title: "Story", URL: "https://example.com/a", Published: time.Unix(1757505600, 0)}}, "source-etag", "", 200, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Eight days without a new story is quiet after 7, and not yet after the
+	// automatic 14.
+	ageStories(t, h, id, time.Now().Add(-8*24*time.Hour))
+	quiet := func(want bool, what string) {
+		t.Helper()
+		if f := h.listed(t, id); f.Quiet != want || h.metrics(t)["rss_workshop_feeds_quiet"] != map[bool]string{false: "0", true: "1"}[want] {
+			t.Fatalf("%s: listed quiet=%v, rss_workshop_feeds_quiet=%s, want %v", what, f.Quiet, h.metrics(t)["rss_workshop_feeds_quiet"], want)
+		}
+	}
+	quiet(true, "eight days without a new story, quiet after 7")
+	export := h.request("GET", "/api/recipes/export", nil)
+	if export.Code != http.StatusOK || !strings.Contains(export.Body.String(), `"quiet_days": 7`) {
+		t.Fatalf("export: %d %s", export.Code, export.Body.String())
+	}
+	recipe := userAgentFeed("").Recipe
+	recipe.QuietDays = model.QuietNever
+	imported := h.request("POST", "/api/recipes/import", marshalRecipes(t, []portableFeed{{Title: "Imported", URL: "https://example.com/news", Interval: 900, Recipe: recipe}}))
+	var ids struct{ IDs []string }
+	if err := json.Unmarshal(imported.Body.Bytes(), &ids); imported.Code != http.StatusCreated || err != nil || len(ids.IDs) != 1 {
+		t.Fatalf("import: %d %s", imported.Code, imported.Body.String())
+	}
+	if f, err := s.Get(ctx, ids.IDs[0]); err != nil || f.Recipe.QuietDays != model.QuietNever {
+		t.Fatalf("imported quiet_days %d, %v", f.Recipe.QuietDays, err)
+	}
+
+	// Saving another value is a recipe edit that publishes nothing new.
+	if stored, err = s.Get(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	reader := "/feeds/" + stored.RSSToken + ".xml"
+	before := h.request("GET", reader, nil)
+	for _, c := range []struct {
+		days  int
+		quiet bool
+	}{{model.QuietNever, false}, {0, false}, {30, false}, {90, false}, {365, false}, {7, true}} {
+		stored.Recipe.QuietDays = c.days
+		if w := h.request("PUT", "/api/feeds/"+id, feedJSON(t, stored)); w.Code != http.StatusOK {
+			t.Fatalf("edit to %d: %d %s", c.days, w.Code, w.Body.String())
+		}
+		edited, err := s.Get(ctx, id)
+		if err != nil || edited.Recipe.QuietDays != c.days || edited.ETag != "" || !edited.LastChanged.Equal(stored.LastChanged) || !edited.LastNew.Equal(stored.LastNew) {
+			t.Fatalf("edit to %d: quiet_days %d, source validator %q, change time %v -> %v, last new %v -> %v, %v",
+				c.days, edited.Recipe.QuietDays, edited.ETag, stored.LastChanged, edited.LastChanged, stored.LastNew, edited.LastNew, err)
+		}
+		quiet(c.quiet, fmt.Sprintf("eight days without a new story, quiet_days %d", c.days))
+		after := h.request("GET", reader, nil)
+		if before.Code != http.StatusOK || after.Body.String() != before.Body.String() || after.Header().Get("ETag") != before.Header().Get("ETag") || after.Header().Get("Last-Modified") != before.Header().Get("Last-Modified") {
+			t.Fatalf("quiet_days %d changed the reader output:\n%v\n%s\n%v\n%s", c.days, before.Header(), before.Body, after.Header(), after.Body)
+		}
+		stored = edited
+	}
+	// Never holds however long a feed goes without a new story.
+	stored.Recipe.QuietDays = model.QuietNever
+	if w := h.request("PUT", "/api/feeds/"+id, feedJSON(t, stored)); w.Code != http.StatusOK {
+		t.Fatalf("edit to never: %d %s", w.Code, w.Body.String())
+	}
+	ageStories(t, h, id, time.Now().Add(-10*365*24*time.Hour))
+	quiet(false, "ten years without a new story, never quiet")
+	// Automatic is stored and exported as no setting at all.
+	if stored, err = s.Get(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	stored.Recipe.QuietDays = 0
+	if w := h.request("PUT", "/api/feeds/"+id, feedJSON(t, stored)); w.Code != http.StatusOK {
+		t.Fatalf("edit to automatic: %d %s", w.Code, w.Body.String())
+	}
+	quiet(true, "ten years without a new story, automatic")
+	var raw string
+	if err := s.DB.QueryRow(fmt.Sprintf("SELECT recipe FROM feeds WHERE id='%s'", id)).Scan(&raw); err != nil || strings.Contains(raw, "quiet_days") {
+		t.Fatalf("an automatic threshold is stored: %s, %v", raw, err)
+	}
+	if export := h.request("GET", "/api/recipes/export?id="+id, nil); export.Code != http.StatusOK || strings.Contains(export.Body.String(), "quiet_days") {
+		t.Fatalf("an automatic threshold is exported: %d %s", export.Code, export.Body.String())
+	}
+
+	library, err := s.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, days := range []int{-2, 1, 14, 366} {
+		f := userAgentFeed("")
+		f.Recipe.QuietDays = days
+		feed := feedJSON(t, f)
+		recipes := marshalRecipes(t, []portableFeed{portableExamples()[0], {Title: "Quiet", URL: "https://example.com/news", Interval: 900, Recipe: f.Recipe}})
+		for _, tc := range []struct{ method, path string }{
+			{"POST", "/api/feeds"}, {"PUT", "/api/feeds/" + id}, {"POST", "/api/preview"}, {"POST", "/api/recipes/preview"}, {"POST", "/api/recipes/import"},
+		} {
+			body := feed
+			if strings.HasPrefix(tc.path, "/api/recipes/") {
+				body = recipes
+			}
+			w := h.request(tc.method, tc.path, body)
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Mark as Quiet after (quiet_days) must be 0 for automatic, -1 for never, or 7, 30, 90 or 365 days") {
+				t.Errorf("%s %s with quiet_days %d: %d %s", tc.method, tc.path, days, w.Code, w.Body.String())
+			}
+		}
+	}
+	if after, err := s.List(ctx); err != nil || !reflect.DeepEqual(after, library) {
+		t.Fatalf("a refused quiet_days changed the library: %+v, %v", after, err)
+	}
+	if h.fetcher.calls.Load() != 0 {
+		t.Fatal("a refused quiet_days reached the fetcher")
+	}
+}
+
+// The editor offers exactly the thresholds validate accepts, so whatever it
+// sends is saved and whatever is stored can be shown and sent back.
+func TestEditorOffersTheAcceptedQuietDays(t *testing.T) {
+	h := newPortabilityHarness(t)
+	page := h.request("GET", "/", nil).Body.String()
+	start := strings.Index(page, `<select name="quiet_days"`)
+	end := strings.Index(page[max(start, 0):], "</select>")
+	if start < 0 || end < 0 {
+		t.Fatal("the editor has no quiet_days select")
+	}
+	var offered []int
+	for _, option := range strings.Split(page[start:start+end], `<option value="`)[1:] {
+		days, err := strconv.Atoi(option[:strings.IndexByte(option, '"')])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := model.ValidateQuietDays(days); err != nil {
+			t.Errorf("the editor offers %d: %v", days, err)
+		}
+		offered = append(offered, days)
+	}
+	if want := append(append([]int{0}, model.QuietDayChoices...), model.QuietNever); !reflect.DeepEqual(offered, want) {
+		t.Fatalf("the editor offers %v, want %v", offered, want)
 	}
 }
