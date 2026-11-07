@@ -29,12 +29,16 @@ func testLibraryFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	setKeywords := func(panel, text string) chromedp.Action {
 		return chromedp.Evaluate(`(()=>{const input=document.querySelector('`+panel+` textarea');input.value=`+"`"+text+"`"+`;input.dispatchEvent(new Event('input',{bubbles:true}));})()`, nil)
 	}
+	// libraryLoads counts the library reloads in flight that the page starts
+	// through its own entry point, as opening the editor and signing in do.
 	must(chromedp.Evaluate(`(()=>{if(!document.querySelector('#editor').hidden)document.querySelector('#close-editor').click();
-	 const original=window.fetch;window.libraryRequests=[];window.restoreLibraryFetch=()=>window.fetch=original;
+	 const original=window.fetch,reload=window.rssLibrary.refresh;window.libraryRequests=[];window.libraryLoads=0;
+	 window.restoreLibraryHooks=()=>{window.fetch=original;window.rssLibrary.refresh=reload};
 	 window.fetch=async(...args)=>{if(args[1]?.body)window.libraryRequests.push({path:args[0],method:args[1].method,body:JSON.parse(args[1].body)});return original(...args)};
+	 window.rssLibrary.refresh=()=>{window.libraryLoads++;return reload().finally(()=>window.libraryLoads--)};
 	})()`, nil),
 		chromedp.Click("#manage-filters"), chromedp.Poll(`document.querySelector('#filter-library').open`, nil))
-	defer chromedp.Run(tab, chromedp.Evaluate(`window.restoreLibraryFetch()`, nil))
+	defer chromedp.Run(tab, chromedp.Evaluate(`window.restoreLibraryHooks()`, nil))
 	check(`!document.querySelector('#filter-library-empty').hidden&&document.querySelector('#library-filter-form').hidden`, "empty library did not explain itself")
 
 	// An empty filter is refused in the dialog before any request is made.
@@ -87,12 +91,16 @@ func testLibraryFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 
 	// A session that ends with the feed open in the editor keeps its selection:
 	// saving after signing in again must not unlink the library filter.
-	// Wait for the library to load after signing in: until then the save omits
-	// filter_ids, which keeps the link whether or not the selection survived.
-	must(button("Edit"), chromedp.Poll(`document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, nil),
+	// The save must wait for the library reload that signing in starts: until
+	// then it omits filter_ids, which keeps the link whether or not the
+	// selection survived. The Edit's own reload must answer before signing
+	// out, or it can land afterwards and stand in for that one. busy()
+	// re-enables the sign-in button only after showApp has reloaded the
+	// library and the feeds.
+	must(button("Edit"), chromedp.Poll(`document.querySelector('#library-filter-choices input[type=checkbox]')?.checked&&window.libraryLoads===0`, nil),
 		chromedp.Evaluate(`showLogin()`, nil), chromedp.SetValue("#password", "ui-test-password-123"),
-		chromedp.Click(`#login-form button[type="submit"]`), chromedp.Poll(`!document.querySelector('#workspace').hidden&&!document.querySelector('#editor').hidden`, nil),
-		chromedp.Poll(`Array.isArray(window.rssLibrary.selected())`, nil))
+		chromedp.Click(`#login-form button[type="submit"]`),
+		chromedp.Poll(`!document.querySelector('#login-form button[type="submit"]').disabled&&!document.querySelector('#workspace').hidden&&!document.querySelector('#editor').hidden&&Array.isArray(window.rssLibrary.selected())`, nil))
 	check(`window.rssLibrary.selected().length===1&&document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, "signing in again cleared the editor's library filter selection")
 	must(chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.Poll(`document.querySelector('#editor').hidden`, nil))
 	if f, err = s.Get(context.Background(), feedID); err != nil || len(f.FilterIDs) != 1 {

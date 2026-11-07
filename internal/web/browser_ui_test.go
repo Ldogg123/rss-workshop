@@ -179,14 +179,20 @@ func clickCurrent(name, element string) chromedp.Action {
  el.focus({preventScroll:true});el.click();return '';
 })()`
 	return chromedp.ActionFunc(func(ctx context.Context) error {
+		last := ""
 		for {
 			var reason string
 			if err := chromedp.Evaluate(script, &reason).Do(ctx); err != nil {
+				// The deadline can also pass during an attempt's round trip.
+				if last != "" && ctx.Err() != nil {
+					return fmt.Errorf("click %s: %s: %w", name, last, err)
+				}
 				return fmt.Errorf("click %s: %w", name, err)
 			}
 			if reason == "" {
 				return nil
 			}
+			last = reason
 			select {
 			case <-ctx.Done():
 				return fmt.Errorf("click %s: %s: %w", name, reason, ctx.Err())

@@ -155,5 +155,10 @@ func testRunDiagnosticsUI(t *testing.T, tab context.Context, s *store.Store, job
 	if err := s.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	must(chromedp.SendKeys("#password", "ui-test-password-123"), chromedp.Click("#login-form button"), chromedp.WaitVisible("#workspace"))
+	// Wait until signing in has finished: the library reload it starts redraws
+	// the editor's library picker, which sits above the filter tree and the
+	// preview button that the next test clicks. busy() re-enables the sign-in
+	// button only after showApp has reloaded the library and the feeds.
+	must(chromedp.SendKeys("#password", "ui-test-password-123"), chromedp.Click("#login-form button"), chromedp.WaitVisible("#workspace"),
+		chromedp.Poll(`!document.querySelector('#login-form button').disabled&&Array.isArray(window.rssLibrary.selected())`, nil))
 }
