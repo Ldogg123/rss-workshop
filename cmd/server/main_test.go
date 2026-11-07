@@ -4,14 +4,21 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"rss-workshop/internal/config"
 	"rss-workshop/internal/model"
@@ -119,6 +126,12 @@ func TestStartupUpgradeCopyFollowsConfiguration(t *testing.T) {
 // container restart, rolls the upgrade back on the server before the process
 // exits. Otherwise PostgreSQL went on running it with its locks held, for up
 // to the upgrade's time limit, and every start until then failed at the lock.
+//
+// pgx also asks the server to cancel, but from a goroutine that the exiting
+// process does not wait for, so its request arrives in some runs and not in
+// others. The child therefore connects through a proxy that drops every
+// CancelRequest: only the app's own pg_cancel_backend, which is an ordinary
+// query, reaches the server, and removing it fails this test every time.
 func TestStopSignalRollsBackPostgresUpgrade(t *testing.T) {
 	if raw := os.Getenv("RSS_TEST_UPGRADE_CHILD_URL"); raw != "" {
 		// The child starts as the server does and exits as main does.
@@ -134,14 +147,24 @@ func TestStopSignalRollsBackPostgresUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal("cannot configure the PostgreSQL fixture")
 	}
-	defer db.Close()
+	// Registered after PostgresURL, so this runs before the schema is dropped.
+	t.Cleanup(func() {
+		defer db.Close()
+		// A failed run leaves the upgrade sleeping on the server with the
+		// database-wide schema lock, which other packages' tests need.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = db.ExecContext(ctx, "SELECT pg_terminate_backend(pid) FROM (SELECT DISTINCT pid FROM pg_locks WHERE relation='feeds'::regclass AND pid<>pg_backend_pid()) l")
+	})
 	schema, err := os.ReadFile("../../internal/store/testdata/postgres_schema_v5.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The upgrade sleeps far longer than this test waits for its locks to go.
+	const sleep = 30 * time.Second
 	if _, err := db.ExecContext(t.Context(), string(schema)+`;
 INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES('kept','kept-token','Kept','https://example.com','{}',600,true,0);
-CREATE FUNCTION slow_upgrade() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(30); RETURN NEW; END $$;
+CREATE FUNCTION slow_upgrade() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(`+strconv.Itoa(int(sleep/time.Second))+`); RETURN NEW; END $$;
 CREATE TRIGGER slow_upgrade BEFORE UPDATE ON schema_version FOR EACH ROW EXECUTE FUNCTION slow_upgrade()`); err != nil {
 		t.Fatal(err)
 	}
@@ -154,10 +177,12 @@ CREATE TRIGGER slow_upgrade BEFORE UPDATE ON schema_version FOR EACH ROW EXECUTE
 		}
 		return found
 	}
+	childURL := throughCancelFilter(t, db, raw)
 	child := exec.Command(os.Args[0], "-test.run=^TestStopSignalRollsBackPostgresUpgrade$")
-	child.Env = append(os.Environ(), "RSS_TEST_UPGRADE_CHILD_URL="+raw)
+	child.Env = append(os.Environ(), "RSS_TEST_UPGRADE_CHILD_URL="+childURL)
 	var out bytes.Buffer
 	child.Stdout, child.Stderr = &out, &out
+	started := time.Now()
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +190,7 @@ CREATE TRIGGER slow_upgrade BEFORE UPDATE ON schema_version FOR EACH ROW EXECUTE
 		if time.Now().After(deadline) {
 			child.Process.Kill()
 			child.Wait()
-			t.Fatal("the upgrade did not start")
+			t.Fatal("the upgrade did not start:\n" + out.String())
 		}
 	}
 	if err := child.Process.Signal(syscall.SIGTERM); err != nil {
@@ -181,9 +206,91 @@ CREATE TRIGGER slow_upgrade BEFORE UPDATE ON schema_version FOR EACH ROW EXECUTE
 			t.Fatal("PostgreSQL went on running the upgrade after the process exited")
 		}
 	}
+	// The sleep began after the child started, so locks found gone before
+	// started+sleep were not released by the sleep ending on its own.
+	if time.Since(started) >= sleep {
+		t.Fatal("the run took longer than the upgrade's sleep, so it cannot tell whether the upgrade was canceled")
+	}
 	var version int
 	var title string
 	if err := db.QueryRowContext(t.Context(), "SELECT version,(SELECT title FROM feeds WHERE id='kept') FROM schema_version").Scan(&version, &title); err != nil || version != 5 || title != "Kept" {
 		t.Fatal("the interrupted upgrade changed the database", version, title, err)
 	}
+}
+
+// throughCancelFilter returns raw with its server replaced by a local proxy
+// that forwards every connection except a CancelRequest, which it closes
+// unread. Any other connection, including one that runs pg_cancel_backend,
+// opens with an SSLRequest or a StartupMessage instead. pgx encrypts a cancel
+// connection when the main one is encrypted, so the URL turns TLS off for the
+// proxy to read it. It also turns off the server's check for a dropped client
+// where the server has one, since that would end the upgrade without a
+// cancellation too.
+func throughCancelFilter(t *testing.T, db *sql.DB, raw string) string {
+	t.Helper()
+	settings, err := pgconn.ParseConfig(raw)
+	if err != nil {
+		t.Fatal("cannot read the PostgreSQL fixture's address")
+	}
+	network, address := pgconn.NetworkAddress(settings.Host, settings.Port)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer client.Close()
+				// Every message that opens a connection starts with its length
+				// and a code; 80877102 is a CancelRequest.
+				var head [8]byte
+				client.SetReadDeadline(time.Now().Add(10 * time.Second))
+				if _, err := io.ReadFull(client, head[:]); err != nil || binary.BigEndian.Uint32(head[4:]) == 80877102 {
+					return
+				}
+				client.SetReadDeadline(time.Time{})
+				server, err := net.DialTimeout(network, address, 5*time.Second)
+				if err != nil {
+					return
+				}
+				defer server.Close()
+				if _, err := server.Write(head[:]); err != nil {
+					return
+				}
+				// Either side closing closes both, as a direct connection would.
+				done := make(chan struct{}, 2)
+				go func() { io.Copy(server, client); done <- struct{}{} }()
+				go func() { io.Copy(client, server); done <- struct{}{} }()
+				<-done
+				client.Close()
+				server.Close()
+				<-done
+			}()
+		}
+	}()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal("cannot read the PostgreSQL fixture's URL")
+	}
+	u.Host = listener.Addr().String()
+	query := u.Query()
+	query.Del("host")
+	query.Del("port")
+	query.Del("sslnegotiation")
+	query.Set("sslmode", "disable")
+	// client_connection_check_interval exists from PostgreSQL 14.
+	var check sql.NullString
+	if err := db.QueryRowContext(t.Context(), "SELECT current_setting('client_connection_check_interval',true)").Scan(&check); err != nil {
+		t.Fatal(err)
+	}
+	if check.Valid {
+		query.Set("client_connection_check_interval", "0")
+	}
+	u.RawQuery = query.Encode()
+	return u.String()
 }
