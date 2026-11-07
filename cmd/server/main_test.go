@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"rss-workshop/internal/config"
 	"rss-workshop/internal/model"
@@ -108,4 +113,77 @@ func TestStartupUpgradeCopyFollowsConfiguration(t *testing.T) {
 		t.Fatal("UPGRADE_BACKUP=false did not upgrade without a copy", err)
 	}
 	s.DB.Close()
+}
+
+// A stop signal during a PostgreSQL schema upgrade, such as the SIGTERM of a
+// container restart, rolls the upgrade back on the server before the process
+// exits. Otherwise PostgreSQL went on running it with its locks held, for up
+// to the upgrade's time limit, and every start until then failed at the lock.
+func TestStopSignalRollsBackPostgresUpgrade(t *testing.T) {
+	if raw := os.Getenv("RSS_TEST_UPGRADE_CHILD_URL"); raw != "" {
+		// The child starts as the server does and exits as main does.
+		_, err := openStore(config.Config{DatabaseURL: raw, MaxItems: 500})
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	raw := testutil.PostgresURL(t)
+	if raw == "" {
+		t.Skip("set RSS_TEST_POSTGRES_URL to a disposable database")
+	}
+	db, err := sql.Open("pgx", raw)
+	if err != nil {
+		t.Fatal("cannot configure the PostgreSQL fixture")
+	}
+	defer db.Close()
+	schema, err := os.ReadFile("../../internal/store/testdata/postgres_schema_v5.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), string(schema)+`;
+INSERT INTO feeds(id,rss_token,title,url,recipe,interval,enabled,next_run) VALUES('kept','kept-token','Kept','https://example.com','{}',600,true,0);
+CREATE FUNCTION slow_upgrade() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(30); RETURN NEW; END $$;
+CREATE TRIGGER slow_upgrade BEFORE UPDATE ON schema_version FOR EACH ROW EXECUTE FUNCTION slow_upgrade()`); err != nil {
+		t.Fatal(err)
+	}
+	// Only this test's upgrade locks this schema's feeds table.
+	locked := func(query string) bool {
+		t.Helper()
+		var found bool
+		if err := db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_locks l JOIN pg_stat_activity a USING(pid) WHERE l.relation='feeds'::regclass`+query+`)`).Scan(&found); err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestStopSignalRollsBackPostgresUpgrade$")
+	child.Env = append(os.Environ(), "RSS_TEST_UPGRADE_CHILD_URL="+raw)
+	var out bytes.Buffer
+	child.Stdout, child.Stderr = &out, &out
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(20 * time.Second); !locked(" AND a.wait_event='PgSleep'"); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			child.Process.Kill()
+			child.Wait()
+			t.Fatal("the upgrade did not start")
+		}
+	}
+	if err := child.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	child.Wait()
+	want := "cannot migrate PostgreSQL database from schema version 5 to 6: startup was interrupted; the database is unchanged"
+	if child.ProcessState.ExitCode() != 1 || !strings.Contains(out.String(), want) {
+		t.Fatalf("a stop signal during the upgrade did not stop startup with %q:\n%s", want, out.String())
+	}
+	for deadline := time.Now().Add(3 * time.Second); locked(""); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("PostgreSQL went on running the upgrade after the process exited")
+		}
+	}
+	var version int
+	var title string
+	if err := db.QueryRowContext(t.Context(), "SELECT version,(SELECT title FROM feeds WHERE id='kept') FROM schema_version").Scan(&version, &title); err != nil || version != 5 || title != "Kept" {
+		t.Fatal("the interrupted upgrade changed the database", version, title, err)
+	}
 }

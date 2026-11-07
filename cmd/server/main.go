@@ -198,9 +198,20 @@ func databaseKind(c config.Config) string {
 
 func openStore(c config.Config) (*store.Store, error) {
 	if c.DatabaseURL != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return store.OpenPostgres(ctx, c.DatabaseURL, c.MaxItems)
+		// OpenPostgres bounds connecting and any schema upgrade itself. An
+		// upgrade can take minutes, so a stop signal cancels it, and PostgreSQL
+		// rolls it back at once, instead of ending the process while the server
+		// goes on running the upgrade with its locks held.
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		s, err := store.OpenPostgres(ctx, c.DatabaseURL, c.MaxItems)
+		if err == nil && ctx.Err() != nil {
+			// The signal arrived too late to cancel anything, but it was caught
+			// here, so stop rather than start serving.
+			s.DB.Close()
+			return nil, errors.New("startup was interrupted")
+		}
+		return s, err
 	}
 	if err := os.MkdirAll(c.DataDir, 0700); err != nil {
 		return nil, err
