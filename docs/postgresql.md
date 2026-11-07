@@ -106,7 +106,7 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
-The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.1.0, v1.1.1 or v1.2.0 database moves from schema 5 to schema 6 the first time this version runs, and an older one takes every step in the same transaction; retain a pre-upgrade dump to roll back, because an older release, v1.2.0 included, cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates. See [upgrade compatibility](operations.md#upgrades).
+The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.1.0, v1.1.1 or v1.2.0 database moves from schema 5 to schema 6 the first time this version runs, and an older one takes every step in the same transaction; retain a pre-upgrade dump to roll back, because an older release, v1.2.0 included, cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates, and the upgrade must finish within the [startup time limit](#schema-upgrade-time). See [upgrade compatibility](operations.md#upgrades).
 
 For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 
@@ -148,3 +148,18 @@ docker compose -f compose.yaml -f compose.postgres.yaml exec -T rss-workshop /rs
 Sign in and verify the feed library and sample RSS/Atom output before discarding any old backup or database. Reverting the URI to the original database provides rollback while it remains available. Restored reader tokens and schedules come from the backup.
 
 For an existing PostgreSQL server, use the same dump/restore options with that server's client tools and an administrator-created empty target database. Supply credentials through a protected password file or your database provider's tooling; avoid putting passwords directly in command arguments. Follow the provider's backup and recovery instructions when it manages the database.
+
+## Schema upgrade time
+
+Startup allows 10 seconds to connect to PostgreSQL and upgrade the schema together. Upgrading to schema 6 reads the whole stories table once, to start each feed's last new story at its newest saved one. In tests, a 1 GB table took under a second on fast storage, but longer than that limit when neither PostgreSQL nor the host had cached it, as after a reboot, and reads were held to 50 MB/s, as on an SD card or a slow network share. The upgrade then rolls back, leaving the database at schema 5, and startup stops with `cannot migrate PostgreSQL database from schema version 5 to 6`. PostgreSQL goes on reading for up to 30 seconds, and a start in that time stops with `cannot lock PostgreSQL schema initialization`. Once that read has finished the table is usually cached, and the next start upgrades; Compose keeps restarting the app until then.
+
+To check the size of the table first, and read it into the cache just before starting this version, run these queries; replace the Compose command with your own client for an existing server:
+
+```sh
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres psql \
+  -U rss_workshop -d rss_workshop -v ON_ERROR_STOP=1 \
+  -c "SELECT pg_size_pretty(pg_relation_size('items')) AS stories_table;" \
+  -c 'SELECT max(first_seen) FROM items;'
+```
+
+If starts keep failing, for example because the host's memory cannot hold the table, the database is still at schema 5, and v1.2.0 opens it as it is.
