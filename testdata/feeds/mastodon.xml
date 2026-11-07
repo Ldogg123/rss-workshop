@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The shape of a Mastodon account feed: posts have no titles, and their
+     attachments are media:content with a nested description. -->
+<rss version="2.0" xmlns:webfeeds="http://webfeeds.org/rss/1.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Example Person</title>
+    <description>Public posts from @person@social.example</description>
+    <link>https://social.example/@person</link>
+    <item>
+      <guid isPermaLink="true">https://social.example/@person/1001</guid>
+      <link>https://social.example/@person/1001</link>
+      <pubDate>Wed, 04 Nov 2026 18:22:05 +0000</pubDate>
+      <description>&lt;p&gt;Spent the afternoon at the &lt;a href="https://social.example/tags/library" class="mention hashtag" rel="tag"&gt;#&lt;span&gt;library&lt;/span&gt;&lt;/a&gt; reading about tidal bridges, and honestly the history of counterweights is more gripping than any thriller I have read this year.&lt;/p&gt;</description>
+      <media:content url="https://files.social.example/media/1001.png" type="image/png" fileSize="1000" medium="image">
+        <media:rating scheme="urn:simple">nonadult</media:rating>
+        <media:description type="plain">A drawing of a bascule bridge</media:description>
+      </media:content>
+      <category>library</category>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://social.example/@person/1002</guid>
+      <link>https://social.example/@person/1002</link>
+      <pubDate>Wed, 04 Nov 2026 19:00:00 +0000</pubDate>
+      <description>&lt;p&gt;Short one.&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>

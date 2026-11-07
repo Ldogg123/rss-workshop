@@ -156,6 +156,27 @@ func WithHeaders(ctx context.Context, h Headers) context.Context {
 	return context.WithValue(ctx, headersKey{}, h)
 }
 
+// htmlAccept is what every static request asks for, except the list request
+// of a feed source. It must not change: a source that negotiates content would
+// start sending existing feeds something else.
+const htmlAccept = "text/html, application/xhtml+xml"
+
+// feedAccept is what a feed source's list request asks for. The final */*
+// keeps a server that answers only what a request lists from refusing a feed
+// it labels some other way, such as text/plain.
+const feedAccept = "application/rss+xml, application/atom+xml, application/rdf+xml;q=0.9, application/xml;q=0.8, text/xml;q=0.8, */*;q=0.1"
+
+type feedSourceKey struct{}
+
+// AsFeedSource returns a context whose static requests ask for an RSS, RDF or
+// Atom feed and decode the answer as XML: its encoding comes from a byte order
+// mark, the Content-Type charset, then the XML declaration, in place of an
+// HTML <meta>. Only a feed source's own list request carries it; the article
+// pages its stories link to are HTML, and keep the HTML Accept and decoding.
+func AsFeedSource(ctx context.Context) context.Context {
+	return context.WithValue(ctx, feedSourceKey{}, true)
+}
+
 type Result struct {
 	// Body is UTF-8 when the page declares an encoding Fetch can decode; see
 	// toUTF8. Rendered pages are always UTF-8.
@@ -342,8 +363,13 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	if e != nil {
 		return out, fmt.Errorf("invalid source URL")
 	}
+	feed, _ := ctx.Value(feedSourceKey{}).(bool)
 	req.Header.Set("User-Agent", ua)
-	req.Header.Set("Accept", "text/html, application/xhtml+xml")
+	if feed {
+		req.Header.Set("Accept", feedAccept)
+	} else {
+		req.Header.Set("Accept", htmlAccept)
+	}
 	if h.AcceptLanguage != "" {
 		req.Header.Set("Accept-Language", h.AcceptLanguage)
 	}
@@ -383,8 +409,9 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 		return out, fmt.Errorf("source exceeds 4 MiB limit")
 	}
 	// List pages, article pages and the visual selector all arrive here, so
-	// they decode a page the same way.
-	if out.Body, e = toUTF8(out.Body, resp.Header.Get("Content-Type")); e != nil {
+	// they decode a page the same way. A feed source's list is XML, which
+	// names its encoding in its declaration rather than a <meta>.
+	if out.Body, e = toUTF8(out.Body, resp.Header.Get("Content-Type"), feed); e != nil {
 		return out, e
 	}
 	return out, nil

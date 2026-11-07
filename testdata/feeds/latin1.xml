@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!-- Latin-1 bytes, named only by the XML declaration. -->
+<rss version="2.0">
+  <channel>
+    <title>Café</title>
+    <item>
+      <title>Café crème</title>
+      <link>https://latin.example/cafe</link>
+      <description>Crème brûlée.</description>
+    </item>
+  </channel>
+</rss>

@@ -113,6 +113,52 @@
       },
       "title": "Demo: filters and full article content",
       "url": "http://127.0.0.1:8000/index.html"
+    },
+    {
+      "interval": 900,
+      "recipe": {
+        "content": {
+          "attr": "",
+          "selector": ""
+        },
+        "date": {
+          "attr": "",
+          "selector": ""
+        },
+        "date_layout": "",
+        "filters": {
+          "exclude": {
+            "field": "title",
+            "keywords": [
+              "Sponsored"
+            ],
+            "op": "contains_any"
+          }
+        },
+        "full_content": {
+          "selector": ".article-body"
+        },
+        "image": {
+          "attr": "",
+          "selector": ""
+        },
+        "items": "",
+        "link": {
+          "attr": "",
+          "selector": ""
+        },
+        "mode": "static",
+        "settle_ms": 0,
+        "timezone": "",
+        "title": {
+          "attr": "",
+          "selector": ""
+        },
+        "type": "feed",
+        "wait_selector": ""
+      },
+      "title": "Demo: the site's own RSS feed, filtered, with full articles",
+      "url": "http://127.0.0.1:8000/feed.xml"
     }
   ],
   "format": "rss-workshop.recipes",

@@ -26,15 +26,22 @@
    if(feed.recipe.user_agent)item.append(node('p',`User-Agent: ${feed.recipe.user_agent}`,'meta'));
    if(feed.recipe.accept_language)item.append(node('p',`Accept-Language: ${feed.recipe.accept_language}`,'meta'));
    if(feed.recipe.quiet_days)item.append(node('p',`Mark as Quiet after: ${feed.recipe.quiet_days<0?'Never':feed.recipe.quiet_days+' days'}`,'meta'));
-   const selectors=node('details'),summary=node('summary','Recipe selectors');selectors.append(summary);
-   const mapping=node('dl',undefined,'import-mapping');
-   for(const [label,value] of [['Items',`${feed.recipe.type.toUpperCase()}: ${feed.recipe.items}`],...['title','link','content','image','date'].map(field=>{
+   // A feed source has no item or field selectors to review.
+   const feedSource=feed.recipe.type==='feed';
+   if(feedSource)item.append(node('p','Source: RSS or Atom feed','meta'));
+   const rows=feedSource?[]:[['Items',`${feed.recipe.type.toUpperCase()}: ${feed.recipe.items}`],...['title','link','content','image','date'].map(field=>{
     const rule=feed.recipe[field],name={title:'Title',link:'Link',content:'Description',image:'Image',date:'Date'}[field];
     return [name,rule?.selector?rule.selector+(rule.attr?' → '+rule.attr:''):'Not specified'];
-   })]){mapping.append(node('dt',label),node('dd',value));}
+   })];
    // Cleanup rules change what is published, one rule per line.
-   if(Array.isArray(feed.recipe.remove)&&feed.recipe.remove.length)mapping.append(node('dt','Cleanup'),node('dd',feed.recipe.remove.join('\n')));
-   selectors.append(mapping);item.append(selectors);preview.append(item);
+   if(Array.isArray(feed.recipe.remove)&&feed.recipe.remove.length)rows.push(['Cleanup',feed.recipe.remove.join('\n')]);
+   if(rows.length){
+    const selectors=node('details'),summary=node('summary','Recipe selectors');selectors.append(summary);
+    const mapping=node('dl',undefined,'import-mapping');
+    for(const [label,value] of rows)mapping.append(node('dt',label),node('dd',value));
+    selectors.append(mapping);item.append(selectors);
+   }
+   preview.append(item);
   }
   preview.hidden=false;
  }

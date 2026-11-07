@@ -161,11 +161,18 @@ function openEditor(f,copy=false){
  copiedFilterIDs=copy?[...(f.filter_ids||[])]:null;$('#duplicate-hint').hidden=!copy;
  if(f){form.elements.mode.value=f.recipe.mode||"static";form.elements.wait_selector.value=f.recipe.wait_selector||"";form.elements.settle_ms.value=f.recipe.settle_ms||0;form.elements.title.value=copy?copyTitle(f.title):f.title;form.elements.url.value=f.url;form.elements.type.value=f.recipe.type;form.elements.items.value=f.recipe.items;form.elements.interval.value=f.interval/60;form.elements.enabled.checked=!copy&&f.enabled;for(const k of ['title','link','content','image','date']){form.elements[k+'_selector'].value=f.recipe[k].selector;form.elements[k+'_attr'].value=f.recipe[k].attr;}form.elements.date_layout.value=f.recipe.date_layout;form.elements.timezone.value=f.recipe.timezone;
   const full=f.recipe.full_content;form.elements.full_selector.value=full?.selector||'';form.elements.full_attr.value=full?.attr||'';form.elements.full_browser.checked=!!full?.browser;form.elements.user_agent.value=f.recipe.user_agent||'';form.elements.accept_language.value=f.recipe.accept_language||'';form.elements.quiet_days.value=String(f.recipe.quiet_days||0);form.elements.cleanup.value=(f.recipe.remove||[]).join('\n');}
+ // A saved feed keeps its source: a web page and a feed identify stories
+ // differently, so switching would publish every story again. A copy can
+ // choose either, and a feed source shows the selector type as CSS.
+ const feedSource=f?.recipe.type==='feed';form.elements.source.value=feedSource?'feed':'page';form.elements.source.disabled=editing;if(feedSource)form.elements.type.value='css';renderSource();
  window.rssFilters?.load(f?.recipe.filters,editing);window.rssLibrary?.loadFeed(f?.filter_ids);window.rssLibrary?.refresh().catch(()=>{});$('#editor').hidden=false;renderHelp();help();fullContentSummary();requestSummary();cleanupSummary();form.elements.title.focus();
 }
 function readForm(){const v=new FormData(form);const recipe={mode:v.get('mode'),wait_selector:v.get('wait_selector'),settle_ms:Number(v.get('settle_ms')),type:v.get('type'),items:v.get('items'),date_layout:v.get('date_layout'),timezone:v.get('timezone')};for(const k of ['title','link','content','image','date'])recipe[k]={selector:v.get(k+'_selector'),attr:v.get(k+'_attr')};const filters=window.rssFilters?.read();if(filters)recipe.filters=filters;
  const fullSelector=(v.get('full_selector')||'').trim();
  if(fullSelector)recipe.full_content={selector:fullSelector,attr:v.get('full_attr')||'',browser:form.elements.full_browser.checked};
+ // A feed source's entries supply every field, and it is fetched as Static
+ // HTTP with plain-HTML articles, so the page settings it hides are not sent.
+ if(form.elements.source.value==='feed'){Object.assign(recipe,{mode:'static',wait_selector:'',settle_ms:0,type:'feed',items:''});for(const k of ['title','link','content','image','date'])recipe[k]={selector:'',attr:''};if(recipe.full_content)recipe.full_content.browser=false;}
  // Blank is left out, as the server stores it, so the server's default
  // User-Agent applies and no Accept-Language is sent.
  const userAgent=(v.get('user_agent')||'').trim();if(userAgent)recipe.user_agent=userAgent;
@@ -192,8 +199,20 @@ function requestSummary(){
  const own=(form.elements.user_agent?.value||'').trim(), language=(form.elements.accept_language?.value||'').trim();
  const label=$('#request-summary');if(label)label.textContent=(own?'Custom User-Agent':'Default User-Agent')+(language?', custom Accept-Language':'');
 }
+function renderSource(){
+ const feed=form.elements.source.value==='feed';
+ $('#page-selectors').hidden=feed;form.elements.type.closest('label').hidden=feed;form.elements.mode.closest('label').hidden=feed;$('#fetch-mode-help').hidden=feed;
+ // Hidden fields cannot be filled in, so they stop being required.
+ form.elements.items.required=form.elements.title_selector.required=!feed;
+ $('#url-label').textContent=feed?'Feed URL':'Page URL';form.elements.url.placeholder=feed?'https://example.com/feed.xml':'https://example.com/news';
+ $('#full-render').hidden=feed;$('#full-feed-hint').hidden=!feed;
+ // Hints written for one source, such as the cleanup section's.
+ for(const hint of form.querySelectorAll('[data-source]'))hint.hidden=hint.dataset.source!==(feed?'feed':'page');
+ $('#source-help').textContent=(feed?'Reads the stories of an existing RSS or Atom feed over Static HTTP, to filter them or add their full articles. The feed supplies each story’s title, link, date, description and image, so there are no selectors.':'Selects the stories on a web page with CSS or XPath.')+(form.elements.source.disabled?' A saved feed keeps its source; to try the other, duplicate it.':'');
+ renderHelp();help();
+}
 function renderHelp(){
- const mode=form.elements.mode.value, localBrowser=mode==='browser'||mode==='auto', tip=$('#fetch-mode-help');
+ const mode=form.elements.mode.value, localBrowser=form.elements.source.value!=='feed'&&(mode==='browser'||mode==='auto'), tip=$('#fetch-mode-help');
  $('#render-settings').hidden=!localBrowser;
  tip.classList.toggle('diagnostic',localBrowser&&!browserAvailable||mode==='flaresolverr'&&!flaresolverrAvailable);
  if(mode==='flaresolverr')tip.textContent=flaresolverrAvailable?'Uses the configured external browser for Cloudflare challenge pages. Some CAPTCHAs remain unsupported.':'FlareSolverr is not configured on this server. Set FLARESOLVERR_URL to an address the server can reach. With Docker Compose, put it in .env and recreate the container with docker compose up -d and the same -f files; docker compose restart keeps the old settings. For a native run, export it and start the server again. See docs/flaresolverr.md.';
@@ -203,7 +222,8 @@ function renderHelp(){
 }
 form.elements.mode.onchange=renderHelp;
 function help(){
- const xpath=form.elements.type.value==='xpath';
+ // A feed source's rules are CSS, whatever the hidden selector type says.
+ const xpath=form.elements.source.value!=='feed'&&form.elements.type.value==='xpath';
  $('#selector-help').textContent=xpath?'Use relative XPath fields starting with ., such as .//h2 or .//a/@href. Use . for the card itself.':'Fields are relative to each card. Use . for the card itself. Choose an attribute separately, such as href or datetime.';
  $('#cleanup-syntax-help').textContent=xpath?'XPath rules start with ./, such as .//div[@class=\'share\'] or .//p[contains(., \'appeared first on\')].':'For example .share, aside.related or p:containsOwn("appeared first on"), which ignores case.';
 }
@@ -211,6 +231,7 @@ $('#login-form').onsubmit=e=>{e.preventDefault();busy(e.submitter,async()=>{cons
 $('#logout').onclick=()=>busy($('#logout'),async()=>{await api('/logout','POST',{});showLogin();});
 $('#new-feed').onclick=$('#empty-new').onclick=()=>openEditor();$('#close-editor').onclick=()=>$('#editor').hidden=true;form.elements.type.onchange=help;
 form.elements.full_selector.oninput=fullContentSummary;form.elements.cleanup.oninput=cleanupSummary;
+form.elements.source.onchange=renderSource;
 form.elements.user_agent.oninput=form.elements.accept_language.oninput=requestSummary;
 form.onsubmit=e=>{e.preventDefault();busy(e.submitter,async()=>{const id=form.elements.id.value,data=readForm();if(id){data.apply_filters_to_history=$('#apply-filters-to-history').checked;if(typeof loadedEnabled==='boolean')data.loaded_enabled=loadedEnabled;}await api(id?`/feeds/${id}`:'/feeds',id?'PUT':'POST',data);$('#editor').hidden=true;notice('Feed saved. Enabled feeds refresh in the background.',true);await load();});};
 $('#preview-button').onclick=()=>{if(!form.reportValidity())return;busy($('#preview-button'),async()=>{

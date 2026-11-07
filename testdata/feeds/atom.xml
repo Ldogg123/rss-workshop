@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Atom 1.0: text, html and xhtml constructs, xml:base on the feed and an
+     entry, link relations, an id as the only link, and out-of-line content. -->
+<feed xmlns="http://www.w3.org/2005/Atom" xml:base="https://blog.example/notes/">
+  <title>Notes</title>
+  <id>tag:blog.example,2026:notes</id>
+  <updated>2026-11-06T12:00:00Z</updated>
+  <link rel="self" href="https://blog.example/notes/atom.xml"/>
+  <entry xml:base="2026/">
+    <title type="html">&lt;em&gt;Escaped&lt;/em&gt; HTML title</title>
+    <id>tag:blog.example,2026:1</id>
+    <link rel="replies" href="1/comments"/>
+    <link rel="alternate" type="text/html" href="1.html"/>
+    <link rel="enclosure" type="image/jpeg" href="1/cover.jpg"/>
+    <published>2026-11-05T10:00:00Z</published>
+    <updated>2026-11-06T10:00:00Z</updated>
+    <summary>Plain &lt;summary&gt; text</summary>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>XHTML <a href="rel">body</a> with <img src="pic.png" alt=""/></p></div></content>
+  </entry>
+  <entry>
+    <title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">XHTML <b>title</b></div></title>
+    <id>https://blog.example/notes/id-only</id>
+    <updated>2026-11-04T09:00:00Z</updated>
+    <content type="html">&lt;p&gt;HTML content&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Text &amp; title</title>
+    <id>tag:blog.example,2026:3</id>
+    <link href="https://blog.example/notes/three"/>
+    <updated>2026-11-03T09:00:00Z</updated>
+    <summary type="html">&lt;p&gt;Only a summary&lt;/p&gt;</summary>
+    <content src="https://blog.example/notes/three.txt" type="text/plain"/>
+  </entry>
+  <entry>
+    <title type="text">Plain text content</title>
+    <id>urn:uuid:4</id>
+    <content type="text">Line &lt;one&gt; &amp; two</content>
+  </entry>
+</feed>

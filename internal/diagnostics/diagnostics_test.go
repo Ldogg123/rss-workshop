@@ -78,3 +78,12 @@ func TestSanitizeMalformedMetadata(t *testing.T) {
 		t.Fatal("unknown extraction counts became zero")
 	}
 }
+
+// A feed source's runs name their source type rather than an unknown one.
+func TestSanitizeKeepsEverySelectorType(t *testing.T) {
+	for _, kind := range []string{"css", "xpath", "feed"} {
+		if got := Sanitize(&model.RunDiagnostics{SelectorType: kind}).SelectorType; got != kind {
+			t.Errorf("%s became %s", kind, got)
+		}
+	}
+}

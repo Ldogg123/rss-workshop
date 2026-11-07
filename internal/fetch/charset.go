@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -25,18 +26,20 @@ var errDecodedTooLarge = errors.New("source exceeds 4 MiB limit once decoded to 
 //
 // The encoding comes from the first of these that names one browsers support:
 // a byte order mark, the Content-Type charset, then a <meta> in the first 1024
-// bytes. Anything else returns body unchanged, as before: a page declaring no
-// encoding, or one no browser knows, UTF-8 itself, and the "replacement"
-// encoding browsers use to blank out ISO-2022-KR and HZ pages. So does a page
-// that declares a legacy encoding but is mostly UTF-8 (see mostlyUTF8), which
-// is a server or template still naming Latin-1 after the site moved to UTF-8.
+// bytes, or for an XML document the encoding its XML declaration names there,
+// as RFC 7303 has a recipient read it. Anything else returns body unchanged,
+// as before: a page declaring no encoding, or one no browser knows, UTF-8
+// itself, and the "replacement" encoding browsers use to blank out ISO-2022-KR
+// and HZ pages. So does a page that declares a legacy encoding but is mostly
+// UTF-8 (see mostlyUTF8), which is a server or template still naming Latin-1
+// after the site moved to UTF-8.
 // A UTF-8 page therefore keeps its exact bytes, byte order mark included.
 //
 // The result is bounded by MaxBody like the raw response, because the visual
 // selector and browser mode apply that limit to the decoded page too. A page
 // refused for that returns body unchanged with the error, as a page over the
 // raw limit does, so diagnostics still report the size the source sent.
-func toUTF8(body []byte, contentType string) ([]byte, error) {
+func toUTF8(body []byte, contentType string, xmlDocument bool) ([]byte, error) {
 	name, skip := "", 0
 	switch {
 	case bytes.HasPrefix(body, []byte{0xef, 0xbb, 0xbf}):
@@ -46,7 +49,7 @@ func toUTF8(body []byte, contentType string) ([]byte, error) {
 	case bytes.HasPrefix(body, []byte{0xff, 0xfe}):
 		name, skip = "utf-16le", 2
 	default:
-		name = declaredCharset(body, contentType)
+		name = declaredCharset(body, contentType, xmlDocument)
 		if name == "" || name == "utf-8" || name == "replacement" || mostlyUTF8(body) {
 			return body, nil
 		}
@@ -93,13 +96,36 @@ func mostlyUTF8(body []byte) bool {
 
 // declaredCharset returns the canonical name of the encoding the response
 // header or the page declares, or "" when neither names a known one.
-func declaredCharset(body []byte, contentType string) string {
+func declaredCharset(body []byte, contentType string, xmlDocument bool) string {
 	if _, params, err := mime.ParseMediaType(contentType); err == nil {
 		if _, name := charset.Lookup(params["charset"]); name != "" {
 			return name
 		}
 	}
+	if xmlDocument {
+		return xmlCharset(body[:min(len(body), prescanBytes)])
+	}
 	return metaCharset(body[:min(len(body), prescanBytes)])
+}
+
+// xmlDeclaration matches an XML declaration that names an encoding. The
+// declaration belongs at the very start, but feeds served after a stray line
+// break are common enough to allow white space first.
+var xmlDeclaration = regexp.MustCompile(`^[ \t\r\n]*<\?xml[ \t\r\n][^>]*?\bencoding[ \t\r\n]*=[ \t\r\n]*["']([A-Za-z][A-Za-z0-9._-]{0,39})["']`)
+
+// xmlCharset returns the canonical name of the encoding an XML declaration at
+// the start of head names, or "". A UTF-16 name is read as UTF-8, as
+// metaCharset reads one: a declaration readable as ASCII is not UTF-16.
+func xmlCharset(head []byte) string {
+	m := xmlDeclaration.FindSubmatch(head)
+	if m == nil {
+		return ""
+	}
+	_, name := charset.Lookup(string(m[1]))
+	if strings.HasPrefix(name, "utf-16") {
+		return "utf-8"
+	}
+	return name
 }
 
 // metaCharset is the HTML standard's prescan: the first <meta> naming a known

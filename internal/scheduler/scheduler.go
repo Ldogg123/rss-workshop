@@ -638,7 +638,13 @@ func (s *Scheduler) extract(ctx context.Context, f model.Feed, preview bool) (r 
 			etag = ""
 			modified = ""
 		}
-		attempt("static", func() (fetch.Result, error) { return s.Fetcher.Fetch(ctx, f.URL, etag, modified) })
+		list := ctx
+		if f.Recipe.Type == extract.FeedType {
+			// Only a feed source's own list asks for a feed and decodes as
+			// XML: its stories link to HTML article pages, fetched with ctx.
+			list = fetch.AsFeedSource(ctx)
+		}
+		attempt("static", func() (fetch.Result, error) { return s.Fetcher.Fetch(list, f.URL, etag, modified) })
 		if trace.Attempts[len(trace.Attempts)-1].Stage != "extract" || f.Recipe.Mode != "auto" || !errors.Is(e, extract.ErrNoItems) {
 			return r, p, e
 		}

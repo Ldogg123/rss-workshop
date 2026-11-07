@@ -12,6 +12,7 @@ RSS Workshop is designed for people looking for a self-hosted alternative to hos
 - Visual selector editor, with CSS and XPath side by side and live match highlighting
 - JavaScript rendering with sandboxed Chromium, or an optional external FlareSolverr
 - Full article content: follow each story’s link and publish the article, not the teaser, with cleanup rules for share bars and other clutter
+- Existing RSS and Atom feeds as sources too, to filter them or publish their full articles behind one private link
 - Story include/exclude filters with nested rules and bulk keyword lists, plus a filter library to reuse rules across feeds
 - RSS and Atom output with stable item identities, plus OPML export of every feed
 - A searchable library that points out feeds gone quiet, plus per-feed diagnostics, Prometheus metrics, and verified backup and restore
@@ -50,9 +51,11 @@ Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if y
 4. Choose **Preview items** to see exactly what a reader will receive, then save.
 5. Copy the RSS or Atom URL into your reader.
 
+Already have a feed for the site? Choose **Source → RSS or Atom feed** instead of selecting elements, and the feed supplies every field: see [feed sources](docs/feed-sources.md).
+
 To build another feed from the same site, such as a different section, or to try other selectors without touching a working feed, choose **Duplicate** on its card. The editor opens a copy with every setting and the same library filters; nothing is saved until you save it, and the copy gets its own reader links.
 
-Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and three ready-made recipes covering every field, XPath, filtering and full article content. Serve it, import the recipes, and preview: see [examples](docs/examples/).
+Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and four ready-made recipes covering every field, XPath, filtering, full article content and an RSS feed source. Serve it, import the recipes, and preview: see [examples](docs/examples/).
 
 Reader requests serve saved stories and never fetch the source, so a slow or broken site cannot stall your reader, and a failed refresh keeps the last good output. Anyone holding a feed link can read it; **Reset feed links** revokes a feed’s existing URLs.
 

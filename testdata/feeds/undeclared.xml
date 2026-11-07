@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!-- Extension prefixes used without declaring them, which XML forbids and
+     feeds do anyway. -->
+<rss version="2.0">
+  <channel>
+    <title>Undeclared</title>
+    <item>
+      <title>Undeclared prefixes</title>
+      <link>https://plain.example/1</link>
+      <description>Teaser</description>
+      <content:encoded><![CDATA[<p>Full text</p>]]></content:encoded>
+      <dc:date>2026-11-05T10:00:00Z</dc:date>
+      <media:thumbnail url="https://plain.example/t.jpg"/>
+    </item>
+  </channel>
+</rss>
