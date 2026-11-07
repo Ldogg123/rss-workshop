@@ -124,10 +124,10 @@ Every option is an override applied after `compose.yaml`, for example `docker co
 
 ## Documentation
 
-- [Visual selectors](docs/visual-selector.md), [story filters](docs/filtering.md), [dates](docs/dates.md), and [RSS/Atom output](docs/atom.md)
+- [Visual selectors](docs/visual-selector.md), [RSS and Atom feed sources](docs/feed-sources.md), [story filters](docs/filtering.md), [dates](docs/dates.md), and [RSS/Atom output, full articles and content cleanup](docs/atom.md)
 - [Reverse proxy](docs/reverse-proxy.md), [browser rendering](docs/browser.md), [FlareSolverr](docs/flaresolverr.md), and [Gluetun VPN](docs/gluetun.md)
 - [Recipe import/export](docs/recipe-portability.md) and [example recipes](docs/examples/) with a runnable demo site
-- [Backups, restores, and upgrades](docs/operations.md), and [deployment and configuration](docs/deployment.md)
+- [Monitoring, backups, restores, and upgrades](docs/operations.md), [PostgreSQL](docs/postgresql.md), and [deployment and configuration](docs/deployment.md)
 - [Development](CONTRIBUTING.md), [repository guide](AGENTS.md), [releases](docs/releases.md), and [changelog](CHANGELOG.md)
 
 ## Versioning
