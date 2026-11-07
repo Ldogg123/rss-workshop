@@ -364,6 +364,11 @@ func TestBatchBoundsFeedEventsButKeepsDatabaseEvents(t *testing.T) {
 	if b.events[256].Kind != DBUnavailable || !b.alert {
 		t.Fatalf("the database event was not kept, or the alert was lost: %+v alert=%v", b.events[256], b.alert)
 	}
+	// It arrived after the cap, and the message still lists it first.
+	m := (&Notifier{format: JSON}).compose(b.events, b.extra)
+	if len(m.events) != MaxLines || m.events[0].Kind != DBUnavailable || !strings.HasPrefix(m.text, "Database unavailable: ") || m.more != 256+1+7+1-MaxLines {
+		t.Fatalf("the message lists %d events, first %q, and counts %d more:\n%.200s", len(m.events), m.events[0].Kind, m.more, m.text)
+	}
 	// The scheduler sends a few server-wide events an hour, so a bound far
 	// above that still applies to them.
 	for range 100 {
