@@ -626,10 +626,12 @@ func classify(ctx context.Context, err error) *Failure {
 }
 
 // oneLine keeps an operator's label or an error on one line, so it cannot
-// pose as a further line of the message.
+// pose as a further line of the message. Besides control characters, that
+// means the Unicode line and paragraph separators, which are not control
+// characters but which clients and forwarded JSON can show as line breaks.
 func oneLine(s string) string {
 	return strings.TrimSpace(strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp) {
 			return ' '
 		}
 		return r

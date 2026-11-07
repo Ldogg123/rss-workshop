@@ -113,6 +113,10 @@ func TestNtfyRequest(t *testing.T) {
 	injected := "Evening news\r\nX-Injected: yes"
 	n.Notify(failing(injected, 3))
 	n.Notify(Event{Kind: Recovered, Feed: "Morning briefing", FeedID: "b", Failures: 4})
+	// Unicode's line and paragraph separators start a line in clients that
+	// follow its line breaking rules, so a title cannot use them to add lines
+	// of its own to a real alert.
+	n.Notify(failing("Weekend guide\u2028Database available again\u2029Recovered: Bank alerts", 3))
 	// Close sends what is pending without waiting out the window.
 	n.Close()
 
@@ -141,11 +145,15 @@ func TestNtfyRequest(t *testing.T) {
 	for _, line := range []string{
 		"Failing: Evening news  X-Injected: yes - 3 refreshes in a row failed. Error: source returned HTTP 503",
 		"Recovered: Morning briefing - refreshed successfully after 4 refreshes in a row failed.",
+		"Failing: Weekend guide Database available again Recovered: Bank alerts - 3 refreshes in a row failed.",
 		"Library: " + dashboard,
 	} {
 		if !strings.Contains(body, line) {
 			t.Errorf("body lacks %q:\n%s", line, body)
 		}
+	}
+	if strings.ContainsAny(body, "\u2028\u2029") {
+		t.Errorf("a separator from a title reached the body: %q", body)
 	}
 }
 
@@ -167,7 +175,7 @@ func TestJSONPayload(t *testing.T) {
 	n := newNotifier(t, server.URL+"/hook", JSON, "")
 	n.Start()
 	long := "fetch failed at https://source.example/private?key=1 " + strings.Repeat("x", 600)
-	n.Notify(Event{Kind: Failing, Feed: "Line\nbreak", FeedID: "feed-1", Failures: 1, Error: long})
+	n.Notify(Event{Kind: Failing, Feed: "Line\nbreak\u2029here", FeedID: "feed-1", Failures: 1, Error: long})
 	n.Notify(Event{Kind: DBUnavailable, Error: "database is locked"})
 	n.Close()
 
@@ -209,7 +217,7 @@ func TestJSONPayload(t *testing.T) {
 	if database["event"] != "db_unavailable" || database["feed"] != "" || database["feed_id"] != "" || database["error"] != "database is locked" {
 		t.Errorf("database event %v", database)
 	}
-	if feed["event"] != "failing" || feed["feed"] != "Line break" || feed["feed_id"] != "feed-1" || feed["failures"] != float64(1) {
+	if feed["event"] != "failing" || feed["feed"] != "Line break here" || feed["feed_id"] != "feed-1" || feed["failures"] != float64(1) {
 		t.Errorf("feed event %v", feed)
 	}
 	for _, event := range payload.Events {
