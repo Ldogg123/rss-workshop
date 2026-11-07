@@ -1,12 +1,12 @@
 # RSS and Atom feed sources
 
-A site that already publishes an RSS or Atom feed needs no selectors. A **feed source** reads that feed's entries as its stories, and everything after extraction works as it does for a web page: [story filters](filtering.md) and [library filters](filtering.md#library-filters), [full article content](atom.md#full-article-content), date settings, the feed's own User-Agent and Accept-Language, [diagnostics](operations.md#feed-diagnostics), and the private RSS and Atom links. Use one to drop sponsored or off-topic posts from a busy feed, to publish the whole article from a feed that carries only summaries, or to give a YouTube channel or a Mastodon account one private link with your own rules.
+A site that already publishes an RSS or Atom feed needs no selectors. A **feed source** reads that feed's entries as its stories, and everything after extraction works as it does for a web page: [story filters](filtering.md) and [library filters](filtering.md#library-filters), [full article content](atom.md#full-article-content), [content cleanup](#content-cleanup), date settings, the feed's own User-Agent and Accept-Language, [diagnostics](operations.md#feed-diagnostics), and the private RSS and Atom links. Use one to drop sponsored or off-topic posts from a busy feed, to publish the whole article from a feed that carries only summaries, or to give a YouTube channel or a Mastodon account one private link with your own rules.
 
 ## Set one up
 
 1. Choose **New feed**, then **Source → RSS or Atom feed**. The selectors, the visual selector, the fetch mode and the render settings disappear: the feed supplies every field.
 2. Enter the address of the feed itself as **Feed URL**, such as `https://example.com/feed.xml`, not the site's home page. Pages that only link to their feed are not followed.
-3. Add story filters, full article content or date settings if you need them.
+3. Add story filters, full article content, content cleanup or date settings if you need them.
 4. Choose **Preview items**, then save.
 
 A saved feed keeps its source: **Edit** shows it locked. A feed and a web page identify stories differently, so switching would publish every saved story a second time. To try the other source, **Duplicate** the feed and choose it in the copy.
@@ -19,13 +19,26 @@ RSS 0.9x and 2.0, RSS 1.0 (RDF) and Atom are read. JSON Feed is not.
 
 | Story field | Read from |
 | --- | --- |
-| Title | The entry's title, as text. An RSS title is read as markup only when it holds unescaped elements, or when it closes a tag and every tag is a common inline element such as `<b>` or `<em>`; otherwise a `<` in it is text, as in `std::vector<bool>`. An Atom title follows its `type`. An entry without one, as Mastodon and other microblog feeds publish, takes the first 100 characters of its description's text. |
+| Title | The entry's title, as text. An RSS title is read as markup only when it holds unescaped elements, or when it closes a tag and every tag is a common inline element such as `<b>` or `<em>`; otherwise a `<` in it is text, as in `std::vector<bool>`. An Atom title follows its `type`. An entry without one, as Mastodon and other microblog feeds publish, takes the first 100 characters of its description's text, read before [cleanup](#content-cleanup). |
 | Link | RSS `link`, else a `guid` that is a permalink web address. Atom's first `alternate` link, else an `id` that is a web address. Relative links resolve against `xml:base` and the feed's own address. |
-| Description | `content:encoded` or Atom `content`, else `description` or `summary`, else `media:description`. Markup is sanitized and made absolute as a web page's description is. A description over 256 KiB falls back to the summary, and so does one that shows nothing once sanitized, such as a post that is only a video embed or a tracking image. |
-| Image | The first image the entry declares: `media:thumbnail`, `media:content` that is an image, the same inside `media:group`, an image enclosure, or `itunes:image`. Otherwise the first image in the description that is not 0 or 1 pixel wide or high, as tracking images are. As for web pages, the image is shown at the top of the description unless the description already shows it. |
+| Description | `content:encoded` or Atom `content`, else `description` or `summary`, else `media:description`. Markup is sanitized and made absolute as a web page's description is. A description over 256 KiB falls back to the summary, and so does one that shows nothing once sanitized, such as a post that is only a video embed or a tracking image, or once [cleaned](#content-cleanup). |
+| Image | The first image the entry declares: `media:thumbnail`, `media:content` that is an image, the same inside `media:group`, an image enclosure, or `itunes:image`. Otherwise the first image left in the description after [cleanup](#content-cleanup) that is not 0 or 1 pixel wide or high, as tracking images are. As for web pages, the image is shown at the top of the description unless the description already shows it. |
 | Date | `pubDate`, `published` or `issued`, then `dc:date`, then `updated` or `modified`, with the recipe's Go date layout and time zone. See [publication dates](dates.md#feed-sources). |
 
 [Story filters](filtering.md) read the entry's own description, chosen as above: the full post when the entry carries one in `content:encoded` or Atom `content`, and the summary otherwise. As for a web page, they never read a fetched [full article](atom.md#full-article-content), so an exclude rule for a word that appears only on the article page keeps the story.
+
+## Content cleanup
+
+[Content cleanup](atom.md#content-cleanup) removes share links, signatures, "appeared first on" lines and similar clutter from a feed source's descriptions and fetched articles as it does for a web page. Its rules are CSS, such as `.share` or `p:containsOwn("appeared first on")`, like the article selector; a rule written as XPath is refused with a message that says so.
+
+Rules apply to each description in the order above before it is chosen, because a feed's full post and its summary are alternatives rather than one block:
+
+- A full post that the rules leave with nothing to show, no text and no image other than a 0- or 1-pixel one, gives way to the summary, as a post that is only a video embed does. A rule that removes a boilerplate full post therefore publishes the entry's summary.
+- Only when the rules empty every description that showed something is the description dropped, with the warning `cleanup removed the whole description`, as on a web page.
+- A feed source has no Image selector, so the image in its description is the first one the rules leave: a rule can keep an avatar or a banner from becoming the story's image. Images the entry declares, such as `media:thumbnail`, come first as always and are not affected.
+- The title of an untitled entry is read before cleanup, so rules never change a story's title or [identity](#story-identity), and never leave an entry to be skipped for want of a title.
+
+[Story filters](filtering.md) read the cleaned description, and [full article content](atom.md#full-article-content) is cleaned with the same rules. **Preview items** shows the result a refresh stores.
 
 ## Story identity
 

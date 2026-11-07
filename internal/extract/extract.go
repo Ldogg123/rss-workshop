@@ -201,6 +201,12 @@ func validateCleanup(r model.Recipe) error {
 		}
 		if articleType(r) == "css" {
 			if _, e := cascadia.Compile(rule); e != nil {
+				// A feed source has no selector type to switch, so a rule
+				// written as XPath is told which language it needs rather
+				// than where CSS parsing stopped.
+				if r.Type == FeedType && looksLikeXPath(rule) {
+					return fmt.Errorf("invalid CSS selector in cleanup rule %d: an RSS or Atom source's cleanup rules are CSS, such as .share, not XPath", n)
+				}
 				return fmt.Errorf("invalid CSS selector in cleanup rule %d: %w", n, e)
 			}
 			continue
@@ -216,6 +222,17 @@ func validateCleanup(r model.Recipe) error {
 		}
 	}
 	return nil
+}
+
+// looksLikeXPath reports whether a selector that is not valid CSS reads as
+// XPath: a path, a group or an attribute test, none of which CSS writes.
+func looksLikeXPath(s string) bool {
+	for _, start := range []string{"/", "./", "..", "("} {
+		if strings.HasPrefix(s, start) {
+			return true
+		}
+	}
+	return strings.Contains(s, "[@")
 }
 func URL(base *url.URL, raw string) string {
 	raw = strings.TrimSpace(raw)
@@ -725,9 +742,10 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		return nil
 	}
 	if r.Type == FeedType {
-		// Its descriptions go through content(), the only selectors it uses.
+		// Its descriptions go through content() and its cleanup rules, the
+		// only selectors it uses.
 		selector = "Description"
-		err = runFeed(body, base, r, loc, &out, add)
+		err = runFeed(body, base, r, loc, &out, add, &selector)
 		return out, err
 	}
 	doc, e := html.Parse(bytes.NewReader(body))

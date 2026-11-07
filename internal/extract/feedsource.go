@@ -486,9 +486,46 @@ func shows(node *html.Node, sanitized string) bool {
 	return false
 }
 
+// describe chooses an entry's description among its candidates, in order. A
+// full post can be too long to publish where its summary is not, and a post
+// that is only an embed, such as a video, sanitizes to nothing where its
+// summary has text. A later candidate replaces an earlier one only when it
+// fits where that did not, or shows something where that showed nothing. The
+// rank is 2 for one that fits and shows something, 1 for one that only fits,
+// 0 for one too long, and -1 when there is none. prepare, when not nil, is
+// given each candidate before it is sanitized and judged.
+func describe(candidates []string, base *url.URL, prepare func(*html.Node) *html.Node) (description *html.Node, markup string, kept int) {
+	kept = -1
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		node := feedBody(candidate)
+		if prepare != nil {
+			node = prepare(node)
+		}
+		sanitized := content(node, base)
+		rank := 0
+		if len(sanitized) <= MaxArticleBytes {
+			rank = 1
+			if shows(node, sanitized) {
+				rank = 2
+			}
+		}
+		if rank > kept {
+			description, markup, kept = node, sanitized, rank
+		}
+		if kept == 2 {
+			break
+		}
+	}
+	return description, markup, kept
+}
+
 // runFeed maps a feed's entries to items for add, which applies the limits
-// and filters a web page's cards get, so a preview and a refresh agree.
-func runFeed(body []byte, base *url.URL, r model.Recipe, loc *time.Location, out *model.Preview, add func(model.Item) error) error {
+// and filters a web page's cards get, so a preview and a refresh agree. While
+// a cleanup rule runs, label names it, as RunAt's recover reports it.
+func runFeed(body []byte, base *url.URL, r model.Recipe, loc *time.Location, out *model.Preview, add func(model.Item) error, label *string) error {
 	doc, err := readFeed(body, base)
 	if err != nil {
 		return err
@@ -512,36 +549,31 @@ func runFeed(body []byte, base *url.URL, r model.Recipe, loc *time.Location, out
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Entry %d skipped: its link is not an HTTP(S) URL", i+1))
 			continue
 		}
-		// A full post can be too long to publish where its summary is not, and
-		// a post that is only an embed, such as a video, sanitizes to nothing
-		// where its summary has text. A later candidate replaces an earlier one
-		// only when it fits where that did not, or shows something where that
-		// showed nothing.
-		var description *html.Node
-		kept := -1
-		for _, markup := range []string{f.content, f.summary, f.media} {
-			if strings.TrimSpace(markup) == "" {
-				continue
-			}
-			node := feedBody(markup)
-			sanitized := content(node, entryBase)
-			rank := 0
-			if len(sanitized) <= MaxArticleBytes {
-				rank = 1
-				if shows(node, sanitized) {
-					rank = 2
-				}
-			}
-			if rank > kept {
-				description, it.HTML, kept = node, sanitized, rank
-			}
-			if kept == 2 {
-				break
+		candidates := []string{f.content, f.summary, f.media}
+		description, text, kept := describe(candidates, entryBase, nil)
+		it.HTML = text
+		if len(r.Remove) > 0 {
+			// Cleanup rules apply to each candidate before it is judged, so
+			// one they leave with nothing to show gives way to the next, as
+			// an embed-only post does. The image below is looked for in what
+			// they leave.
+			var cleaned int
+			description, it.HTML, cleaned = describe(candidates, entryBase, func(n *html.Node) *html.Node { return clean(n, r, label) })
+			*label = "Description"
+			if kept == 2 && cleaned < 2 {
+				// As on a web page, a description the rules left with
+				// nothing to show is dropped, and the warning quotes none of
+				// the text they removed.
+				it.HTML = ""
+				out.Warnings = append(out.Warnings, fmt.Sprintf("Entry %d: cleanup removed the whole description; content omitted", i+1))
 			}
 		}
+		// An untitled entry is titled from its text as the feed has it, so
+		// cleanup rules never change a story's title or identity, nor leave
+		// an entry without a title to skip.
 		it.Title = f.title
 		if it.Title == "" {
-			it.Title = visibleText(it.HTML)
+			it.Title = visibleText(text)
 			if utf8.RuneCountInString(it.Title) > derivedTitleRunes {
 				it.Title = string([]rune(it.Title)[:derivedTitleRunes-1]) + "…"
 			}
