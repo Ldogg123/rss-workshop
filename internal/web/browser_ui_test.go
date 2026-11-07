@@ -94,6 +94,9 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		chromedp.Click("#new-feed"), chromedp.WaitVisible("#editor"),
 		chromedp.SendKeys(`#recipe-form input[name="title"]`, "UI fixture"), chromedp.SendKeys(`#recipe-form input[name="url"]`, "https://example.com/news"),
 		chromedp.SendKeys(`#recipe-form [name="items"]`, ".card"), chromedp.SendKeys(`#recipe-form [name="title_selector"]`, "h2"), chromedp.SendKeys(`#recipe-form [name="link_selector"]`, "a"),
+		// Collapsed under request settings. Previews and page loads send it,
+		// and the export and import below carry it with the recipe.
+		chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value=' UI-Fixture/1 (+mailto:ops@example.net) '`, nil),
 		chromedp.Click("#preview-button"), chromedp.WaitVisible("#preview .preview-item"),
 	)
 	if err != nil {
@@ -117,6 +120,10 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	var title string
 	if e = chromedp.Run(tab, chromedp.Value(`#recipe-form input[name="title"]`, &title)); e != nil || title != "UI fixture" {
 		t.Fatal("editing lost recipe", title, e)
+	}
+	var agent bool
+	if e = chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value==='UI-Fixture/1 (+mailto:ops@example.net)'&&document.querySelector('#user-agent-summary').textContent==='Custom User-Agent'`, &agent)); e != nil || !agent {
+		t.Fatal("saving and reopening lost the User-Agent", e)
 	}
 	if card == "article.card" {
 		assertFlareSolverrEditMode(t, tab)

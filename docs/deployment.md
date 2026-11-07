@@ -129,6 +129,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `POSTGRES_DATA_DIR` | `./postgres-data` | Compose host directory for the optional PostgreSQL server; precreate before startup |
 | `STATIC_WORKERS` | `16` | 1–64 shared refresh/preview slots |
 | `FETCH_TIMEOUT` | `30s` | 1s–2m static/local Chromium deadline |
+| `FETCH_USER_AGENT` | empty: `RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)` | User-Agent of static requests: list pages, article pages and the visual selector's static snapshot. At most 256 printable ASCII characters. A feed's own User-Agent replaces it for that feed. Chromium and FlareSolverr send their own. See [identifying requests](#identifying-requests) |
 | `CHROMIUM_PATH` | empty | Native browser executable; browser image sets `/usr/bin/chromium` |
 | `BROWSER_SLOTS` | `2` | 1–8 local browser jobs |
 | `FLARESOLVERR_URL` | empty | Trusted service base URL or `/v1` endpoint |
@@ -149,6 +150,24 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 Keep `.env` out of version control. Single-quote bcrypt hashes and literal secrets in `.env` so Compose preserves dollar signs. Percent-encode reserved characters in a connection URI's user name, password and query values, as [PostgreSQL setup](postgresql.md#existing-postgresql-server) shows. Recreate the container after environment changes; restarting the process invalidates login sessions.
 
 Leave `ALLOW_CIDRS` empty for public sources. Static fetching and the local Chromium proxy check destinations before dialing; environment HTTP proxies are ignored. FlareSolverr has a separate remote network boundary, and its private service endpoint does not require a source allowlist exception.
+
+### Identifying requests
+
+Static requests name the project, so a site's operator can see what is reading the page and where to find out more:
+
+```text
+User-Agent: RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)
+```
+
+It carries no version, so an upgrade alone never changes what sources see, and it does not reveal which release you run. Releases before 1.2 sent `GoRSS/0.1 (+self-hosted feed builder)`. If a source refuses the new name or treats it differently, set `FETCH_USER_AGENT` to the old value, or to a name of your own, and recreate the container:
+
+```dotenv
+FETCH_USER_AGENT=GoRSS/0.1 (+self-hosted feed builder)
+```
+
+Surrounding spaces are trimmed. Startup stops if the value is longer than 256 characters or contains anything but printable ASCII, such as a line break, and the startup log reports `custom_user_agent=true` when one is in effect. The setting applies to list pages, article pages and the visual selector's static snapshot, and changes only that header: destination checks and conditional requests work as before. Pages that local Chromium renders, including Auto's render and rendered articles, send Chromium's own User-Agent, and [FlareSolverr](flaresolverr.md) sends that of its browser; this setting changes neither. After a change, a source that varies its pages by User-Agent may answer the next conditional request with the full page instead of 304; feeds change only if the stories did.
+
+A feed can also send a User-Agent of its own: set **User-Agent** under **Request settings** in its editor. It follows the same rules and replaces `FETCH_USER_AGENT` and the built-in name for that feed's static requests only: its list page in Static HTTP mode and in Auto before any render, its article pages fetched as plain HTML, its previews, and the visual selector's Static HTML page. Each static request therefore sends the feed's own User-Agent if it has one, else `FETCH_USER_AGENT` if that is set, else the built-in name above. Pages that Chromium renders or FlareSolverr loads keep their browser's User-Agent here too. The editor leaves the field blank for a feed without one, and never shows the server's value. The setting is part of the recipe, so recipe exports carry it. Saving a different value is a recipe edit: it drops the source's conditional-request validators and any refresh in progress, and publishes nothing new by itself. Releases before 1.2 ignore it, send their own User-Agent for that feed, and remove it from any feed they save, pause or resume; they also refuse a recipe file in which any feed has one.
 
 ## Run a prebuilt executable
 
@@ -184,6 +203,8 @@ install -d -m 700 "$DATA_DIR"
 ```
 
 Open [localhost:8080](http://localhost:8080). SQLite is stored at `$DATA_DIR/rss.db`; keeping it outside the extracted archive preserves the library when replacing the executable. Use another port and data directory if an instance is already running. For an unattended deployment, supply these variables through your service manager and keep the same absolute data path across restarts. For LAN access, set `LISTEN_ADDR` to an appropriate listening address and `PUBLIC_BASE_URL` to the origin readers and your browser will use.
+
+Export any other setting from the [environment table](#environment-variables) the same way. Quote values with spaces for the shell, for example `export FETCH_USER_AGENT='GoRSS/0.1 (+self-hosted feed builder)'` to [restore the earlier User-Agent](#identifying-requests).
 
 Static fetching and visual selection work without Chromium. To render JavaScript pages, install Chromium separately and export `CHROMIUM_PATH` with its executable's absolute path before starting the app, for example `export CHROMIUM_PATH=/usr/bin/chromium`. The host must support Chromium's sandbox; run as non-root and follow [browser rendering](browser.md). [External FlareSolverr](flaresolverr.md) also works without local Chromium. To use an existing PostgreSQL server, set `DATABASE_URL` as described in [PostgreSQL setup](postgresql.md); changing the database does not migrate existing data.
 

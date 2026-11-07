@@ -52,7 +52,7 @@
    const f=readForm();snapshotMode=$('#selector-mode').value;snapshotFeedMode=f.recipe.mode==='auto'&&!modeChanged?'auto':snapshotMode;
    pageModeHelp();
    if(snapshotMode==='flaresolverr'&&!flaresolverrAvailable)throw new Error('FlareSolverr is not configured on this server. Choose another page version, or set FLARESOLVERR_URL as docs/flaresolverr.md describes.');
-   const data=await api('/selector/snapshot','POST',{url:f.url,recipe:{mode:snapshotMode,wait_selector:f.recipe.wait_selector,settle_ms:f.recipe.settle_ms}},abort.signal);
+   const data=await api('/selector/snapshot','POST',{url:f.url,recipe:{mode:snapshotMode,wait_selector:f.recipe.wait_selector,settle_ms:f.recipe.settle_ms,user_agent:f.recipe.user_agent}},abort.signal);
    if(current!==revision||!dialog.open)return;
    snapshot=data.nodes;$('#selector-source').textContent=data.url||f.url;token=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
    fromForm();

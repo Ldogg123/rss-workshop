@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 	"rss-workshop/internal/diagnostics"
+	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/filter"
 	"rss-workshop/internal/model"
 )
@@ -52,6 +53,13 @@ func ValidateRender(r model.Recipe) error {
 		if _, e := cascadia.Compile(r.WaitSelector); e != nil {
 			return fmt.Errorf("invalid CSS readiness selector: %w", e)
 		}
+	}
+	// The value goes into a request header exactly as given, so one with
+	// space around it is refused here rather than trimmed. The handlers trim
+	// what they accept first; a check that trimmed would pass a value that
+	// Fetch then refuses or the request carries altered.
+	if err := fetch.ValidateUserAgent(r.UserAgent); err != nil {
+		return err
 	}
 
 	return nil

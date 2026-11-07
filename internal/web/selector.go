@@ -159,6 +159,7 @@ func (a *App) selectorSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "source URL is too long", 400)
 		return
 	}
+	trimRecipe(&in.Recipe)
 	result, err := a.Scheduler.Snapshot(r.Context(), in.URL, in.Recipe)
 	if err != nil {
 		status := 422

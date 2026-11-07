@@ -30,7 +30,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 import backup  # noqa: E402
 fixture = (ROOT / 'testdata/cards.html').read_bytes()
-state = {'body': fixture, 'requests': 0}
+state = {'body': fixture, 'requests': 0, 'agents': set()}
+# FETCH_USER_AGENT as the docs suggest for restoring the old User-Agent, so the
+# fixture can tell a configured static request from the built-in default.
+USER_AGENT = 'GoRSS/0.1 (+self-hosted feed builder)'
 ATOM_NS = '{http://www.w3.org/2005/Atom}'
 
 
@@ -62,6 +65,7 @@ def atom_items(body):
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         state['requests'] += 1
+        state['agents'].add(self.headers.get('User-Agent', ''))
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
@@ -96,7 +100,8 @@ def smoke_environment(tmp, password, base, port, postgres_mode, compose_mode):
                 RSS_DATA_DIR=str(pathlib.Path(tmp) / 'data'),
                 POSTGRES_DATA_DIR=str(pathlib.Path(tmp) / 'postgres-data'),
                 DATABASE_URL=database_url, PUBLIC_BASE_URL=base, LISTEN_ADDR=f'127.0.0.1:{port}',
-                ALLOW_CIDRS='127.0.0.1/32', STATIC_WORKERS='2', FETCH_TIMEOUT='5s')
+                ALLOW_CIDRS='127.0.0.1/32', STATIC_WORKERS='2', FETCH_TIMEOUT='5s',
+                FETCH_USER_AGENT=USER_AGENT)
 
 
 def main():
@@ -151,7 +156,7 @@ def main():
             image = os.environ.get('RSS_SMOKE_IMAGE', 'rss-workshop:browser-check' if browser_mode else 'rss-workshop:static-check')
             override.write_text('services:\n  rss-workshop:\n    image: ' + image + '\n    pull_policy: never\n    ports: !override\n      - "127.0.0.1:' + str(port) + ':8080"\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n')
             env_file = pathlib.Path(tmp) / 'compose.env'
-            env_keys = ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_HASH', 'PUBLIC_BASE_URL', 'ALLOW_CIDRS', 'STATIC_WORKERS', 'FETCH_TIMEOUT', 'DATABASE_URL', 'RSS_DATA_DIR', 'POSTGRES_DATA_DIR']
+            env_keys = ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_HASH', 'PUBLIC_BASE_URL', 'ALLOW_CIDRS', 'STATIC_WORKERS', 'FETCH_TIMEOUT', 'FETCH_USER_AGENT', 'DATABASE_URL', 'RSS_DATA_DIR', 'POSTGRES_DATA_DIR']
             if postgres_mode:
                 env['POSTGRES_PASSWORD'] = secrets.token_hex(24)
                 env['DATABASE_URL'] = 'postgres://rss_workshop:' + env['POSTGRES_PASSWORD'] + '@postgres:5432/rss_workshop?sslmode=disable'
@@ -290,6 +295,11 @@ def main():
                                      'content': {'selector': '.summary'}}}
                 code, preview, _ = request('/api/preview', 'POST', recipe)
                 assert code == 200 and len(json.loads(preview)['items']) == 2
+                # Static requests carry FETCH_USER_AGENT, which proves Compose
+                # passes it through. Auto's render is Chromium's own request,
+                # which keeps Chromium's User-Agent.
+                assert USER_AGENT in state['agents'], 'Static fetch ignored FETCH_USER_AGENT: %r' % state['agents']
+                assert len(state['agents']) == (2 if browser_mode else 1), state['agents']
                 code, saved, _ = request('/api/feeds', 'POST', recipe)
                 assert code == 200, saved
                 feed_id = json.loads(saved)['id']
@@ -430,7 +440,7 @@ def main():
                     assert database_snapshot('rss_workshop') == before_restore, 'Restored app wrote to the original database'
                 variant = (('browser Compose' if browser_mode else 'static Compose') if compose else 'native')
                 backend = 'PostgreSQL' if postgres_mode else 'SQLite'
-                print('PASS: ' + variant + ' ' + backend + ' startup, healthcheck, assets, login, preview, save, refresh, independent RSS/Atom parsing, stable IDs, ETags, read isolation, empty retention, restart persistence, recipe export/preview/import, paused copies and fresh tokens.' + (' Database outage/reconnect and pg_dump/restore passed.' if postgres_mode and compose else ''))
+                print('PASS: ' + variant + ' ' + backend + ' startup, healthcheck, assets, login, preview, save, refresh, independent RSS/Atom parsing, stable IDs, ETags, configured User-Agent, read isolation, empty retention, restart persistence, recipe export/preview/import, paused copies and fresh tokens.' + (' Database outage/reconnect and pg_dump/restore passed.' if postgres_mode and compose else ''))
             except Exception:
                 if compose:
                     subprocess.run(compose + ['logs', '--tail', '20', 'rss-workshop'] + (['postgres'] if postgres_mode else []), env=env)

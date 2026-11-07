@@ -277,6 +277,14 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, 200, map[string]any{"feeds": fs, "active": active, "capacity": limit, "due": due, "browser": a.browserStats(), "flaresolverr": map[string]int{"active": solverActive, "capacity": solverLimit}})
 }
+
+// trimRecipe removes the space around a submitted User-Agent, as
+// FETCH_USER_AGENT's is, so the trimmed value is what validate checks, what a
+// preview sends and what is stored. Every handler that accepts a recipe calls
+// it before validating, which refuses a value with space around it.
+func trimRecipe(r *model.Recipe) {
+	r.UserAgent, _ = fetch.CheckUserAgent(r.UserAgent)
+}
 func validate(f model.Feed) error {
 	if strings.TrimSpace(f.Title) == "" || len(f.Title) > 200 {
 		return errors.New("feed title is required (maximum 200 characters)")
@@ -321,6 +329,7 @@ func (a *App) save(w http.ResponseWriter, r *http.Request) {
 	}
 	f := in.Feed
 	f.ID = r.PathValue("id")
+	trimRecipe(&f.Recipe)
 	if e := validate(f); e != nil {
 		failure(w, 400, e)
 		return
@@ -405,6 +414,7 @@ func (a *App) preview(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, e)
 		return
 	}
+	trimRecipe(&f.Recipe)
 	if e := validate(f); e != nil {
 		failure(w, 400, e)
 		return

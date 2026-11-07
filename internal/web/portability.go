@@ -55,8 +55,9 @@ func readRecipes(w http.ResponseWriter, r *http.Request) (recipeDocument, error)
 	if len(doc.Feeds) == 0 || len(doc.Feeds) > maxRecipes {
 		return doc, fmt.Errorf("recipe file must contain 1–%d feeds", maxRecipes)
 	}
-	for i, f := range doc.Feeds {
-		if err := validate(f.model()); err != nil {
+	for i := range doc.Feeds {
+		trimRecipe(&doc.Feeds[i].Recipe)
+		if err := validate(doc.Feeds[i].model()); err != nil {
 			return doc, fmt.Errorf("feed %d: %w", i+1, err)
 		}
 	}

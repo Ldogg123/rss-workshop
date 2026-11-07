@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,57 @@ import (
 )
 
 const MaxBody = 4 << 20
+
+// DefaultUserAgent names the project to sources. It carries no version, so an
+// upgrade alone never changes what a source sees, and an instance does not
+// advertise which release it runs. Chromium and FlareSolverr send their own.
+const DefaultUserAgent = "RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)"
+
+// MaxUserAgent is the longest User-Agent CheckUserAgent accepts, in bytes.
+const MaxUserAgent = 256
+
+// CheckUserAgent trims surrounding white space from a User-Agent and reports
+// whether the rest can be sent: at most MaxUserAgent bytes of printable ASCII.
+// A line break would let the value add headers of its own, and Go refuses one
+// at request time, failing every fetch that carries it; other control and
+// non-ASCII characters are refused too, so a value that passes here is sent
+// exactly as written. FETCH_USER_AGENT and a recipe's own User-Agent both go
+// through this. The trimmed value is returned whether or not it passes.
+func CheckUserAgent(raw string) (string, bool) {
+	ua := strings.TrimSpace(raw)
+	return ua, len(ua) <= MaxUserAgent && !strings.ContainsFunc(ua, func(r rune) bool { return r < ' ' || r > '~' })
+}
+
+// ValidateUserAgent accepts a User-Agent that can be sent exactly as given:
+// one CheckUserAgent accepts and leaves unchanged, so blank too. It does not
+// trim; a caller that wants trimming runs CheckUserAgent first and validates
+// what it returns. A recipe's value is checked with this when it is saved,
+// previewed or loaded by the visual selector, and again by Fetch before
+// anything is sent. The errors do not repeat the value.
+func ValidateUserAgent(ua string) error {
+	checked, ok := CheckUserAgent(ua)
+	if !ok {
+		return fmt.Errorf("User-Agent must be at most %d printable ASCII characters", MaxUserAgent)
+	}
+	if checked != ua {
+		return errors.New("User-Agent must not begin or end with white space")
+	}
+	return nil
+}
+
+type userAgentKey struct{}
+
+// WithUserAgent returns a context whose static requests send ua instead of the
+// client's own User-Agent. A feed's refresh, preview and snapshot carry its
+// recipe's value this way, so the Fetcher interface stays as it is and every
+// static request made for the feed, article pages included, sends it. Blank
+// leaves the client's. Fetch refuses a value ValidateUserAgent refuses.
+func WithUserAgent(ctx context.Context, ua string) context.Context {
+	if ua == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, userAgentKey{}, ua)
+}
 
 type Result struct {
 	// Body is UTF-8 when the page declares an encoding Fetch can decode; see
@@ -35,10 +87,14 @@ type Fetcher interface {
 	Fetch(context.Context, string, string, string) (Result, error)
 }
 type Client struct {
-	client  *http.Client
-	allow   []netip.Prefix
-	mu      sync.Mutex
-	origins map[string]*origin
+	// UserAgent replaces DefaultUserAgent when it is not blank, and a
+	// context from WithUserAgent replaces both. Set it before the client is
+	// shared; config.Load has already validated it.
+	UserAgent string
+	client    *http.Client
+	allow     []netip.Prefix
+	mu        sync.Mutex
+	origins   map[string]*origin
 }
 type origin struct {
 	sem   chan struct{}
@@ -168,6 +224,21 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	if e := ValidateURL(raw); e != nil {
 		return out, e
 	}
+	// A feed's own User-Agent, else the operator's FETCH_USER_AGENT, else
+	// the project's name. A feed's value was checked when its recipe was
+	// accepted; one that arrives here without that check is refused before
+	// anything is sent, rather than sent altered or failed by the transport
+	// behind the generic connection error below.
+	ua, _ := ctx.Value(userAgentKey{}).(string)
+	if e := ValidateUserAgent(ua); e != nil {
+		return out, e
+	}
+	if ua == "" {
+		ua = c.UserAgent
+	}
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
 	u, _ := url.Parse(raw)
 	release, e := c.acquire(ctx, strings.ToLower(u.Host))
 	if e != nil {
@@ -178,7 +249,7 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	if e != nil {
 		return out, fmt.Errorf("invalid source URL")
 	}
-	req.Header.Set("User-Agent", "GoRSS/0.1 (+self-hosted feed builder)")
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "text/html, application/xhtml+xml")
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
