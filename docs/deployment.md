@@ -215,7 +215,7 @@ Export any other setting from the [environment table](#environment-variables) th
 
 Static fetching and visual selection work without Chromium. To render JavaScript pages, install Chromium separately and export `CHROMIUM_PATH` with its executable's absolute path before starting the app, for example `export CHROMIUM_PATH=/usr/bin/chromium`. The host must support Chromium's sandbox; run as non-root and follow [browser rendering](browser.md). [External FlareSolverr](flaresolverr.md) also works without local Chromium. To use an existing PostgreSQL server, set `DATABASE_URL` as described in [PostgreSQL setup](postgresql.md); changing the database does not migrate existing data.
 
-For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Direct upgrades from every released database schema are supported; see [upgrade compatibility](operations.md#upgrades). Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
+For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Direct upgrades from every released database schema are supported; see [upgrade compatibility](operations.md#upgrades). Going back after a schema upgrade means restoring a backup as the user that runs the app; see [downgrades](operations.md#downgrades). Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
 
 ## Run from source
 
