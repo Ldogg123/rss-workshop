@@ -31,15 +31,30 @@ const (
 	previewArticles = 3
 )
 
+// articleRun is what one round of article fetching did.
+type articleRun struct {
+	warnings []string
+	// fetched holds the keys of the stories this round gave a body.
+	fetched []string
+	// left holds the keys of listed stories without a stored body that this
+	// round did not queue, because of MaxArticlesPerRun or the deadline. A
+	// story handed to a worker after the deadline was not queued in time.
+	left []string
+	// listed holds the keys of the listed stories with a link, and had how
+	// many of them known showed with a body before this round.
+	listed []string
+	had    int
+}
+
 // fetchArticles fills in item bodies from each item's own page.
 //
 // known says, per item key, whether an article body is already stored and when
 // the item was first seen; a refresh passes the saved state so an article is
 // fetched once and then left alone, and a preview passes nil. Items are never dropped or reordered: an item whose
 // article cannot be fetched keeps the list-page teaser it already has.
-func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []model.Item, known map[string]store.ArticleState, preview bool) []string {
+func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []model.Item, known map[string]store.ArticleState, preview bool) (run articleRun) {
 	if f.Recipe.Full == nil || f.Recipe.Full.Selector == "" {
-		return nil
+		return run
 	}
 	limit := MaxArticlesPerRun
 	if preview {
@@ -55,6 +70,10 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 			continue
 		}
 		prior, ok := known[items[i].Key]
+		run.listed = append(run.listed, items[i].Key)
+		if prior.HasBody {
+			run.had++
+		}
 		switch {
 		case preview, !ok, !prior.HasBody:
 			missing = append(missing, i)
@@ -68,7 +87,7 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 		targets = targets[:limit]
 	}
 	if len(targets) == 0 {
-		return nil
+		return run
 	}
 
 	workers := articleWorkers
@@ -79,7 +98,6 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 		workers = 1
 	}
 	var mu sync.Mutex
-	warnings := []string{}
 	queue := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -91,14 +109,18 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 				mu.Lock()
 				if err != nil {
 					// The item keeps its list-page content; the operator sees why.
-					warnings = append(warnings, fmt.Sprintf("Article %q: %s", items[i].Title, err))
+					run.warnings = append(run.warnings, fmt.Sprintf("Article %q: %s", items[i].Title, err))
 				} else {
 					items[i].FullHTML = body
+					if body != "" {
+						run.fetched = append(run.fetched, items[i].Key)
+					}
 				}
 				mu.Unlock()
 			}
 		}()
 	}
+	queued := 0
 	for _, i := range targets {
 		// A cancelled or timed-out refresh stops queueing rather than racing the
 		// deadline. Whatever was not fetched stays empty and is retried later.
@@ -106,10 +128,21 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 			break
 		}
 		queue <- i
+		// The send waits for a free worker and can outlast the deadline. A
+		// story handed over after it is never fetched, so it counts as left.
+		if ctx.Err() != nil {
+			break
+		}
+		queued++
 	}
 	close(queue)
 	wg.Wait()
-	return warnings
+	// Stories without a body lead the queue, so those it did not reach are
+	// the backlog a later refresh has to fetch.
+	for _, i := range missing[min(queued, len(missing)):] {
+		run.left = append(run.left, items[i].Key)
+	}
+	return run
 }
 
 // articlesUseSolver reports whether a feed fetches its article pages through

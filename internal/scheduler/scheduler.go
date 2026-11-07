@@ -66,6 +66,10 @@ type Scheduler struct {
 	// keeps that backoff in memory, where a failing database cannot erase it.
 	// Retry lifts a hold early without forgetting its failures.
 	held map[string]hold
+	// backlog records, per full-content feed, whether its last stored refresh
+	// left stories without an article body that the next one should fetch.
+	// See draining.
+	backlog map[string]bool
 	// finished records when each refresh ended, until the next tick. A list
 	// read before then can still show the feed due, because its new schedule
 	// was saved after the read, and would start it again straight away.
@@ -260,7 +264,7 @@ func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, e
 		// A preview fetches a sample rather than every article: it runs while an
 		// operator waits, and it must not become a way to fan out hundreds of
 		// requests from the editor.
-		if w := s.fetchArticles(ctx, f, p.Items, nil, true); len(w) > 0 {
+		if w := s.fetchArticles(ctx, f, p.Items, nil, true).warnings; len(w) > 0 {
 			p.Warnings = append(p.Warnings, w...)
 		}
 	}
@@ -350,6 +354,7 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 		}
 	}
 	s.forgetHolds(fs)
+	s.forgetBacklog(fs)
 	s.alerts.forget(fs)
 	s.forgetFinished(listed)
 	for _, f := range fs {
@@ -396,6 +401,7 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 		s.doneWithSolver(f.ID)
 	}
 	items := p.Items
+	var articles articleRun
 	if e == nil && f.Recipe.Full != nil {
 		// Which articles were already retrieved, without loading the stories
 		// themselves: the decision needs three facts per item, and reading whole
@@ -407,7 +413,8 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 			slog.Warn("article skip list unavailable; articles may be refetched",
 				"feed", f.Title, "feed_id", f.ID, "error", err)
 		}
-		if w := s.fetchArticles(ctx, f, items, known, false); len(w) > 0 && p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
+		articles = s.fetchArticles(ctx, f, items, known, false)
+		if w := articles.warnings; len(w) > 0 && p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
 			last := &p.Diagnostics.Attempts[len(p.Diagnostics.Attempts)-1]
 			// Appended after extract() sanitized the trace, which is safe
 			// because store.encodeDiagnostics sanitizes again on write: stored
@@ -478,6 +485,9 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 		return
 	}
 	s.released(f.ID)
+	if e == nil {
+		s.recordBacklog(saveCtx, f, articles)
+	}
 	s.alertRefresh(f, e)
 	// A failure is the line an operator actually needs, so it carries the reason
 	// and rises above the routine ones. Titles are the operator's own labels;
@@ -535,7 +545,8 @@ func (s *Scheduler) extract(ctx context.Context, f model.Feed, preview bool) (r 
 	}
 	if f.Recipe.Mode != "browser" {
 		etag, modified := f.ETag, f.LastModified
-		if preview {
+		// A 304 would leave a draining article backlog unfetched.
+		if preview || s.draining(f) {
 			etag = ""
 			modified = ""
 		}
