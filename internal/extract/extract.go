@@ -54,11 +54,14 @@ func ValidateRender(r model.Recipe) error {
 			return fmt.Errorf("invalid CSS readiness selector: %w", e)
 		}
 	}
-	// The value goes into a request header exactly as given, so one with
+	// The values go into request headers exactly as given, so one with
 	// space around it is refused here rather than trimmed. The handlers trim
 	// what they accept first; a check that trimmed would pass a value that
 	// Fetch then refuses or the request carries altered.
 	if err := fetch.ValidateUserAgent(r.UserAgent); err != nil {
+		return err
+	}
+	if err := fetch.ValidateAcceptLanguage(r.AcceptLanguage); err != nil {
 		return err
 	}
 

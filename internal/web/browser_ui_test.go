@@ -98,10 +98,13 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		chromedp.Click("#new-feed"), chromedp.WaitVisible("#editor"),
 		chromedp.SendKeys(`#recipe-form input[name="title"]`, "UI fixture"), chromedp.SendKeys(`#recipe-form input[name="url"]`, "https://example.com/news"),
 		chromedp.SendKeys(`#recipe-form [name="items"]`, ".card"), chromedp.SendKeys(`#recipe-form [name="title_selector"]`, "h2"), chromedp.SendKeys(`#recipe-form [name="link_selector"]`, "a"),
-		// Collapsed under request settings. Previews and page loads send it,
-		// and the export and import below carry it with the recipe.
+		// Collapsed under request settings. Previews and page loads send
+		// them, and the export and import below carry them with the recipe.
 		chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value=' UI-Fixture/1 (+mailto:ops@example.net) '`, nil),
+		chromedp.Evaluate(`document.querySelector('#recipe-form [name="accept_language"]').value=' de-CH, de;q=0.9 '`, nil),
 		chromedp.Click("#preview-button"), chromedp.WaitVisible("#preview .preview-item"),
+		// The visual selector's page load is recorded as it is sent.
+		chromedp.Evaluate(`window.snapshotRequests=[];{const send=window.fetch;window.fetch=(url,init)=>{if(String(url).endsWith('/selector/snapshot'))snapshotRequests.push(JSON.parse(init.body).recipe);return send.call(window,url,init)}};void 0`, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +117,10 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testPreviewDiagnostics(t, tab)
 	}
 	testVisualSelector(t, tab, card, f)
+	var sent bool
+	if e = chromedp.Run(tab, chromedp.Evaluate(`snapshotRequests.length>0&&snapshotRequests[0].user_agent==='UI-Fixture/1 (+mailto:ops@example.net)'&&snapshotRequests[0].accept_language==='de-CH, de;q=0.9'`, &sent)); e != nil || !sent {
+		t.Fatal("the visual selector's page load did not send the request settings", e)
+	}
 	if card == "article.card" {
 		testEstimatedDatePreview(t, tab)
 		testFlareSolverrSelector(t, tab, f, solver)
@@ -126,9 +133,9 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	if e = chromedp.Run(tab, chromedp.Value(`#recipe-form input[name="title"]`, &title)); e != nil || title != "UI fixture" {
 		t.Fatal("editing lost recipe", title, e)
 	}
-	var agent bool
-	if e = chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value==='UI-Fixture/1 (+mailto:ops@example.net)'&&document.querySelector('#user-agent-summary').textContent==='Custom User-Agent'`, &agent)); e != nil || !agent {
-		t.Fatal("saving and reopening lost the User-Agent", e)
+	var headers bool
+	if e = chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#recipe-form [name="user_agent"]').value==='UI-Fixture/1 (+mailto:ops@example.net)'&&document.querySelector('#recipe-form [name="accept_language"]').value==='de-CH, de;q=0.9'&&document.querySelector('#request-summary').textContent==='Custom User-Agent, custom Accept-Language'`, &headers)); e != nil || !headers {
+		t.Fatal("saving and reopening lost the request settings", e)
 	}
 	if card == "article.card" {
 		assertFlareSolverrEditMode(t, tab)

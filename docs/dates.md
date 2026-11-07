@@ -41,7 +41,7 @@ English dates with a month name are recognized in element text and explicitly se
 
 Months may be full names, three-letter abbreviations with or without a dot, or `Sept`; letter case does not matter. A weekday is optional but must match the date. A time may follow the date after a space, a comma or `at`, as `15:04`, `15:04:05`, `3:04 pm` or `3:04 p.m.`, and may end with a zone name or a numeric offset. A date without a time is local midnight in the recipe’s time zone, as `2026-11-05` is.
 
-The whole value must be the date. `Posted on 5 November 2026` and `Nov 5, 2026 by Staff` are not recognized: narrow the selector or set a Go date layout. A year is required and must have four digits, so `Nov 5` and `Nov 5, 26` are not recognized. Other languages are not recognized either.
+The whole value must be the date. `Posted on 5 November 2026` and `Nov 5, 2026 by Staff` are not recognized: narrow the selector or set a Go date layout. A year is required and must have four digits, so `Nov 5` and `Nov 5, 26` are not recognized. Other languages are not recognized either; a site that also offers English may send English dates when the feed's [Accept-Language](browser.md#recipe-settings) asks for `en`.
 
 ## Relative phrases
 

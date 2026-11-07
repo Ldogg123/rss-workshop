@@ -54,18 +54,106 @@ func ValidateUserAgent(ua string) error {
 	return nil
 }
 
-type userAgentKey struct{}
+// MaxAcceptLanguage is the longest Accept-Language ValidateAcceptLanguage
+// accepts, in bytes, and MaxLanguageRanges the most language ranges it lists.
+const (
+	MaxAcceptLanguage = 128
+	MaxLanguageRanges = 10
+)
 
-// WithUserAgent returns a context whose static requests send ua instead of the
-// client's own User-Agent. A feed's refresh, preview and snapshot carry its
-// recipe's value this way, so the Fetcher interface stays as it is and every
-// static request made for the feed, article pages included, sends it. Blank
-// leaves the client's. Fetch refuses a value ValidateUserAgent refuses.
-func WithUserAgent(ctx context.Context, ua string) context.Context {
-	if ua == "" {
+// ValidateAcceptLanguage accepts an Accept-Language that can be sent exactly
+// as given: blank, or at most MaxLanguageRanges comma-separated language
+// ranges in at most MaxAcceptLanguage bytes. A range is * or a language tag
+// such as en or de-CH, letters then hyphen-separated letters or digits of at
+// most 8 each, and may carry a weight from 0 to 1 with at most three decimals,
+// such as ;q=0.8. Spaces may surround the commas and semicolons, not the
+// value: like ValidateUserAgent it does not trim, and the handlers trim what
+// they accept first. A recipe's value is checked with this when it is saved,
+// previewed or loaded by the visual selector, and again by Fetch before
+// anything is sent. The errors do not repeat the value.
+func ValidateAcceptLanguage(v string) error {
+	if v == "" {
+		return nil
+	}
+	if strings.TrimSpace(v) != v {
+		return errors.New("Accept-Language must not begin or end with white space")
+	}
+	if len(v) > MaxAcceptLanguage {
+		return fmt.Errorf("Accept-Language must be at most %d characters", MaxAcceptLanguage)
+	}
+	ranges := strings.Split(v, ",")
+	if len(ranges) > MaxLanguageRanges {
+		return fmt.Errorf("Accept-Language must list at most %d languages", MaxLanguageRanges)
+	}
+	for i, r := range ranges {
+		if !languageRange(strings.Trim(r, " ")) {
+			return fmt.Errorf("Accept-Language entry %d must be a language tag such as en or de-CH, or *, with an optional weight such as ;q=0.8", i+1)
+		}
+	}
+	return nil
+}
+
+// languageRange reports whether s is one entry of an Accept-Language list:
+// RFC 4647's basic language range with RFC 9110's optional weight.
+func languageRange(s string) bool {
+	tag, weight, weighted := strings.Cut(s, ";")
+	if weighted && !qvalue(strings.TrimLeft(weight, " ")) {
+		return false
+	}
+	if tag = strings.TrimRight(tag, " "); tag == "*" {
+		return true
+	}
+	for i, sub := range strings.Split(tag, "-") {
+		if len(sub) < 1 || len(sub) > 8 {
+			return false
+		}
+		for _, c := range []byte(sub) {
+			letter := 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+			if !letter && (i == 0 || c < '0' || c > '9') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// qvalue reports whether s is a weight: q= then 0 to 1 with at most three
+// decimals.
+func qvalue(s string) bool {
+	if len(s) < 3 || s[0] != 'q' && s[0] != 'Q' || s[1] != '=' {
+		return false
+	}
+	whole, decimals, _ := strings.Cut(s[2:], ".")
+	if whole != "0" && whole != "1" || len(decimals) > 3 {
+		return false
+	}
+	for _, c := range []byte(decimals) {
+		if c < '0' || c > '9' || whole == "1" && c != '0' {
+			return false
+		}
+	}
+	return true
+}
+
+// Headers are the request headers a feed sets for itself. A blank field
+// leaves the client's own: its User-Agent, and no Accept-Language at all.
+type Headers struct {
+	UserAgent      string
+	AcceptLanguage string
+}
+
+type headersKey struct{}
+
+// WithHeaders returns a context whose static requests send h. A feed's
+// refresh, preview and snapshot carry its recipe's headers this way, so the
+// Fetcher interface stays as it is and every static request made for the
+// feed, article pages included, sends them. Fetch refuses a value that
+// ValidateUserAgent or ValidateAcceptLanguage refuses.
+func WithHeaders(ctx context.Context, h Headers) context.Context {
+	if h == (Headers{}) {
 		return ctx
 	}
-	return context.WithValue(ctx, userAgentKey{}, ua)
+	return context.WithValue(ctx, headersKey{}, h)
 }
 
 type Result struct {
@@ -88,7 +176,7 @@ type Fetcher interface {
 }
 type Client struct {
 	// UserAgent replaces DefaultUserAgent when it is not blank, and a
-	// context from WithUserAgent replaces both. Set it before the client is
+	// context's Headers replace both. Set it before the client is
 	// shared; config.Load has already validated it.
 	UserAgent string
 	client    *http.Client
@@ -225,14 +313,19 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 		return out, e
 	}
 	// A feed's own User-Agent, else the operator's FETCH_USER_AGENT, else
-	// the project's name. A feed's value was checked when its recipe was
-	// accepted; one that arrives here without that check is refused before
-	// anything is sent, rather than sent altered or failed by the transport
-	// behind the generic connection error below.
-	ua, _ := ctx.Value(userAgentKey{}).(string)
-	if e := ValidateUserAgent(ua); e != nil {
+	// the project's name, and its Accept-Language only when it has one. A
+	// feed's values were checked when its recipe was accepted; one that
+	// arrives here without that check is refused before anything is sent,
+	// rather than sent altered or failed by the transport behind the generic
+	// connection error below.
+	h, _ := ctx.Value(headersKey{}).(Headers)
+	if e := ValidateUserAgent(h.UserAgent); e != nil {
 		return out, e
 	}
+	if e := ValidateAcceptLanguage(h.AcceptLanguage); e != nil {
+		return out, e
+	}
+	ua := h.UserAgent
 	if ua == "" {
 		ua = c.UserAgent
 	}
@@ -251,6 +344,9 @@ func (c *Client) Fetch(ctx context.Context, raw, etag, modified string) (Result,
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "text/html, application/xhtml+xml")
+	if h.AcceptLanguage != "" {
+		req.Header.Set("Accept-Language", h.AcceptLanguage)
+	}
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}

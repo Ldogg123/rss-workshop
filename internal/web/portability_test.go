@@ -80,7 +80,7 @@ func portableExamples() []portableFeed {
 				Title: model.Field{Selector: ".//h2"}, Link: model.Field{Selector: ".//a/@href"},
 				Date: model.Field{Selector: ".//time/@datetime"}, Content: model.Field{Selector: ".//p"},
 				Image: model.Field{Selector: ".//img", Attr: "src"}, DateLayout: time.RFC3339, Timezone: "UTC",
-				UserAgent: "GoRSS/0.1 (+self-hosted feed builder)"}},
+				UserAgent: "GoRSS/0.1 (+self-hosted feed builder)", AcceptLanguage: "en-GB, en;q=0.9"}},
 	}
 }
 
@@ -289,6 +289,8 @@ func TestRecipeImportValidationIsAtomic(t *testing.T) {
 		{"excess settle", func(f *portableFeed) { f.Recipe.SettleMS = 5001 }},
 		{"User-Agent with a line break", func(f *portableFeed) { f.Recipe.UserAgent = "Reader/1\r\nX-Injected: 1" }},
 		{"long User-Agent", func(f *portableFeed) { f.Recipe.UserAgent = strings.Repeat("a", 257) }},
+		{"Accept-Language with a line break", func(f *portableFeed) { f.Recipe.AcceptLanguage = "en\r\nX-Injected: 1" }},
+		{"Accept-Language that is not a language", func(f *portableFeed) { f.Recipe.AcceptLanguage = "en;q=2" }},
 	} {
 		feeds := portableExamples()
 		invalid.mutate(&feeds[1])

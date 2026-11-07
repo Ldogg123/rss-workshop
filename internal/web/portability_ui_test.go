@@ -65,6 +65,12 @@ func testPortabilityUI(t *testing.T, tab context.Context, s *store.Store) {
 	if previewTitle != original[0].Title {
 		t.Fatal("import review lost title", previewTitle)
 	}
+	// The recipe's own request headers change what its source sees.
+	var headers bool
+	must(chromedp.Evaluate(`(()=>{const lines=[...document.querySelectorAll('#import-preview .import-recipe p.meta')].map(p=>p.textContent);return lines.includes('User-Agent: UI-Fixture/1 (+mailto:ops@example.net)')&&lines.includes('Accept-Language: de-CH, de;q=0.9')})()`, &headers))
+	if !headers {
+		t.Fatal("import review does not show the recipe's request headers")
+	}
 	// Review alone must not create a feed; include narrow-screen layout checking.
 	current, _ := s.List(context.Background())
 	if len(current) != 1 {
