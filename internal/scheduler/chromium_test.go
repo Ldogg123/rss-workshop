@@ -16,8 +16,9 @@ import (
 
 // chromiumPool stands in for browser.Pool. It reports its capacity and, as
 // Pool.Render does, waits for a free slot inside the caller's deadline before
-// rendering. It records the order in which renders took a slot, how many ran
-// at once, overall and for article pages, and how many had to wait for one.
+// rendering, naming the slot only when it waited for one. It records the
+// order in which renders took a slot, how many ran at once, overall and for
+// article pages, and how many had to wait for one.
 type chromiumPool struct {
 	slots chan struct{}
 	pages map[string]string
@@ -39,6 +40,9 @@ func newChromiumPool(capacity int) *chromiumPool {
 func (p *chromiumPool) Capacity() int { return cap(p.slots) }
 
 func (p *chromiumPool) Render(ctx context.Context, u, _ string, _ int) (fetch.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return fetch.Result{}, err
+	}
 	select {
 	case p.slots <- struct{}{}:
 	default:
@@ -60,6 +64,9 @@ func (p *chromiumPool) Render(ctx context.Context, u, _ string, _ int) (fetch.Re
 		}
 	}
 	defer func() { <-p.slots }()
+	if err := ctx.Err(); err != nil {
+		return fetch.Result{}, err
+	}
 	kind := "list"
 	if strings.Contains(u, "/story-") {
 		kind = "article"

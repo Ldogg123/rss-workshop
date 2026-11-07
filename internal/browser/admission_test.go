@@ -31,13 +31,36 @@ func TestRenderNamesTheWaitForAChromiumSlot(t *testing.T) {
 		t.Fatalf("slot wait past the deadline: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	time.AfterFunc(20*time.Millisecond, cancel) // during the wait
 	_, err = p.Render(ctx, source, "", 0)
 	if err == nil || err.Error() != "canceled while waiting for a free Chromium slot: context canceled" || !errors.Is(err, context.Canceled) {
 		t.Fatalf("slot wait cancelled: %v", err)
 	}
-	if p.root != nil || p.active != 0 {
-		t.Fatal("a render that never had a slot started Chromium")
+	if p.root != nil || p.active != 0 || len(p.slots) != 1 {
+		t.Fatal("a render that never had a slot started Chromium or took one")
+	}
+}
+
+// A render called after its deadline, as a refresh's next article can be,
+// did not wait for a slot and must not blame one, whether the slots are free
+// or taken. Go picks a ready select case at random, so this repeats.
+func TestRenderAfterTheDeadlineDoesNotBlameTheSlots(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Millisecond))
+	defer cancel()
+	for _, taken := range []int{0, 1, 2} {
+		p := &Pool{timeout: time.Second, slots: make(chan struct{}, 2)}
+		for range taken {
+			p.slots <- struct{}{}
+		}
+		for range 500 {
+			_, err := p.Render(ctx, "https://example.com/private/story", "", 0)
+			if err == nil || err.Error() != "context deadline exceeded" || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("render after the deadline with %d of 2 slots taken: %v", taken, err)
+			}
+		}
+		if len(p.slots) != taken || p.root != nil || p.active != 0 {
+			t.Fatalf("a render after the deadline left %d of 2 slots taken (want %d) or started Chromium", len(p.slots), taken)
+		}
 	}
 }
 
