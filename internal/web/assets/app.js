@@ -206,8 +206,10 @@ function renderSource(){
  form.elements.items.required=form.elements.title_selector.required=!feed;
  $('#url-label').textContent=feed?'Feed URL':'Page URL';form.elements.url.placeholder=feed?'https://example.com/feed.xml':'https://example.com/news';
  $('#full-render').hidden=feed;$('#full-feed-hint').hidden=!feed;
+ // Hints written for one source, such as the cleanup section's.
+ for(const hint of form.querySelectorAll('[data-source]'))hint.hidden=hint.dataset.source!==(feed?'feed':'page');
  $('#source-help').textContent=(feed?'Reads the stories of an existing RSS or Atom feed over Static HTTP, to filter them or add their full articles. The feed supplies each story’s title, link, date, description and image, so there are no selectors.':'Selects the stories on a web page with CSS or XPath.')+(form.elements.source.disabled?' A saved feed keeps its source; to try the other, duplicate it.':'');
- renderHelp();
+ renderHelp();help();
 }
 function renderHelp(){
  const mode=form.elements.mode.value, localBrowser=form.elements.source.value!=='feed'&&(mode==='browser'||mode==='auto'), tip=$('#fetch-mode-help');
@@ -220,7 +222,8 @@ function renderHelp(){
 }
 form.elements.mode.onchange=renderHelp;
 function help(){
- const xpath=form.elements.type.value==='xpath';
+ // A feed source's rules are CSS, whatever the hidden selector type says.
+ const xpath=form.elements.source.value!=='feed'&&form.elements.type.value==='xpath';
  $('#selector-help').textContent=xpath?'Use relative XPath fields starting with ., such as .//h2 or .//a/@href. Use . for the card itself.':'Fields are relative to each card. Use . for the card itself. Choose an attribute separately, such as href or datetime.';
  $('#cleanup-syntax-help').textContent=xpath?'XPath rules start with ./, such as .//div[@class=\'share\'] or .//p[contains(., \'appeared first on\')].':'For example .share, aside.related or p:containsOwn("appeared first on"), which ignores case.';
 }

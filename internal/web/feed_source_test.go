@@ -14,8 +14,8 @@ import (
 )
 
 // A feed source goes through the same save, preview, export and import as a
-// web page's recipe, and is refused with a reason when it carries settings it
-// cannot use.
+// web page's recipe, its cleanup rules included, and is refused with a reason
+// when it carries settings it cannot use.
 func TestFeedSourceSavePreviewExportAndImport(t *testing.T) {
 	h := newPortabilityHarness(t)
 	rss, err := os.ReadFile(examplesDir + "/demo-site/feed.xml")
@@ -24,7 +24,7 @@ func TestFeedSourceSavePreviewExportAndImport(t *testing.T) {
 	}
 	h.fetcher.body = rss
 	source := portableFeed{Title: "Gazette feed", URL: "https://gazette.example/feed.xml", Interval: 900, Recipe: model.Recipe{
-		Mode: "static", Type: extract.FeedType, Full: &model.FullContent{Selector: ".article-body"}, AcceptLanguage: "en",
+		Mode: "static", Type: extract.FeedType, Full: &model.FullContent{Selector: ".article-body"}, AcceptLanguage: "en", Remove: []string{".share", "aside"},
 		Filters: &model.FilterSet{Exclude: &model.FilterRule{Op: "contains_any", Field: "title", Keywords: []string{"Sponsored"}}},
 	}}
 	body := func(f portableFeed) []byte {
