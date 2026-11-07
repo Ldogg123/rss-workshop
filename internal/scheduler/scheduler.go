@@ -59,6 +59,11 @@ type Scheduler struct {
 	// a burst of due feeds would time out and back off for nothing more than
 	// queueing. Admission instead keeps their number within the free slots.
 	solving map[string]bool
+	// rendering holds the admitted jobs that may still render a page in the
+	// local Chromium pool. The pool also waits for a free slot inside each
+	// job's deadline, so it is admitted the same way: a refresh starts only
+	// while its Chromium admission is free (see chromium).
+	rendering map[string]bool
 	// held records feeds whose result could not be persisted. The usual backoff
 	// lives in the feeds row, so a failed write leaves nothing behind to slow
 	// the feed down: its schedule rolls back with the rest of the transaction
@@ -90,7 +95,7 @@ type hold struct {
 }
 
 func New(s *store.Store, f fetch.Fetcher, workers int, timeout time.Duration) *Scheduler {
-	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, solving: map[string]bool{}, held: map[string]hold{}, finished: map[string]time.Time{}}
+	return &Scheduler{Store: s, Fetcher: f, Timeout: timeout, slots: make(chan struct{}, workers), active: map[string]bool{}, solving: map[string]bool{}, rendering: map[string]bool{}, held: map[string]hold{}, finished: map[string]time.Time{}}
 }
 func (s *Scheduler) Stats() (int, int) { return len(s.slots), cap(s.slots) }
 func (s *Scheduler) timeout(mode string) time.Duration {
@@ -106,10 +111,53 @@ func (s *Scheduler) usesSolver(mode string) bool {
 	return mode == "flaresolverr" && s.FlareSolverr != nil
 }
 
+// chromium says how a job is admitted to the local Chromium pool.
+type chromium int
+
+const (
+	// noChromium: the job is not admitted there. It renders nothing, or only
+	// an Auto fallback, which waits for a pool slot inside its deadline.
+	noChromium chromium = iota
+	// shareChromium takes a free Chromium admission when there is one and
+	// starts either way. Previews and page loads, which an operator waits on,
+	// are admitted so. Unlike a FlareSolverr request, a render can be
+	// cancelled and frees its slot when it ends, so one without an admission
+	// waits for a pool slot inside its own deadline rather than being refused.
+	shareChromium
+	// needChromium starts only with a free Chromium admission. A refresh in
+	// Chromium mode, or one that renders its article pages, is admitted so;
+	// refused, it stays due rather than waiting out its deadline for a pool
+	// slot.
+	needChromium
+)
+
+// chromiumSlots is the capacity of the Chromium pool, or 0 when the Renderer
+// reports none, which leaves every job unadmitted, as test fakes are. It is
+// called with mu held, so it must not take the pool's lock: browser.Pool.Stats
+// waits while Chromium starts, for up to 15 seconds.
+func (s *Scheduler) chromiumSlots() int {
+	if c, ok := s.Renderer.(interface{ Capacity() int }); ok {
+		return c.Capacity()
+	}
+	return 0
+}
+
+// rendersPages reports whether a job for f is set to render pages in the
+// Chromium pool: its list page in Chromium mode, or its article pages in any
+// mode but FlareSolverr, Auto included. An Auto list page renders only when
+// static HTML yields no stories, which is not known in advance. Admitting
+// every Auto feed for that would hold a Chromium admission through each one's
+// static fetch and limit them to BROWSER_SLOTS at a time, so the fallback
+// alone is not admitted and waits for a pool slot inside the feed's deadline.
+func rendersPages(f model.Feed) bool {
+	return f.Recipe.Mode == "browser" || articlesUseChromium(f)
+}
+
 // reserve admits a job to one of the shared slots and, when it uses
-// FlareSolverr, to a solver slot that is free now. A refresh passes the time
-// its feed list was read, and is refused if the feed finished since then.
-func (s *Scheduler) reserve(id string, solver bool, listed time.Time) error {
+// FlareSolverr, to a solver slot that is free now. A job that renders in
+// Chromium is admitted there as browser says. A refresh passes the time its
+// feed list was read, and is refused if the feed finished since then.
+func (s *Scheduler) reserve(id string, solver bool, browser chromium, listed time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.active[id] || len(s.slots) == cap(s.slots) {
@@ -121,20 +169,30 @@ func (s *Scheduler) reserve(id string, solver bool, listed time.Time) error {
 	if solver && !s.solverFree() {
 		return ErrSolverBusy
 	}
+	slots := s.chromiumSlots()
+	rendering := browser != noChromium && len(s.rendering) < slots
+	if browser == needChromium && slots > 0 && !rendering {
+		return ErrBusy
+	}
 	s.slots <- struct{}{} // cannot block: only reserve sends, and it holds mu
 	s.active[id] = true
 	if solver {
 		s.solving[id] = true
 	}
+	if rendering {
+		s.rendering[id] = true
+	}
 	return nil
 }
 
-// release ends a job, with its FlareSolverr admission if it still holds one.
+// release ends a job, with its FlareSolverr and Chromium admissions if it
+// still holds them.
 func (s *Scheduler) release(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.active, id)
 	delete(s.solving, id)
+	delete(s.rendering, id)
 	<-s.slots
 }
 
@@ -154,6 +212,15 @@ func (s *Scheduler) doneWithSolver(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.solving, id)
+}
+
+// doneWithChromium gives back a job's Chromium admission once the job will
+// render nothing more: a Chromium-mode refresh after its list page, unless it
+// renders its article pages too, and any job after its last article page.
+func (s *Scheduler) doneWithChromium(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.rendering, id)
 }
 
 // solverFree reports, with mu held, whether one more FlareSolverr job can
@@ -248,8 +315,11 @@ func (s *Scheduler) forgetFinished(listed time.Time) {
 	}
 }
 func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, error) {
-	id, solver := store.ID(), s.usesSolver(f.Recipe.Mode)
-	if err := s.reserve(id, solver, time.Time{}); err != nil {
+	id, solver, browser := store.ID(), s.usesSolver(f.Recipe.Mode), noChromium
+	if rendersPages(f) {
+		browser = shareChromium
+	}
+	if err := s.reserve(id, solver, browser, time.Time{}); err != nil {
 		return model.Preview{}, err
 	}
 	defer s.release(id)
@@ -259,6 +329,9 @@ func (s *Scheduler) Preview(ctx context.Context, f model.Feed) (model.Preview, e
 	_, p, e := s.extract(ctx, f, true)
 	if e != nil || !articlesUseSolver(f) {
 		s.doneWithSolver(id)
+	}
+	if e != nil || !articlesUseChromium(f) {
+		s.doneWithChromium(id)
 	}
 	if e == nil {
 		// A preview fetches a sample rather than every article: it runs while an
@@ -284,8 +357,11 @@ func (s *Scheduler) Snapshot(ctx context.Context, rawURL string, r model.Recipe)
 	if r.Mode != "static" && r.Mode != "browser" && r.Mode != "flaresolverr" {
 		return fetch.Result{}, errors.New("choose static, browser, or flaresolverr for the page preview")
 	}
-	id, solver := store.ID(), s.usesSolver(r.Mode)
-	if err := s.reserve(id, solver, time.Time{}); err != nil {
+	id, solver, browser := store.ID(), s.usesSolver(r.Mode), noChromium
+	if r.Mode == "browser" {
+		browser = shareChromium
+	}
+	if err := s.reserve(id, solver, browser, time.Time{}); err != nil {
 		return fetch.Result{}, err
 	}
 	defer s.release(id)
@@ -370,7 +446,11 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 		// A feed that cannot start, because it is already running or its
 		// fetcher is busy, stays due: a later tick takes it, oldest first,
 		// without recording a failure or backing it off.
-		if s.reserve(f.ID, s.usesSolver(f.Recipe.Mode), listed) != nil {
+		browser := noChromium
+		if rendersPages(f) {
+			browser = needChromium
+		}
+		if s.reserve(f.ID, s.usesSolver(f.Recipe.Mode), browser, listed) != nil {
 			continue
 		}
 		s.wg.Add(1)
@@ -400,6 +480,11 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	if e != nil || !articlesUseSolver(f) {
 		s.doneWithSolver(f.ID)
 	}
+	// The same goes for a Chromium admission, which a refresh keeps past its
+	// list page only to render its article pages.
+	if e != nil || !articlesUseChromium(f) {
+		s.doneWithChromium(f.ID)
+	}
 	items := p.Items
 	var articles articleRun
 	if e == nil && f.Recipe.Full != nil {
@@ -421,6 +506,9 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 			// article warnings are bounded and have their URLs redacted there.
 			last.Warnings = append(last.Warnings, w...)
 		}
+		// Its last article page has been rendered, so the save that follows
+		// leaves the slot to the next job.
+		s.doneWithChromium(f.ID)
 	}
 	if e == nil && r.Status == 304 {
 		if f.LastSuccess.IsZero() {

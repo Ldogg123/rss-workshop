@@ -327,40 +327,73 @@ func (r *stallingRenderer) Render(ctx context.Context, u, wait string, settle in
 	return fetch.Result{Body: []byte(r.pages[u]), URL: u, Status: 200}, nil
 }
 
+// countedStallingRenderer reports a Chromium capacity, as browser.Pool does,
+// so a feed renders its article pages one at a time. It records how many
+// renders ran at once.
+type countedStallingRenderer struct {
+	*stallingRenderer
+	running, peak atomic.Int32
+}
+
+func (*countedStallingRenderer) Capacity() int { return 2 }
+
+func (r *countedStallingRenderer) Render(ctx context.Context, u, wait string, settle int) (fetch.Result, error) {
+	n := r.running.Add(1)
+	defer r.running.Add(-1)
+	for old := r.peak.Load(); n > old && !r.peak.CompareAndSwap(old, n); old = r.peak.Load() {
+	}
+	return r.stallingRenderer.Render(ctx, u, wait, settle)
+}
+
 // The refresh deadline stops queueing articles as surely as the cap does,
-// here for a static list whose articles Chromium renders. The first page
-// renders at once and every other waits for the deadline, so the story after
-// those the workers hold is handed over only once the deadline has passed. That
-// story is never fetched either: with none after it, it alone continues the
+// here for a static list whose articles Chromium renders: four at a time
+// through a renderer that reports no capacity, and one at a time through one
+// that does, as the pool in the browser image does. The first page renders at
+// once and every other waits for the deadline, so the story after those the
+// workers hold is handed over only once the deadline has passed. That story
+// is never fetched either: with none after it, it alone continues the
 // backlog.
 func TestArticlesLeftByTheDeadlineAreABacklog(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		total int // fewer than the cap
-	}{
-		{"queueing stopped", 8},
-		{"last story handed over after the deadline", articleWorkers + 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, err := openTestStore(t, 100)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.DB.Close()
-			source := newConditionalSource(tc.total)
-			renderer := &stallingRenderer{pages: articlePages(tc.total)}
-			renderer.stall.Store(true)
-			jobs := New(s, source, 2, time.Second)
-			jobs.Renderer = renderer
-			r := fullRecipe()
-			r.Mode = "static"
-			r.Full.Browser = true
-			id := source.feed(t, jobs, "https://example.com/list", listPage(tc.total), r)
+	for _, counted := range []bool{false, true} {
+		workers := articleWorkers
+		if counted {
+			workers = 1
+		}
+		for _, tc := range []struct {
+			name  string
+			total int // fewer than the cap
+		}{
+			{"queueing stopped", 8},
+			{"last story handed over after the deadline", workers + 2},
+		} {
+			t.Run(fmt.Sprintf("%d workers/%s", workers, tc.name), func(t *testing.T) {
+				s, err := openTestStore(t, 100)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.DB.Close()
+				source := newConditionalSource(tc.total)
+				renderer := &stallingRenderer{pages: articlePages(tc.total)}
+				renderer.stall.Store(true)
+				counter := &countedStallingRenderer{stallingRenderer: renderer}
+				jobs := New(s, source, 2, time.Second)
+				jobs.Renderer = renderer
+				if counted {
+					jobs.Renderer = counter
+				}
+				r := fullRecipe()
+				r.Mode = "static"
+				r.Full.Browser = true
+				id := source.feed(t, jobs, "https://example.com/list", listPage(tc.total), r)
 
-			source.expect(t, jobs, id, round{1, unconditional})
-			renderer.stall.Store(false)
-			source.expect(t, jobs, id, round{tc.total, unconditional}, round{tc.total, conditional})
-		})
+				source.expect(t, jobs, id, round{1, unconditional})
+				renderer.stall.Store(false)
+				source.expect(t, jobs, id, round{tc.total, unconditional}, round{tc.total, conditional})
+				if peak := counter.peak.Load(); counted && peak != 1 {
+					t.Fatalf("articles rendered %d at once; want 1", peak)
+				}
+			})
+		}
 	}
 }
 
