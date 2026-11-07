@@ -106,7 +106,12 @@ func TestQuietDaysReplaceTheAutomaticThreshold(t *testing.T) {
 		{0, 900, 14 * day, true},
 		{0, 604800, 70 * day, true},
 		{7, 900, 7 * day, true},
-		{7, 604800, 7 * day, true},
+		// A chosen time waits at least one interval and QuietMargin, which
+		// only 7 days on an interval longer than 6 days 23 hours reaches.
+		{7, 518400, 7 * day, true},
+		{7, 601200, 7 * day, true},
+		{7, 601260, 7*day + time.Minute, true},
+		{7, 604800, 7*day + time.Hour, true},
 		{30, 900, 30 * day, true},
 		{365, 604800, 365 * day, true},
 		{QuietNever, 900, 0, false},
@@ -131,6 +136,25 @@ func TestQuietDaysReplaceTheAutomaticThreshold(t *testing.T) {
 	f.LastNew = now.Add(-10 * 365 * day)
 	if f.IsQuiet(now) {
 		t.Error("a feed set never to be quiet is quiet")
+	}
+}
+
+// A weekly feed set to 7 days whose every refresh finds a new story must not
+// turn quiet while its next refresh is due but not yet stored: that refresh is
+// scheduled an interval after the last, plus up to 29 seconds of jitter, and
+// then waits for a free worker and its fetch.
+func TestQuietDaysOutlastTheNextRefresh(t *testing.T) {
+	stored := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	f := Feed{Enabled: true, Interval: 604800, Recipe: Recipe{QuietDays: 7},
+		LastAttempt: stored, LastSuccess: stored, LastChanged: stored, LastNew: stored}
+	due := stored.Add(time.Duration(f.Interval)*time.Second + 29*time.Second)
+	for _, at := range []time.Time{due, due.Add(30 * time.Minute)} {
+		if f.IsQuiet(at) {
+			t.Errorf("quiet %v after the last new story, before the next refresh could be stored", at.Sub(stored))
+		}
+	}
+	if !f.IsQuiet(stored.Add(7*24*time.Hour + QuietMargin)) {
+		t.Error("a weekly feed set to 7 days is not quiet one interval and the margin after its last new story")
 	}
 }
 

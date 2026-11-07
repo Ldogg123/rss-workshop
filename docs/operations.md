@@ -32,7 +32,7 @@ A refresh that finds nothing new succeeds, so a feed can stop delivering stories
 
 The card says how long it has been since the last new story. Open the source page to see whether it still lists new stories, then **Edit** and **Preview items** to check the selectors.
 
-Some sites publish rarely, and some daily ones are worth noticing sooner. **Mark as Quiet after** in the feed's editor replaces the automatic time with 7, 30, 90 or 365 days without a new story, whatever the refresh interval, and **Never** stops marking the feed Quiet, which also leaves it out of `rss_workshop_feeds_quiet`. The setting is part of the recipe, so exports, imports and **Duplicate** carry it. Saving a change publishes nothing, but, like any edit, it drops the source's conditional-request validators, so the next refresh fetches the whole page once.
+Some sites publish rarely, and some daily ones are worth noticing sooner. **Mark as Quiet after** in the feed's editor replaces the automatic time with 7, 30, 90 or 365 days without a new story, and **Never** stops marking the feed Quiet, which also leaves it out of `rss_workshop_feeds_quiet`. A chosen time ignores the 10-interval rule but always lasts at least one refresh interval and an hour, so a feed refreshed weekly and set to 7 days waits 7 days and an hour: it is not marked Quiet before its next refresh has had the chance to find a story. The setting is part of the recipe, so exports, imports and **Duplicate** carry it. Saving a change publishes nothing, but, like any edit, it drops the source's conditional-request validators, so the next refresh fetches the whole page once.
 
 A new story is one the feed did not have saved, stored by a refresh and kept by `MAX_ITEMS` retention. Only that counts:
 
@@ -118,7 +118,7 @@ An alert for one feed that stops finding new stories, with your own threshold ra
     summary: "{{ $labels.feed }} has found no new story for a week"
 ```
 
-It leaves out feeds that have never saved a story. `rss_workshop_feed_last_changed_timestamp_seconds` in its place alerts when the output stops changing instead, which a story whose text changes at every refresh prevents.
+It leaves out feeds that have never saved a story. It also ignores **Mark as Quiet after**, which no metric reports, so exclude a feed set to Never by its `id` label, or alert on `rss_workshop_feeds_quiet`, which follows each feed's setting but does not name the feed. `rss_workshop_feed_last_changed_timestamp_seconds` in its place alerts when the output stops changing instead, which a story whose text changes at every refresh prevents.
 
 Because the series name your feeds, the token is a real credential: keep it out of shared dashboards and rotate it by changing `METRICS_TOKEN` and recreating the service. Metrics never include reader links, source URLs, or story content. A library beyond 1,000 feeds keeps every aggregate, but per-feed series cover only the first 1,000 feeds by title, so a scrape stays bounded. Feeds after that have no per-feed series; `rss_workshop_feeds` still counts them.
 

@@ -25,6 +25,9 @@ const (
 	QuietIntervals = 10
 	// QuietNever is the QuietDays that never marks a feed quiet.
 	QuietNever = -1
+	// QuietMargin is how long past one refresh interval a QuietDays
+	// threshold waits at least; see QuietThreshold.
+	QuietMargin = time.Hour
 )
 
 // QuietDayChoices are the thresholds, in days, a recipe may set besides
@@ -56,12 +59,18 @@ func QuietAfter(interval int) time.Duration {
 // QuietThreshold is how long f must go without a new story before it counts as
 // quiet: its recipe's QuietDays, or QuietAfter(f.Interval) when that is 0. It
 // reports false for a feed set never to be quiet.
+//
+// QuietDays ignores the interval multiple but still waits one interval and
+// QuietMargin. A refresh that stores a new story schedules the next one an
+// interval later, plus jitter, queueing and the fetch itself, so 7 days on a
+// weekly feed would otherwise flag a feed whose every refresh finds a story
+// from the moment the next one falls due until it is stored.
 func (f Feed) QuietThreshold() (time.Duration, bool) {
 	switch days := f.Recipe.QuietDays; {
 	case days == QuietNever:
 		return 0, false
 	case days > 0:
-		return time.Duration(days) * 24 * time.Hour, true
+		return max(time.Duration(days)*24*time.Hour, time.Duration(f.Interval)*time.Second+QuietMargin), true
 	}
 	return QuietAfter(f.Interval), true
 }

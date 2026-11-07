@@ -475,6 +475,53 @@ func TestRecipeQuietDays(t *testing.T) {
 	}
 }
 
+// A refresh that stores a new story schedules the next one an interval later,
+// so a weekly feed set to 7 days whose every refresh finds a story must not be
+// listed or counted as quiet once that refresh falls due, only once it has
+// had QuietMargin to run.
+func TestChosenQuietTimeOutlastsTheNextRefresh(t *testing.T) {
+	ctx := context.Background()
+	h := newPortabilityHarness(t)
+	h.app.MetricsToken = metricsToken
+	s := h.app.Store
+	id, err := s.Save(ctx, model.Feed{Title: "Weekly", URL: "https://example.com/news", Interval: 604800, Enabled: true,
+		Recipe: model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"}, QuietDays: 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Complete(ctx, f, []model.Item{{Key: "a", Title: "A"}}, "", "", 200, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = s.Get(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if f.IsQuiet(f.NextRun) {
+		t.Fatalf("quiet when the next refresh falls due, %v after the new story", f.NextRun.Sub(f.LastNew))
+	}
+	// Move the feed's times back, as if the next refresh fell due a minute ago
+	// and is still waiting or running, then as if it had an hour more.
+	earlier := func(by time.Duration) {
+		t.Helper()
+		if _, err := s.DB.Exec(fmt.Sprintf("UPDATE feeds SET last_attempt=last_attempt-%[1]d,last_success=last_success-%[1]d,last_changed=last_changed-%[1]d,last_new=last_new-%[1]d,next_run=next_run-%[1]d WHERE id='%[2]s'", int64(by/time.Second), id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	quiet := func(want bool, what string) {
+		t.Helper()
+		if f := h.listed(t, id); f.Quiet != want || h.metrics(t)["rss_workshop_feeds_quiet"] != map[bool]string{false: "0", true: "1"}[want] {
+			t.Fatalf("%s: listed quiet=%v, rss_workshop_feeds_quiet=%s, want %v", what, f.Quiet, h.metrics(t)["rss_workshop_feeds_quiet"], want)
+		}
+	}
+	earlier(time.Until(f.NextRun).Truncate(time.Second) + time.Minute)
+	quiet(false, "the next refresh due a minute ago")
+	earlier(model.QuietMargin)
+	quiet(true, "the next refresh due an hour and a minute ago")
+}
+
 // The editor offers exactly the thresholds validate accepts, so whatever it
 // sends is saved and whatever is stored can be shown and sent back.
 func TestEditorOffersTheAcceptedQuietDays(t *testing.T) {
