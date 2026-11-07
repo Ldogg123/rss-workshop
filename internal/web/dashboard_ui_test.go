@@ -199,7 +199,7 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	must(awaitLoad, chromedp.Evaluate(`[...`+card(source)+`.querySelectorAll('button')].find(b=>b.textContent==='Duplicate').click()`, nil),
+	must(awaitLoad, clickCurrent("Duplicate on the source card", `[...`+card(source)+`.querySelectorAll('button')].find(b=>b.textContent==='Duplicate')`),
 		chromedp.Poll(`!document.querySelector('#editor').hidden&&!!document.querySelector('#library-filter-choices input[value="`+library+`"]')?.checked`, nil))
 	copied := "Copy of " + strings.Repeat("界", 63) + "…"
 	check(`document.querySelector('#editor-title').textContent==='Duplicate feed'&&form.elements.id.value===''&&form.elements.title.value==='`+copied+`'&&new TextEncoder().encode(form.elements.title.value).length===200`,

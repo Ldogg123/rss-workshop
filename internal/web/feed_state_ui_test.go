@@ -65,8 +65,8 @@ func testFeedStateUI(t *testing.T, tab context.Context, s *store.Store, fetcher 
 		t.Fatal("the new feed's first refresh did not finish", err)
 	}
 	card := `document.querySelector('.feed-diagnostics[data-feed-id="` + id + `"]').closest('.feed-card')`
-	button := func(label string) string {
-		return `[...` + card + `.querySelectorAll('button')].find(b=>b.textContent==='` + label + `')`
+	button := func(label string) chromedp.Action {
+		return clickCurrent(label+" on the Card state card", `[...`+card+`.querySelectorAll('button')].find(b=>b.textContent==='`+label+`')`)
 	}
 	listed := `feeds.find(f=>f.id==='` + id + `')`
 	writes := `window.stateRequests.filter(r=>r.method!=='GET'&&r.path.startsWith('/api/feeds/` + id + `'))`
@@ -78,9 +78,9 @@ func testFeedStateUI(t *testing.T, tab context.Context, s *store.Store, fetcher 
 	waitAfterLoad(`!!`+listed, "the new feed was not listed")
 
 	// Pause from the card while the editor is open on the same feed.
-	must(chromedp.Evaluate(button("Edit")+`.click()`, nil),
+	must(button("Edit"),
 		chromedp.Poll(`!document.querySelector('#editor').hidden&&form.elements.title.value==='Card state'&&form.elements.enabled.checked`, nil),
-		chromedp.Evaluate(button("Pause")+`.click()`, nil),
+		button("Pause"),
 		chromedp.Poll(listed+`?.enabled===false&&`+card+`.querySelector('.badge').textContent==='Paused'`, nil))
 	check(`(()=>{const r=`+writes+`;return r.length===1&&r[0].method==='POST'&&r[0].path==='/api/feeds/`+id+`/enabled'&&JSON.stringify(r[0].body)==='{"enabled":false}'})()`,
 		"Pause did not send only the enabled setting")
@@ -102,13 +102,13 @@ func testFeedStateUI(t *testing.T, tab context.Context, s *store.Store, fetcher 
 	// refreshing, and Refresh tries again at once. Nothing else refreshes
 	// this feed while it is paused, so no earlier refresh can race the block.
 	restore := testutil.BlockItemWrites(t, s.DB)
-	must(chromedp.Evaluate(button("Resume")+`.click()`, nil), chromedp.Poll(listed+`?.enabled===true`, nil))
+	must(button("Resume"), chromedp.Poll(listed+`?.enabled===true`, nil))
 	held := card + `.querySelector('.badge').textContent==='Waiting to retry'&&!!` + card + `.querySelector('.feed-held')&&` + card + `.querySelector('.times').textContent.includes('Delayed after a failed save')`
 	waitAfterLoad(held, "the card did not show the feed waiting to retry a failed database write")
 	must(chromedp.Evaluate(card+`.scrollIntoView()`, nil))
 	captureTrial(t, tab, "feed-held")
 	before := fetcher.calls.Load()
-	must(chromedp.Evaluate(button("Refresh")+`.click()`, nil), chromedp.Poll(`document.querySelector('#notice').textContent==='Refresh queued.'`, nil))
+	must(button("Refresh"), chromedp.Poll(`document.querySelector('#notice').textContent==='Refresh queued.'`, nil))
 	deadline = time.Now().Add(5 * time.Second)
 	for fetcher.calls.Load() == before && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
@@ -118,6 +118,6 @@ func testFeedStateUI(t *testing.T, tab context.Context, s *store.Store, fetcher 
 	}
 	waitAfterLoad(held, "a retry that failed again did not hold the feed")
 	restore()
-	must(chromedp.Evaluate(button("Refresh")+`.click()`, nil))
+	must(button("Refresh"))
 	waitAfterLoad(card+`.querySelector('.badge').textContent==='Active'&&!`+card+`.querySelector('.feed-held')`, "the card stayed held after the database recovered")
 }

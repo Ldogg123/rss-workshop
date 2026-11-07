@@ -53,11 +53,14 @@ func testLibraryFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	defer s.DeleteFilter(context.Background(), filterID)
 
 	// Select it in a new feed: the preview and the saved feed both use it.
+	// Opening the editor draws the picker at once and again when the library
+	// reloads, so the checkbox is clicked where it is found.
+	picker := "#library-filter-choices input[type=checkbox]"
 	must(chromedp.Click("#filter-library-close"), chromedp.Click("#new-feed"), chromedp.Evaluate(`(()=>{
 	 Object.entries({title:'Library reading',url:'https://example.com/news',items:'.card',title_selector:'h2',link_selector:'a',content_selector:'p'}).forEach(([name,value])=>form.elements[name].value=value);
 	 form.elements.enabled.checked=false;document.querySelector('#story-filters').open=true;
 	})()`, nil), chromedp.Poll(`document.querySelectorAll('#library-filter-choices input[type=checkbox]').length===1`, nil),
-		chromedp.Click("#library-filter-choices input[type=checkbox]"), chromedp.Click("#preview-button"),
+		clickQuery(picker), chromedp.Click("#preview-button"),
 		chromedp.Poll(`!document.querySelector('#preview-button').disabled&&document.querySelectorAll('#preview .preview-item').length===1`, nil))
 	must(chromedp.Evaluate(`document.querySelector('#library-filter-picker').scrollIntoView()`, nil))
 	captureTrial(t, tab, "library-filter-picker")
@@ -71,23 +74,27 @@ func testLibraryFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 		t.Fatalf("saved feed did not link the library filter: %+v %v", f, err)
 	}
 	card := `document.querySelector('.feed-diagnostics[data-feed-id="` + feedID + `"]').closest('.feed-card')`
+	button := func(label string) chromedp.Action {
+		return clickCurrent(label+" on the Library reading card", `[...`+card+`.querySelectorAll('button')].find(b=>b.textContent==='`+label+`')`)
+	}
 	check(card+`.querySelector('.feed-filters').textContent==='Library filters: No second story'`, "feed card did not name its library filter")
 
 	// Pausing sends no filter list and must keep the link.
-	must(chromedp.Evaluate(`[...`+card+`.querySelectorAll('button')].find(b=>b.textContent==='Resume').click()`, nil),
-		chromedp.Poll(`feeds.find(f=>f.id==='`+feedID+`').enabled`, nil))
+	must(button("Resume"), chromedp.Poll(`feeds.find(f=>f.id==='`+feedID+`').enabled`, nil))
 	if f, err = s.Get(context.Background(), feedID); err != nil || len(f.FilterIDs) != 1 {
 		t.Fatal("resuming a feed unlinked its library filter", err)
 	}
 
 	// A session that ends with the feed open in the editor keeps its selection:
 	// saving after signing in again must not unlink the library filter.
-	must(chromedp.Evaluate(`[...`+card+`.querySelectorAll('button')].find(b=>b.textContent==='Edit').click()`, nil),
-		chromedp.Poll(`document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, nil),
+	// Wait for the library to load after signing in: until then the save omits
+	// filter_ids, which keeps the link whether or not the selection survived.
+	must(button("Edit"), chromedp.Poll(`document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, nil),
 		chromedp.Evaluate(`showLogin()`, nil), chromedp.SetValue("#password", "ui-test-password-123"),
 		chromedp.Click(`#login-form button[type="submit"]`), chromedp.Poll(`!document.querySelector('#workspace').hidden&&!document.querySelector('#editor').hidden`, nil),
-		chromedp.Poll(`document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, nil),
-		chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.Poll(`document.querySelector('#editor').hidden`, nil))
+		chromedp.Poll(`Array.isArray(window.rssLibrary.selected())`, nil))
+	check(`window.rssLibrary.selected().length===1&&document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, "signing in again cleared the editor's library filter selection")
+	must(chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.Poll(`document.querySelector('#editor').hidden`, nil))
 	if f, err = s.Get(context.Background(), feedID); err != nil || len(f.FilterIDs) != 1 {
 		t.Fatal("signing in again with the editor open unlinked the library filter", err)
 	}
@@ -96,7 +103,7 @@ func testLibraryFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	must(chromedp.Click("#manage-filters"), chromedp.Poll(`document.querySelector('#filter-library-list').textContent.includes('Used by Library reading')`, nil))
 	captureTrial(t, tab, "library-filter-list")
 	check(`document.querySelector('#filter-library-list .danger').disabled`, "a library filter in use could be deleted")
-	must(chromedp.Evaluate(`[...document.querySelectorAll('#filter-library-list button')].find(b=>b.textContent==='Edit').click()`, nil),
+	must(clickCurrent("Edit in the filter library", `[...document.querySelectorAll('#filter-library-list button')].find(b=>b.textContent==='Edit')`),
 		chromedp.Poll(`!document.querySelector('#library-filter-form').hidden`, nil))
 	captureTrial(t, tab, "library-filter-edit")
 	check(`document.querySelector('#library-filter-used-by').textContent.includes('Library reading')&&!document.querySelector('#library-filter-history').hidden&&!document.querySelector('#library-filter-apply-history').checked&&document.querySelector('#library-filter-exclude textarea').value==='Second'`, "editing did not load the filter or its users")
@@ -111,15 +118,15 @@ func testLibraryFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	}
 
 	// Removing it from the feed makes it deletable.
-	must(chromedp.Click("#filter-library-close"), chromedp.Evaluate(`[...`+card+`.querySelectorAll('button')].find(b=>b.textContent==='Edit').click()`, nil),
+	must(chromedp.Click("#filter-library-close"), button("Edit"),
 		chromedp.Poll(`document.querySelector('#library-filter-choices input[type=checkbox]')?.checked`, nil),
-		chromedp.Click("#library-filter-choices input[type=checkbox]"), chromedp.Click(`#recipe-form button[type="submit"]`),
+		clickQuery(picker), chromedp.Click(`#recipe-form button[type="submit"]`),
 		chromedp.Poll(`document.querySelector('#editor').hidden&&!`+card+`.querySelector('.feed-filters')`, nil))
 	if f, err = s.Get(context.Background(), feedID); err != nil || len(f.FilterIDs) != 0 {
 		t.Fatal("unchecking the library filter did not unlink it", err)
 	}
 	must(chromedp.Click("#manage-filters"), chromedp.Poll(`document.querySelector('#filter-library-list').textContent.includes('Not used by any feed')`, nil),
-		chromedp.Evaluate(`window.confirm=()=>true;document.querySelector('#filter-library-list .danger').click()`, nil),
+		chromedp.Evaluate(`window.confirm=()=>true`, nil), clickQuery("#filter-library-list .danger"),
 		chromedp.Poll(`document.querySelectorAll('#filter-library-list .library-filter').length===0&&!document.querySelector('#filter-library-empty').hidden`, nil),
 		chromedp.Click("#filter-library-close"))
 	if library, err = s.Filters(context.Background()); err != nil || len(library) != 0 {
