@@ -37,7 +37,8 @@ type articleRun struct {
 	// fetched holds the keys of the stories this round gave a body.
 	fetched []string
 	// left holds the keys of listed stories without a stored body that this
-	// round did not queue, because of MaxArticlesPerRun or the deadline.
+	// round did not queue, because of MaxArticlesPerRun or the deadline. A
+	// story handed to a worker after the deadline was not queued in time.
 	left []string
 	// listed holds the keys of the listed stories with a link, and had how
 	// many of them known showed with a body before this round.
@@ -127,6 +128,11 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 			break
 		}
 		queue <- i
+		// The send waits for a free worker and can outlast the deadline. A
+		// story handed over after it is never fetched, so it counts as left.
+		if ctx.Err() != nil {
+			break
+		}
 		queued++
 	}
 	close(queue)

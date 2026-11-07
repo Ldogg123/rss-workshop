@@ -328,27 +328,40 @@ func (r *stallingRenderer) Render(ctx context.Context, u, wait string, settle in
 }
 
 // The refresh deadline stops queueing articles as surely as the cap does,
-// here for a static list whose articles Chromium renders.
+// here for a static list whose articles Chromium renders. The first page
+// renders at once and every other waits for the deadline, so the story after
+// those the workers hold is handed over only once the deadline has passed. That
+// story is never fetched either: with none after it, it alone continues the
+// backlog.
 func TestArticlesLeftByTheDeadlineAreABacklog(t *testing.T) {
-	s, err := openTestStore(t, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.DB.Close()
-	const total = 8 // fewer than the cap
-	source := newConditionalSource(total)
-	renderer := &stallingRenderer{pages: articlePages(total)}
-	renderer.stall.Store(true)
-	jobs := New(s, source, 2, time.Second)
-	jobs.Renderer = renderer
-	r := fullRecipe()
-	r.Mode = "static"
-	r.Full.Browser = true
-	id := source.feed(t, jobs, "https://example.com/list", listPage(total), r)
+	for _, tc := range []struct {
+		name  string
+		total int // fewer than the cap
+	}{
+		{"queueing stopped", 8},
+		{"last story handed over after the deadline", articleWorkers + 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := openTestStore(t, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.DB.Close()
+			source := newConditionalSource(tc.total)
+			renderer := &stallingRenderer{pages: articlePages(tc.total)}
+			renderer.stall.Store(true)
+			jobs := New(s, source, 2, time.Second)
+			jobs.Renderer = renderer
+			r := fullRecipe()
+			r.Mode = "static"
+			r.Full.Browser = true
+			id := source.feed(t, jobs, "https://example.com/list", listPage(tc.total), r)
 
-	source.expect(t, jobs, id, round{1, unconditional})
-	renderer.stall.Store(false)
-	source.expect(t, jobs, id, round{total, unconditional}, round{total, conditional})
+			source.expect(t, jobs, id, round{1, unconditional})
+			renderer.stall.Store(false)
+			source.expect(t, jobs, id, round{tc.total, unconditional}, round{tc.total, conditional})
+		})
+	}
 }
 
 // The flag lives in memory, so the first refresh after a start sends no
