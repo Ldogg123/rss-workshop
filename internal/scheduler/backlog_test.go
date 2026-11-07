@@ -210,6 +210,106 @@ func TestStoriesRetentionRemovesAreNoBacklog(t *testing.T) {
 	}
 }
 
+// An undated story is stored with the time it was first saved, and retention
+// keeps the newest. When the list page shows more undated stories than
+// MAX_ITEMS keeps, every full list request therefore stores stories retention
+// removed again, as the newest, and removes others: the feed changes although
+// the page does not. Such a refresh always keeps some body it fetched, but the
+// stories with a body stop growing, so the backlog must end and the 304s that
+// stop the churn resume. Dates are stored in seconds, so a refresh after a full
+// one runs in a later second.
+func TestUndatedStoriesRetentionChurnsEndTheBacklog(t *testing.T) {
+	ctx := context.Background()
+	const total, keep = 21, 10 // more than keep + MaxArticlesPerRun
+	s, err := openTestStore(t, keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	source := newConditionalSource(total)
+	jobs := New(s, source, 2, 30*time.Second)
+	id := source.feed(t, jobs, "https://example.com/list", listPage(total), fullRecipe())
+
+	const allowed = 6 // full requests before the backlog has to end
+	full, conditionals := 0, 0
+	for i := 1; conditionals < 2; i++ {
+		before, err := s.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fetches := source.articleFetches()
+		jobs.refresh(ctx, before)
+		after, err := s.Get(ctx, id)
+		if err != nil || after.Error != "" {
+			t.Fatalf("refresh %d failed: %v %q", i, err, after.Error)
+		}
+		source.mu.Lock()
+		sent := source.sent[before.URL][len(source.sent[before.URL])-1]
+		source.mu.Unlock()
+		if sent == conditional {
+			conditionals++
+			if !after.LastChanged.Equal(before.LastChanged) {
+				t.Errorf("refresh %d changed the feed behind a 304", i)
+			}
+			if n := source.articleFetches() - fetches; n != 0 {
+				t.Errorf("refresh %d fetched %d articles behind a 304", i, n)
+			}
+			continue
+		}
+		if conditionals > 0 {
+			t.Fatalf("refresh %d was unconditional again", i)
+		}
+		if full++; full > allowed {
+			t.Fatalf("the list request was still unconditional after %d refreshes", allowed)
+		}
+		time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(time.Second)))
+	}
+}
+
+// Only a stored successful refresh says whether a backlog continues. A failed
+// one fetches no articles and keeps the stored validators, so recording it
+// would send them with the next request and stall the backlog behind a 304.
+func TestAFailedRefreshKeepsTheBacklog(t *testing.T) {
+	const url = "https://example.com/list"
+	for _, tc := range []struct {
+		name string
+		fail func(c *conditionalSource)
+	}{
+		{"no matching cards", func(c *conditionalSource) { c.lists[url] = "<p>maintenance</p>" }},
+		{"list fetch error", func(c *conditionalSource) { delete(c.lists, url) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, err := openTestStore(t, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.DB.Close()
+			source := newConditionalSource(25)
+			jobs := New(s, source, 2, 30*time.Second)
+			id := source.feed(t, jobs, url, listPage(25), fullRecipe())
+			source.expect(t, jobs, id, round{10, unconditional})
+
+			source.mu.Lock()
+			tc.fail(source)
+			source.mu.Unlock()
+			f, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			jobs.refresh(ctx, f)
+			if after, err := s.Get(ctx, id); err != nil || after.Error == "" || after.ETag != sourceETag {
+				t.Fatalf("the refresh did not fail keeping the validators: %v %q %q", err, after.Error, after.ETag)
+			}
+
+			source.mu.Lock()
+			source.lists[url] = listPage(25)
+			source.mu.Unlock()
+			source.expect(t, jobs, id, round{20, unconditional})
+		})
+	}
+}
+
 // stallingRenderer renders article pages. While stall is set, every page but
 // the first waits for the refresh's deadline.
 type stallingRenderer struct {

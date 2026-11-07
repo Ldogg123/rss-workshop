@@ -39,6 +39,10 @@ type articleRun struct {
 	// left holds the keys of listed stories without a stored body that this
 	// round did not queue, because of MaxArticlesPerRun or the deadline.
 	left []string
+	// listed holds the keys of the listed stories with a link, and had how
+	// many of them known showed with a body before this round.
+	listed []string
+	had    int
 }
 
 // fetchArticles fills in item bodies from each item's own page.
@@ -65,6 +69,10 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 			continue
 		}
 		prior, ok := known[items[i].Key]
+		run.listed = append(run.listed, items[i].Key)
+		if prior.HasBody {
+			run.had++
+		}
 		switch {
 		case preview, !ok, !prior.HasBody:
 			missing = append(missing, i)
