@@ -60,10 +60,10 @@ The default Compose files follow stable releases. These moving tags point to the
 | `ghcr.io/ldogg123/rss-workshop:latest-browser` | Explicit alias for the same browser image |
 | `ghcr.io/ldogg123/rss-workshop:latest-static` | Static default |
 
-To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.1.1-browser` and `v1.1.1-static` remain available unchanged; for example:
+To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.2.0-browser` and `v1.2.0-static` remain available unchanged; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.1.1-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.2.0-browser
 ```
 
 Recreate the app with the same runtime and other overrides used by your installation:
@@ -110,7 +110,7 @@ rss.example.net {
 }
 ```
 
-Supply your hostname and DNS/TLS configuration. The [Caddy reverse proxy directive](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) forwards to the host's loopback port. A proxy running in Docker cannot reach that port and needs a shared network: add `compose.proxy.yaml`, described in [reverse proxy](reverse-proxy.md). Preserve the browser's `Origin` header, avoid caching management/API responses, and allow at least 150 seconds for the maximum FlareSolverr timeout and cleanup.
+Supply your hostname and DNS/TLS configuration. The [Caddy reverse proxy directive](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) forwards to the host's loopback port. A proxy running in Docker cannot reach that port and needs a shared network: add `compose.proxy.yaml`, described in [reverse proxy](reverse-proxy.md). Preserve the browser's `Origin` header, avoid caching management/API responses, and allow at least 150 seconds for a response. The app answers within 140 seconds at most: the 2-minute maximum `FLARESOLVERR_TIMEOUT`, 10 seconds for transport and cleanup, and 10 more to write the response.
 
 For direct LAN access, deliberately bind the app to a LAN address and set `PUBLIC_BASE_URL` to the same origin. Use HTTPS across untrusted networks. HTTPS enables secure session cookies. Redact or disable proxy access logs for `/feeds/`, whose paths contain bearer tokens.
 
@@ -138,6 +138,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `MAX_ITEMS` | `500` | 1–10,000 retained items per feed. **Applies to already-saved stories**: lowering it deletes the excess at the next refresh of each feed, permanently |
 | `ALLOW_CIDRS` | empty | Explicit comma-separated internal-source exceptions |
 | `RSS_IMAGE` | empty; `latest` browser or `latest-static` | Optional moving tag, version pin or digest; must match the selected runtime |
+| `PROXY_NETWORK` | `proxy` | Existing external Docker network shared with a reverse proxy container, for `compose.proxy.yaml`; see [reverse proxy](reverse-proxy.md) |
 | `GLUETUN_CONTAINER` | required for Gluetun override | Existing, running Gluetun container name on this Docker host |
 | `GLUETUN_APP_PORT` | `8080` | App's internal listening port when sharing Gluetun; publish it on Gluetun |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; see [log detail](operations.md#log-detail) |
@@ -145,7 +146,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `LOG_MAX_SIZE` | `10m` | Size of each retained container log file |
 | `LOG_MAX_FILES` | `3` | Container log files retained per service |
 | `UPGRADE_BACKUP` | `true` | `true` saves a verified copy of an SQLite database in `backups/` before upgrading its schema; `false` upgrades without one. See [automatic copy](operations.md#automatic-copy-before-an-sqlite-upgrade) |
-| `METRICS_TOKEN` | empty | Enables `/metrics` and is required to scrape it; blank returns 404. See [metrics](operations.md#metrics) |
+| `METRICS_TOKEN` | empty | Enables `/metrics` and is required to scrape it; at least 16 characters, or startup stops. Blank returns 404. See [metrics](operations.md#metrics) |
 | `NOTIFY_URL` | empty | Secret. ntfy topic URL or JSON webhook for [health notifications](operations.md#notifications); blank sends none. An absolute `http` or `https` URL without credentials or a fragment. Trusted configuration: it may be a private address, and `ALLOW_CIDRS` does not apply |
 | `NOTIFY_FORMAT` | `json` | `ntfy` or `json` |
 | `NOTIFY_TOKEN` | empty | Secret. Optional bearer token sent with each notification, at most 4,096 printable ASCII characters without spaces; needs `NOTIFY_URL` |
@@ -169,7 +170,7 @@ It carries no version, so an upgrade alone never changes what sources see, and i
 FETCH_USER_AGENT=GoRSS/0.1 (+self-hosted feed builder)
 ```
 
-Surrounding spaces are trimmed. Startup stops if the value is longer than 256 characters or contains anything but printable ASCII, such as a line break, and the startup log reports `custom_user_agent=true` when one is in effect. The setting applies to list pages, article pages and the visual selector's static snapshot, and changes only that header: destination checks and conditional requests work as before. Pages that local Chromium renders, including Auto's render and rendered articles, send Chromium's own User-Agent, and [FlareSolverr](flaresolverr.md) sends that of its browser; this setting changes neither. After a change, a source that varies its pages by User-Agent may answer the next conditional request with the full page instead of 304; feeds change only if the stories did.
+A native executable does not read `.env`: export the value, quoted as [native configuration](#configure-and-run) shows, and start it again. Surrounding spaces are trimmed. Startup stops if the value is longer than 256 characters or contains anything but printable ASCII, such as a line break, and the startup log reports `custom_user_agent=true` when one is in effect. The setting applies to list pages, article pages and the visual selector's static snapshot, and changes only that header: destination checks and conditional requests work as before. Pages that local Chromium renders, including Auto's render and rendered articles, send Chromium's own User-Agent, and [FlareSolverr](flaresolverr.md) sends that of its browser; this setting changes neither. After a change, a source that varies its pages by User-Agent may answer the next conditional request with the full page instead of 304; feeds change only if the stories did.
 
 A feed can also send a User-Agent of its own: set **User-Agent** under **Request settings** in its editor. It follows the same rules and replaces `FETCH_USER_AGENT` and the built-in name for that feed's static requests only: its list page in Static HTTP mode and in Auto before any render, its article pages fetched as plain HTML, its previews, and the visual selector's Static HTML page. Each static request therefore sends the feed's own User-Agent if it has one, else `FETCH_USER_AGENT` if that is set, else the built-in name above. Pages that Chromium renders or FlareSolverr loads keep their browser's User-Agent here too. The editor leaves the field blank for a feed without one, and never shows the server's value. The setting is part of the recipe, so recipe exports carry it. Saving a different value is a recipe edit: it drops the source's conditional-request validators and any refresh in progress, and publishes nothing new by itself. Releases before 1.2 ignore it, send their own User-Agent for that feed, and remove it from any feed they save, pause or resume; they also refuse a recipe file in which any feed has one.
 
@@ -177,14 +178,14 @@ A feed can also send a User-Agent of its own: set **User-Agent** under **Request
 
 Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For example, download and verify `v1.1.1` for Linux x86-64 in an empty directory:
+For example, download and verify `v1.2.0` for Linux x86-64 in an empty directory:
 
 ```sh
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.1.1/rss-workshop-v1.1.1-linux-amd64.tar.gz
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.1.1/rss-workshop-v1.1.1-linux-amd64.tar.gz.sha256
-sha256sum -c rss-workshop-v1.1.1-linux-amd64.tar.gz.sha256
-tar -xzf rss-workshop-v1.1.1-linux-amd64.tar.gz
-cd rss-workshop-v1.1.1-linux-amd64
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.2.0/rss-workshop-v1.2.0-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.2.0/rss-workshop-v1.2.0-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v1.2.0-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v1.2.0-linux-amd64.tar.gz
+cd rss-workshop-v1.2.0-linux-amd64
 ./rss-workshop -version
 ```
 
