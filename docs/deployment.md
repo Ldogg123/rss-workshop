@@ -60,10 +60,10 @@ The default Compose files follow stable releases. These moving tags point to the
 | `ghcr.io/ldogg123/rss-workshop:latest-browser` | Explicit alias for the same browser image |
 | `ghcr.io/ldogg123/rss-workshop:latest-static` | Static default |
 
-To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.2.0-browser` and `v1.2.0-static` remain available unchanged; for example:
+To stay on a particular release, set the optional `RSS_IMAGE` in `.env` to its versioned tag or immutable digest. Published version tags such as `v1.3.0-browser` and `v1.3.0-static` remain available unchanged; for example:
 
 ```dotenv
-RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.2.0-browser
+RSS_IMAGE=ghcr.io/ldogg123/rss-workshop:v1.3.0-browser
 ```
 
 Recreate the app with the same runtime and other overrides used by your installation:
@@ -174,18 +174,20 @@ A native executable does not read `.env`: export the value, quoted as [native co
 
 A feed can also send a User-Agent of its own: set **User-Agent** under **Request settings** in its editor. It follows the same rules and replaces `FETCH_USER_AGENT` and the built-in name for that feed's static requests only: its list page in Static HTTP mode and in Auto before any render, its article pages fetched as plain HTML, its previews, and the visual selector's Static HTML page. Each static request therefore sends the feed's own User-Agent if it has one, else `FETCH_USER_AGENT` if that is set, else the built-in name above. Pages that Chromium renders or FlareSolverr loads keep their browser's User-Agent here too. The editor leaves the field blank for a feed without one, and never shows the server's value. The setting is part of the recipe, so recipe exports carry it. Saving a different value is a recipe edit: it drops the source's conditional-request validators and any refresh in progress, and publishes nothing new by itself. Releases before 1.2 ignore it, send their own User-Agent for that feed, and remove it from any feed they save, pause or resume; they also refuse a recipe file in which any feed has one.
 
+Static requests send no `Accept-Language`, and there is no server-wide setting for one. A feed that should ask for a language sets **Accept-Language** under **Request settings**, which is sent with the same requests as the feed's own User-Agent; see [recipe settings](browser.md#recipe-settings).
+
 ## Run a prebuilt executable
 
 Download the archive for your Linux CPU from [Releases](https://github.com/Ldogg123/rss-workshop/releases): `amd64` for x86-64, or `arm64` for 64-bit ARM. These are the supported prebuilt platforms. Each archive includes the executable, application license, dependency notices, and build information. Go, Docker, a separate SQLite installation, and a frontend build are not required. The host must have a working system CA certificate store for HTTPS.
 
-For example, download and verify `v1.2.0` for Linux x86-64 in an empty directory:
+For example, download and verify `v1.3.0` for Linux x86-64 in an empty directory:
 
 ```sh
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.2.0/rss-workshop-v1.2.0-linux-amd64.tar.gz
-curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.2.0/rss-workshop-v1.2.0-linux-amd64.tar.gz.sha256
-sha256sum -c rss-workshop-v1.2.0-linux-amd64.tar.gz.sha256
-tar -xzf rss-workshop-v1.2.0-linux-amd64.tar.gz
-cd rss-workshop-v1.2.0-linux-amd64
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.3.0/rss-workshop-v1.3.0-linux-amd64.tar.gz
+curl -fLO https://github.com/Ldogg123/rss-workshop/releases/download/v1.3.0/rss-workshop-v1.3.0-linux-amd64.tar.gz.sha256
+sha256sum -c rss-workshop-v1.3.0-linux-amd64.tar.gz.sha256
+tar -xzf rss-workshop-v1.3.0-linux-amd64.tar.gz
+cd rss-workshop-v1.3.0-linux-amd64
 ./rss-workshop -version
 ```
 
@@ -213,7 +215,7 @@ Export any other setting from the [environment table](#environment-variables) th
 
 Static fetching and visual selection work without Chromium. To render JavaScript pages, install Chromium separately and export `CHROMIUM_PATH` with its executable's absolute path before starting the app, for example `export CHROMIUM_PATH=/usr/bin/chromium`. The host must support Chromium's sandbox; run as non-root and follow [browser rendering](browser.md). [External FlareSolverr](flaresolverr.md) also works without local Chromium. To use an existing PostgreSQL server, set `DATABASE_URL` as described in [PostgreSQL setup](postgresql.md); changing the database does not migrate existing data.
 
-For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Direct upgrades from every released database schema are supported; see [upgrade compatibility](operations.md#upgrades). Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
+For upgrades, back up the database, stop the old process, unpack the new executable, and restart it with the same environment and data path. Direct upgrades from every released database schema are supported; see [upgrade compatibility](operations.md#upgrades). Going back after a schema upgrade means restoring a backup as the user that runs the app; see [downgrades](operations.md#downgrades). Keep one application process per database. Preserve the bundled `LICENSE` and `licenses/` notices when redistributing the executable.
 
 ## Run from source
 

@@ -72,58 +72,186 @@ func OpenPostgres(ctx context.Context, databaseURL string, maxItems int) (*Store
 	db.SetConnMaxIdleTime(5 * time.Minute)
 	db.SetConnMaxLifetime(30 * time.Minute)
 
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	start, cancel := context.WithTimeout(ctx, postgresStartTimeout)
 	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
+	if err := db.PingContext(start); err != nil {
 		db.Close()
 		if errors.Is(err, errPostgresEncoding) {
 			return nil, errPostgresEncoding
 		}
 		return nil, errors.New("cannot connect to PostgreSQL; check connection settings and server availability")
 	}
-	if err := initializePostgres(ctx, db); err != nil {
+	version, err := initializePostgres(start, db)
+	if err == nil && version < currentSchema {
+		err = upgradePostgres(ctx, db)
+	}
+	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Store{DB: db, MaxItems: maxItems, postgres: true}, nil
 }
 
-func initializePostgres(ctx context.Context, db *sql.DB) error {
+// postgresStartTimeout bounds connecting and every start with nothing to
+// upgrade, so a stuck server stops startup within seconds. An upgrade can read
+// whole tables, as schema 6 reads items, which on slow storage with a cold
+// cache can take minutes, so it gets postgresUpgradeTimeout, with its
+// statement_timeout raised to match. The readiness check fails meanwhile, but
+// a container's restart policy acts only when the process exits, so this
+// limit is what ends an upgrade on a server that stopped responding; a stop
+// signal cancels it sooner. They are variables only so tests can shorten them.
+var (
+	postgresStartTimeout   = 10 * time.Second
+	postgresUpgradeTimeout = 10 * time.Minute
+)
+
+// initializePostgres creates the tables of an empty database and returns the
+// schema version it found. A version below currentSchema needs upgradePostgres.
+func initializePostgres(ctx context.Context, db *sql.DB) (int, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New("cannot begin PostgreSQL schema initialization")
+		return 0, errors.New("cannot begin PostgreSQL schema initialization")
 	}
 	defer tx.Rollback()
+	count, version, err := lockPostgresSchema(ctx, tx)
+	if err != nil || count == 1 && version < currentSchema {
+		// An older schema is upgraded in a transaction of its own, under its own
+		// limit; this one ends without a change.
+		return version, err
+	}
+	if count == 1 {
+		if err := tx.Commit(); err != nil {
+			return 0, errors.New("cannot commit PostgreSQL schema initialization")
+		}
+		return version, nil
+	}
+	// No IF NOT EXISTS here: unrelated or partially initialized tables must
+	// cause rollback, rather than silently being adopted or overwritten.
+	if _, err := tx.ExecContext(ctx, postgresSchema); err != nil {
+		return 0, errors.New("cannot initialize PostgreSQL tables; use an empty dedicated database with schema creation permission")
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES($1)", currentSchema); err != nil {
+		return 0, errors.New("cannot record PostgreSQL schema version")
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, errors.New("cannot commit PostgreSQL schema initialization")
+	}
+	return currentSchema, nil
+}
+
+// postgresSchemaLock is the advisory lock key that serializes startups.
+const postgresSchemaLock = "32284341236986475"
+
+// lockPostgresSchema takes the schema lock for tx and reads the version: count
+// is 0 for an empty database and 1 for a supported schema.
+func lockPostgresSchema(ctx context.Context, tx *sql.Tx) (count, version int, err error) {
 	// Serialize startup DDL even before the version table exists. This lock is
 	// database-local and transaction-scoped, so a failed startup releases it.
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(32284341236986475::bigint)"); err != nil {
-		return errors.New("cannot lock PostgreSQL schema initialization")
+	// lock_timeout still ends the wait after 5 seconds, so a second process
+	// stops rather than queue behind an upgrade that can take minutes.
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock("+postgresSchemaLock+"::bigint)"); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return 0, 0, errors.New("cannot lock PostgreSQL schema initialization: another connection is initializing or upgrading this database; run one application process per database")
+		}
+		return 0, 0, errors.New("cannot lock PostgreSQL schema initialization")
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version(singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), version INTEGER NOT NULL)`); err != nil {
-		return errors.New("cannot read PostgreSQL schema version; check database ownership and permissions")
+		return 0, 0, errors.New("cannot read PostgreSQL schema version; check database ownership and permissions")
 	}
-	var count, version int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*),COALESCE(min(version),0) FROM schema_version").Scan(&count, &version); err != nil {
-		return errors.New("cannot read PostgreSQL schema version")
+		return 0, 0, errors.New("cannot read PostgreSQL schema version")
 	}
 	if count > 1 || (count == 1 && (version < 1 || version > currentSchema)) {
+		return 0, 0, errors.New("unsupported PostgreSQL database schema version")
+	}
+	return count, version, nil
+}
+
+// upgradePostgres migrates a supported older schema to the current one in a
+// single transaction, which ctx can cancel and postgresUpgradeTimeout ends.
+func upgradePostgres(ctx context.Context, db *sql.DB) error {
+	limit := postgresUpgradeTimeout
+	upgrade, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	tx, err := db.BeginTx(upgrade, nil)
+	if err != nil {
+		return errors.New("cannot begin PostgreSQL schema upgrade")
+	}
+	defer tx.Rollback()
+	// Read again under the lock: another process may have upgraded since.
+	count, version, err := lockPostgresSchema(upgrade, tx)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
 		return errors.New("unsupported PostgreSQL database schema version")
 	}
-	if count == 1 && version < currentSchema {
-		// The app cannot run pg_dump, so unlike SQLite nothing is copied first.
-		slog.Warn("upgrading PostgreSQL database schema without an automatic backup", "from_schema", version, "to_schema", currentSchema,
-			"note", "an older release cannot open the upgraded database; keep a pg_dump from before this upgrade to roll back")
+	if version == currentSchema {
+		return nil
 	}
-	if count == 0 {
-		// No IF NOT EXISTS here: unrelated or partially initialized tables must
-		// cause rollback, rather than silently being adopted or overwritten.
-		if _, err := tx.ExecContext(ctx, postgresSchema); err != nil {
-			return errors.New("cannot initialize PostgreSQL tables; use an empty dedicated database with schema creation permission")
+	// The connection's 30-second statement_timeout would end a long step first.
+	// set_config with true is SET LOCAL: the limit ends with this transaction.
+	var pid int
+	if err := tx.QueryRowContext(upgrade, "SELECT pg_backend_pid(),set_config('statement_timeout',$1,true)", strconv.FormatInt(max(limit.Milliseconds(), 1), 10)).Scan(&pid, new(string)); err != nil {
+		return errors.New("cannot set the PostgreSQL schema upgrade time limit")
+	}
+	// When the limit passes or startup is interrupted, the driver drops the
+	// connection and asks the server to cancel the statement, but from a
+	// goroutine that a process exiting on this error does not wait for.
+	// Without that request PostgreSQL goes on running the statement, holding
+	// this upgrade's locks, until it ends or reaches statement_timeout, so
+	// send one here and wait for it: the upgrade rolls back before the exit.
+	canceled := make(chan struct{})
+	stop := context.AfterFunc(upgrade, func() {
+		defer close(canceled)
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = db.ExecContext(cancelCtx, "SELECT pg_cancel_backend($1)", pid)
+	})
+	defer func() {
+		if !stop() {
+			<-canceled
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES($1)", currentSchema); err != nil {
-			return errors.New("cannot record PostgreSQL schema version")
+	}()
+	// The app cannot run pg_dump, so unlike SQLite nothing is copied first.
+	slog.Warn("upgrading PostgreSQL database schema without an automatic backup", "from_schema", version, "to_schema", currentSchema,
+		"note", "an older release cannot open the upgraded database; keep a pg_dump from before this upgrade to roll back")
+	slog.Info("PostgreSQL schema upgrade started", "from_schema", version, "to_schema", currentSchema, "time_limit", limit.String())
+	started := time.Now()
+	if err := migratePostgres(upgrade, tx, version); err != nil {
+		reason := ""
+		switch {
+		case ctx.Err() != nil:
+			reason = "startup was interrupted"
+		case upgrade.Err() != nil || time.Since(started) >= limit:
+			reason = "the upgrade did not finish within " + describeLimit(limit)
+		default:
+			return err
 		}
-	} else if version == 1 {
+		return fmt.Errorf("cannot migrate PostgreSQL database from schema version %d to %d: %s; the database is unchanged", version, currentSchema, reason)
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("cannot commit PostgreSQL schema upgrade")
+	}
+	slog.Info("PostgreSQL schema upgrade finished", "from_schema", version, "to_schema", currentSchema, "duration", time.Since(started).Round(time.Millisecond).String())
+	return nil
+}
+
+// describeLimit names a time limit in an error an operator reads.
+func describeLimit(d time.Duration) string {
+	switch {
+	case d == time.Minute:
+		return "1 minute"
+	case d > time.Minute && d%time.Minute == 0:
+		return strconv.FormatInt(int64(d/time.Minute), 10) + " minutes"
+	}
+	return d.String()
+}
+
+// migratePostgres takes every step from version to currentSchema in tx.
+func migratePostgres(ctx context.Context, tx *sql.Tx, version int) error {
+	if version == 1 {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE runs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT ''; UPDATE schema_version SET version=2`); err != nil {
 			return errors.New("cannot migrate PostgreSQL database from schema version 1 to 2")
 		}
@@ -157,12 +285,10 @@ func initializePostgres(ctx context.Context, db *sql.DB) error {
 	if version == 5 {
 		// See schemaSixSQLite: last_new starts at the newest stored story, and
 		// the version gate keeps older applications from ignoring 1.3 recipes.
+		// It reads all of items, the one step whose time grows with the library.
 		if _, err := tx.ExecContext(ctx, schemaSixPostgres+"UPDATE schema_version SET version=6"); err != nil {
 			return errors.New("cannot migrate PostgreSQL database from schema version 5 to 6")
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return errors.New("cannot commit PostgreSQL schema initialization")
 	}
 	return nil
 }

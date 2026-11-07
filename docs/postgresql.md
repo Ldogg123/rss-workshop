@@ -106,7 +106,7 @@ Follow the restore procedure below to restore into a new database and verify the
 
 Use PostgreSQL's `pg_dump` and `pg_restore`, not the SQLite backup utility or a copy of the app's `/data` directory. Use client tools compatible with your server, normally the same PostgreSQL major version. A [logical dump captures a consistent database snapshot](https://www.postgresql.org/docs/18/backup-dump.html) while the app remains running.
 
-The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.1.0, v1.1.1 or v1.2.0 database moves from schema 5 to schema 6 the first time this version runs, and an older one takes every step in the same transaction; retain a pre-upgrade dump to roll back, because an older release, v1.2.0 included, cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates. See [upgrade compatibility](operations.md#upgrades).
+The dump includes saved refresh diagnostics. RSS Workshop upgrades any released schema to the current one transactionally on startup, so a v1.1.0, v1.1.1 or v1.2.0 database moves from schema 5 to schema 6 the first time this version runs, and an older one takes every step in the same transaction; retain a pre-upgrade dump to roll back, because an older release, v1.2.0 included, cannot read a newer schema. Unlike SQLite, PostgreSQL gets no automatic copy before the upgrade; the app logs a warning when it migrates, and the upgrade has a [time limit](#schema-upgrade-time) of its own. See [upgrade compatibility](operations.md#upgrades).
 
 For the supplied Compose server, create a custom-format dump in a private backup directory. Keep any static or VPN overrides used by your deployment:
 
@@ -148,3 +148,24 @@ docker compose -f compose.yaml -f compose.postgres.yaml exec -T rss-workshop /rs
 Sign in and verify the feed library and sample RSS/Atom output before discarding any old backup or database. Reverting the URI to the original database provides rollback while it remains available. Restored reader tokens and schedules come from the backup.
 
 For an existing PostgreSQL server, use the same dump/restore options with that server's client tools and an administrator-created empty target database. Supply credentials through a protected password file or your database provider's tooling; avoid putting passwords directly in command arguments. Follow the provider's backup and recovery instructions when it manages the database.
+
+## Schema upgrade time
+
+Startup allows 10 seconds to connect to PostgreSQL and check the schema version, or create the tables of an empty database. A schema upgrade runs in one transaction with up to 10 minutes of its own. Upgrading to schema 6 reads the whole stories table once, to start each feed's last new story at its newest saved one. A 1 GB table took under a second when cached; when neither PostgreSQL nor the host has cached it, as after a reboot, reading it takes about its size divided by the storage's read speed, such as 20 seconds at the 50 MB/s of an SD card or a slow network share. The log says `PostgreSQL schema upgrade started`, with the time limit, and then `PostgreSQL schema upgrade finished`, with how long it took.
+
+The app answers no request until then, so its health check fails: after a little over a minute, about 70 seconds on Docker Engine 25 and newer, Docker marks the container unhealthy, and `docker compose up --wait` reports that. Docker does not restart a container for being unhealthy, and the upgrade goes on; follow it with `docker compose logs -f rss-workshop`. If a service manager limits how long a native process may take to start, allow at least 10 minutes. Stopping or restarting the app meanwhile rolls the upgrade back, and the next start begins it again.
+
+If the upgrade has not finished after 10 minutes, or the app receives a stop signal while it runs, the app cancels it on the PostgreSQL server before exiting. The transaction rolls back, the database stays at schema 5 with every row as it was, and startup stops with `cannot migrate PostgreSQL database from schema version 5 to 6: the upgrade did not finish within 10 minutes; the database is unchanged`, or `startup was interrupted` in place of the time limit. After a timeout, Compose restarts the app, which tries again.
+
+While an upgrade runs, a second app process started against the same database stops after 5 seconds with `cannot lock PostgreSQL schema initialization: another connection is initializing or upgrading this database; run one application process per database`. A start stops the same way after the app was killed outright during an upgrade, as by `docker kill` or a host failure rather than a stop signal: PostgreSQL then rolls the upgrade back only when the statement it was running ends, within 10 minutes.
+
+To check the size of the table first, and on very slow storage read it into the cache just before starting this version, run these queries; replace the Compose command with your own client for an existing server:
+
+```sh
+docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres psql \
+  -U rss_workshop -d rss_workshop -v ON_ERROR_STOP=1 \
+  -c "SELECT pg_size_pretty(pg_relation_size('items')) AS stories_table;" \
+  -c 'SELECT max(first_seen) FROM items;'
+```
+
+If the upgrade keeps running out of time, for example because the table cannot be read in 10 minutes and the host's memory cannot cache it, the database is still at schema 5, and v1.2.0 opens it as it is.

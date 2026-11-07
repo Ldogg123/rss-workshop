@@ -126,7 +126,7 @@ CREATE INDEX feed_filters_filter ON feed_filters(filter_id);
 // last_new is when a stored refresh last inserted a story its feed did not
 // have stored, and that retention kept; 0 means none, or none known. Nothing
 // remembers deleted rows, so a story that retention or history pruning removed
-// counts again if its source still lists it. It is dashboard and metrics
+// counts again if a later refresh stores it again. It is dashboard and metrics
 // state: reader output never reads it, so neither this upgrade nor a refresh
 // that moves it changes a published byte. Existing feeds start at their newest
 // stored story's first_seen, which is what that rule would have recorded for
