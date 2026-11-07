@@ -23,6 +23,11 @@ type Recipe struct {
 	// Optional per-item article fetching. Nil leaves a feed built from its
 	// list page alone, which stays the default for every existing recipe.
 	Full *FullContent `json:"full_content,omitempty"`
+	// Remove holds cleanup rules: selectors, in the article selector's
+	// language, for parts of the selected description and article body that
+	// are left out before they are sanitized. Omitted when empty, so a recipe
+	// without rules, and its export, is unchanged.
+	Remove []string `json:"remove,omitempty"`
 	// UserAgent replaces the server's User-Agent for this feed's static
 	// requests: its list page, article pages fetched as plain HTML, previews
 	// and the visual selector's static snapshot. Chromium and FlareSolverr

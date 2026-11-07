@@ -80,8 +80,9 @@ func (a *App) Handler() http.Handler {
 		MaxRuns, MaxArticles                                  int
 		QuietDays, QuietIntervals, QuietNever                 int
 		QuietDayChoices                                       []int
+		MaxCleanupRules                                       int
 	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns, scheduler.MaxArticlesPerRun,
-		int(model.QuietFloor / (24 * time.Hour)), model.QuietIntervals, model.QuietNever, model.QuietDayChoices}
+		int(model.QuietFloor / (24 * time.Hour)), model.QuietIntervals, model.QuietNever, model.QuietDayChoices, extract.MaxCleanupRules}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, page)
@@ -337,10 +338,18 @@ func (a *App) testNotification(w http.ResponseWriter, r *http.Request) {
 // FETCH_USER_AGENT's is, and around an Accept-Language, so the trimmed values
 // are what validate checks, what a preview sends and what is stored. Every
 // handler that accepts a recipe calls it before validating, which refuses a
-// value with space around it.
+// value with space around it. Cleanup rules are entered one per line, so the
+// space around each and blank lines are dropped the same way.
 func trimRecipe(r *model.Recipe) {
 	r.UserAgent, _ = fetch.CheckUserAgent(r.UserAgent)
 	r.AcceptLanguage = strings.TrimSpace(r.AcceptLanguage)
+	var rules []string
+	for _, rule := range r.Remove {
+		if rule = strings.TrimSpace(rule); rule != "" {
+			rules = append(rules, rule)
+		}
+	}
+	r.Remove = rules
 }
 func validate(f model.Feed) error {
 	if strings.TrimSpace(f.Title) == "" || len(f.Title) > 200 {

@@ -122,7 +122,7 @@ func validateSelectors(r model.Recipe) error {
 		if len(r.Full.Attr) > 200 {
 			return fmt.Errorf("attribute name exceeds 200 characters")
 		}
-		if r.Type == "css" {
+		if articleType(r) == "css" {
 			if _, e := cascadia.Compile(s); e != nil {
 				return fmt.Errorf("invalid CSS selector for the article body: %w", e)
 			}
@@ -130,9 +130,56 @@ func validateSelectors(r model.Recipe) error {
 			return fmt.Errorf("invalid XPath selector for the article body: %w", e)
 		}
 	}
+	if err := validateCleanup(r); err != nil {
+		return err
+	}
 	if r.Timezone != "" {
 		if _, e := time.LoadLocation(r.Timezone); e != nil {
 			return fmt.Errorf("unknown time zone")
+		}
+	}
+	return nil
+}
+
+// articleType is the selector language of the article body selector and of
+// the cleanup rules: the recipe's own.
+func articleType(r model.Recipe) string {
+	return r.Type
+}
+
+// MaxCleanupRules bounds the cleanup rules a recipe runs on each description
+// and article body.
+const MaxCleanupRules = 20
+
+// validateCleanup checks the cleanup rules. Errors name a rule by its number;
+// an XPath compile error can quote the expression, which only the operator
+// who wrote it sees.
+func validateCleanup(r model.Recipe) error {
+	if len(r.Remove) > MaxCleanupRules {
+		return fmt.Errorf("use at most %d cleanup rules", MaxCleanupRules)
+	}
+	for i, rule := range r.Remove {
+		n := i + 1
+		if rule == "" || strings.TrimSpace(rule) != rule {
+			return fmt.Errorf("cleanup rule %d must be a selector without space around it", n)
+		}
+		if len(rule) > 1000 {
+			return fmt.Errorf("cleanup rule %d exceeds 1000 characters", n)
+		}
+		if articleType(r) == "css" {
+			if _, e := cascadia.Compile(rule); e != nil {
+				return fmt.Errorf("invalid CSS selector in cleanup rule %d: %w", n, e)
+			}
+			continue
+		}
+		// A rule runs inside the selected block. "." and ".share", which a
+		// CSS rule left behind by a change of selector type looks like,
+		// select the block itself and would quietly remove nothing.
+		if !strings.HasPrefix(rule, "./") {
+			return fmt.Errorf("XPath cleanup rule %d must start with ./, such as .//div[@class='share']", n)
+		}
+		if _, e := xpath.Compile(rule); e != nil {
+			return fmt.Errorf("invalid XPath selector in cleanup rule %d: %w", n, e)
 		}
 	}
 	return nil
@@ -443,6 +490,61 @@ func imageAddress(value string) bool {
 	return web || strings.HasPrefix(value, "/") || strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../")
 }
 
+// clean returns n, or, when the recipe has cleanup rules, a detached copy of
+// n without the nodes they select. The card's other fields keep reading the
+// page as it was, and a rule cannot reach outside the block: CSS matches only
+// its descendants, and the copy has no parent for XPath to climb to. Neither
+// the copy itself nor an attribute result, which htmlquery returns detached,
+// has a parent to be removed from. While a rule runs, label names it by
+// number for a recovered panic, never by its text, which can hold a URL.
+func clean(n *html.Node, r model.Recipe, label *string) *html.Node {
+	if len(r.Remove) == 0 {
+		return n
+	}
+	root := clone(n)
+	for i, rule := range r.Remove {
+		*label = fmt.Sprintf("cleanup rule %d", i+1)
+		for _, m := range selectNodes(root, articleType(r), rule) {
+			if m.Parent != nil {
+				m.Parent.RemoveChild(m)
+			}
+		}
+	}
+	return root
+}
+
+// visible reports whether sanitized markup shows anything: text other than
+// space, or an image with an address.
+func visible(markup string) bool {
+	z := html.NewTokenizer(strings.NewReader(markup))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return false
+		case html.TextToken:
+			if strings.TrimSpace(string(z.Text())) != "" {
+				return true
+			}
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, more := z.TagName()
+			for string(name) == "img" && more {
+				var key, value []byte
+				key, value, more = z.TagAttr()
+				if string(key) == "src" && strings.TrimSpace(string(value)) != "" {
+					return true
+				}
+			}
+		}
+	}
+}
+
+// emptiedByCleanup reports whether cleanup rules left a block that showed
+// something with nothing to show. A block that was already empty is not
+// their doing, and is kept as it always was.
+func emptiedByCleanup(cleaned string, n *html.Node, r model.Recipe, base *url.URL) bool {
+	return len(r.Remove) > 0 && !visible(cleaned) && visible(content(n, base))
+}
+
 func content(n *html.Node, base *url.URL) string {
 	// Clone before normalizing so overlapping field selectors are unaffected.
 	var b bytes.Buffer
@@ -606,14 +708,17 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		it := model.Item{Key: key, Title: title, URL: link}
 		selector = "Content"
 		rawContent, cn := field(n, r.Type, r.Content, "")
+		emptied := false
 		if cn != nil {
 			if r.Content.Attr != "" || isAttribute(cn) {
 				it.HTML = html.EscapeString(rawContent)
-			} else {
-				it.HTML = content(cn, base)
+			} else if it.HTML = content(clean(cn, r, &selector), base); emptiedByCleanup(it.HTML, cn, r, base) {
+				// The usual warning would quote the text the rules removed.
+				it.HTML, emptied = "", true
+				out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: cleanup removed the whole description; content omitted", i+1))
 			}
 		}
-		if r.Content.Selector != "" && strings.TrimSpace(it.HTML) == "" {
+		if r.Content.Selector != "" && !emptied && strings.TrimSpace(it.HTML) == "" {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: %s; content omitted", i+1,
 				fieldMismatch("Content", "text or safe HTML", rawContent, cn, r.Content, "")))
 		}

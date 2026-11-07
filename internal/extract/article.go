@@ -21,9 +21,10 @@ const MaxArticleBytes = 256 << 10
 func Article(body []byte, effective string, r model.Recipe) (out string, err error) {
 	// Article pages are extracted on the article workers' own goroutines, so a
 	// panic here stops the server even from a preview.
+	selector := "article"
 	defer func() {
 		if v := recover(); v != nil {
-			out, err = "", selectorFailure("article", v)
+			out, err = "", selectorFailure(selector, v)
 		}
 	}()
 	if r.Full == nil || r.Full.Selector == "" {
@@ -44,7 +45,7 @@ func Article(body []byte, effective string, r model.Recipe) (out string, err err
 			}
 		}
 	}
-	nodes := selectNodes(doc, r.Type, r.Full.Selector)
+	nodes := selectNodes(doc, articleType(r), r.Full.Selector)
 	if len(nodes) == 0 {
 		return "", fmt.Errorf("article selector matched nothing on the item page")
 	}
@@ -53,8 +54,11 @@ func Article(body []byte, effective string, r model.Recipe) (out string, err err
 	// paper over by concatenating unrelated sections of the page.
 	if r.Full.Attr != "" {
 		out = policy.Sanitize(attr(nodes[0], r.Full.Attr))
-	} else {
-		out = content(nodes[0], base)
+	} else if out = content(clean(nodes[0], r, &selector), base); emptiedByCleanup(out, nodes[0], r, base) {
+		// A failed article keeps the list-page description. A body that
+		// shows nothing even without the rules, such as a video, is stored
+		// as before: failing it would refetch it on every refresh.
+		return "", fmt.Errorf("article body is empty after cleanup")
 	}
 	if len(out) > MaxArticleBytes {
 		return "", fmt.Errorf("article body exceeds %d bytes", MaxArticleBytes)
