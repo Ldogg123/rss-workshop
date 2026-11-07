@@ -14,7 +14,7 @@ RSS Workshop is designed for people looking for a self-hosted alternative to hos
 - Full article content: follow each story’s link and publish the article, not the teaser
 - Story include/exclude filters with nested rules and bulk keyword lists, plus a filter library to reuse rules across feeds
 - RSS and Atom output with stable item identities, plus OPML export of every feed
-- Per-feed diagnostics, Prometheus metrics, and verified backup and restore
+- A searchable library that points out feeds gone quiet, plus per-feed diagnostics, Prometheus metrics, and verified backup and restore
 - SQLite or PostgreSQL, Docker or a standalone Linux executable
 
 ![RSS Workshop dashboard in dark mode](docs/screenshots/dashboard.png)
@@ -50,6 +50,8 @@ Open [localhost:8080](http://localhost:8080) and sign in. Use `sudo docker` if y
 4. Choose **Preview items** to see exactly what a reader will receive, then save.
 5. Copy the RSS or Atom URL into your reader.
 
+To build another feed from the same site, such as a different section, or to try other selectors without touching a working feed, choose **Duplicate** on its card. The editor opens a copy with every setting and the same library filters; nothing is saved until you save it, and the copy gets its own reader links.
+
 Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and three ready-made recipes covering every field, XPath, filtering and full article content. Serve it, import the recipes, and preview: see [examples](docs/examples/).
 
 Reader requests serve saved stories and never fetch the source, so a slow or broken site cannot stall your reader, and a failed refresh keeps the last good output. Anyone holding a feed link can read it; **Reset feed links** revokes a feed’s existing URLs.
@@ -83,14 +85,15 @@ Screenshots use sample feeds.
 
 Sites change their markup, and a feed that quietly stops updating is the usual symptom.
 
+- The library marks a feed **Quiet** when its refreshes keep succeeding but its published output has not changed for two weeks, or for ten refresh intervals if that is longer. Search the library by name or site, filter it by status, and sort it by last change, last success or failures to find the feeds that need a look.
 - **Preview items** explains why a story was rejected, field by field.
 - A saved feed’s **Diagnostics** shows its last 50 refreshes with fetch mode, HTTP status, timing, match counts and field samples.
 - `docker compose logs -f rss-workshop` reports each refresh and the reason for any failure; set `LOG_LEVEL` to `warn` for problems only.
-- Setting `METRICS_TOKEN` exposes `/metrics` for Prometheus, including per-feed failure counts and last-success times, so an alert can name the feed that broke.
+- Setting `METRICS_TOKEN` exposes `/metrics` for Prometheus, including per-feed failure counts, last-success and last-change times, and a count of quiet feeds, so an alert can name the feed that broke.
 
 ![Per-feed refresh diagnostics](docs/screenshots/diagnostics.png)
 
-See [diagnostics and retention](docs/operations.md#feed-diagnostics) and [log detail](docs/operations.md#log-detail).
+See [the library dashboard](docs/operations.md#the-library-dashboard), [quiet feeds](docs/operations.md#quiet-feeds), [diagnostics and retention](docs/operations.md#feed-diagnostics) and [log detail](docs/operations.md#log-detail).
 
 ## Updates
 

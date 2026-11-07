@@ -43,37 +43,113 @@ async function load(){
  const out=await api('/feeds');feeds=out.feeds;browserAvailable=out.browser?.capacity>0;flaresolverrAvailable=out.flaresolverr?.capacity>0;
  $('#queue').textContent=`${feeds.length} feed${feeds.length===1?'':'s'} · ${out.active} of ${out.capacity} refresh slots in use · ${out.due} due · Chromium ${browserAvailable?`${out.browser.active}/${out.browser.capacity} slots`:"not configured"} · FlareSolverr ${flaresolverrAvailable?`${out.flaresolverr.active}/${out.flaresolverr.capacity} slots`:"not configured"}`;
  if(!$('#editor').hidden)renderHelp();
- $('#empty').hidden=feeds.length>0;$('#export-recipes').hidden=feeds.length===0;const list=$('#feeds');list.replaceChildren();
- for(const f of feeds){
-  const held=f.enabled&&f.held;
-  const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',!f.enabled?'Paused':held?'Waiting to retry':f.error?'Needs attention':f.last_success.startsWith('0001-')?'Pending':'Active','badge'+(f.error||held?' error':'')));card.append(top);
-  const source=node('a',f.url,'source');source.href=f.url;source.target='_blank';source.rel='noopener noreferrer';card.append(source);
-  const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Next refresh',!f.enabled?'Paused':held?'Delayed after a failed save':when(f.next_run)]]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
-  const libraryFilters=window.rssLibrary?.names(f.filter_ids||[])||[];
-  if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
-  if(held)card.append(node('p','Waiting to retry a failed database write. The last refresh could not be saved; it is retried after a delay, or now with Refresh.','diagnostic feed-held'));
-  if(f.error)card.append(node('p',f.error,'diagnostic'));
-  const actions=node('div',undefined,'feed-actions');actions.append(action('Edit',()=>openEditor(f)),action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}/enabled`,'POST',{enabled:!f.enabled});await load();}),action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'));card.append(actions);
-  const diagnostics=node('button','Diagnostics','quiet feed-diagnostics');diagnostics.type='button';diagnostics.onclick=()=>window.rssDiagnostics.open(f);diagnostics.dataset.feedId=f.id;actions.append(diagnostics);
-  const exportLink=node('a','Export recipe','quiet button-link');exportLink.href='/api/recipes/export?id='+encodeURIComponent(f.id);exportLink.download='';actions.append(exportLink);
-  const links=node('div',undefined,'feed-links');
-  for(const [format,url] of [['RSS',f.rss_url],['Atom',f.atom_url]]){
-   if(!url)continue;
-   const row=node('div',undefined,'feed-format'),link=node('a',`Open ${format} feed ↗`,'rss-link');link.href=url;link.target='_blank';link.rel='noopener noreferrer';row.append(link,action(`Copy ${format} URL`,()=>copyFeedURL(format,url)));links.append(row);
-  }
-  links.append(action('Reset feed links',async()=>{if(!confirm('Reset both RSS and Atom links? Readers using either old link will need the new one.'))return;await api(`/feeds/${f.id}/rotate-token`,'POST',{});await load();}));card.append(links);list.append(card);
- }
+ $('#empty').hidden=feeds.length>0;$('#export-recipes').hidden=feeds.length===0;renderLibrary();
  window.dispatchEvent(new CustomEvent('rss-feeds-loaded',{detail:feeds.map(f=>f.id)}));
 }
+// The library toolbar filters and sorts the feeds the last load fetched, so
+// changing it requests nothing, and the poll redraws with what is selected.
+// Status and sort are remembered in this browser; the search is not, so a
+// returning visitor never finds the library narrowed by a forgotten word.
+const view={search:'',status:'all',sort:'title'},viewKey='rss-library-view';
+const statusLabels={active:'Active',quiet:'Quiet',failing:'Needs attention',held:'Waiting to retry',pending:'Pending',paused:'Paused'};
+const stamp=v=>!v||v.startsWith('0001-')?null:Date.parse(v);
+// A feed has one status, in this order, and its badge and the status filter
+// both use it. The server reports quiet only for a feed that is none of the
+// others.
+function feedStatus(f){return !f.enabled?'paused':f.held?'held':f.error?'failing':stamp(f.last_success)===null?'pending':f.quiet?'quiet':'active';}
+const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
+const byTitle=(a,b)=>collator.compare(a.title,b.title)||(a.id<b.id?-1:a.id>b.id?1:0);
+// Missing times sort as given: a feed with no next refresh last, one that
+// never succeeded or never published first, as the oldest.
+const byTime=(a,b,missing)=>{const x=a??missing,y=b??missing;return x===y?0:x<y?-1:1;};
+const sorters={
+ title:()=>0,
+ next:(a,b)=>byTime(a.enabled&&!a.held?stamp(a.next_run):null,b.enabled&&!b.held?stamp(b.next_run):null,Infinity),
+ success:(a,b)=>byTime(stamp(a.last_success),stamp(b.last_success),-Infinity),
+ changed:(a,b)=>byTime(stamp(a.last_changed),stamp(b.last_changed),-Infinity),
+ failures:(a,b)=>(b.failures||0)-(a.failures||0),
+};
+const fold=v=>String(v||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+// The site as the card shows it, without a path or credentials.
+const sourceHost=url=>/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?([^/?#]*)/i.exec(url||'')?.[1]||'';
+function restoreView(){
+ try{const saved=JSON.parse(localStorage.getItem(viewKey)||'null');if(Object.hasOwn(statusLabels,saved?.status))view.status=saved.status;if(Object.hasOwn(sorters,saved?.sort))view.sort=saved.sort;}catch{}
+ $('#feed-status').value=view.status;$('#feed-sort').value=view.sort;
+}
+function saveView(){try{localStorage.setItem(viewKey,JSON.stringify({status:view.status,sort:view.sort}));}catch{}}
+function renderLibrary(){
+ const list=$('#feeds'),q=fold(view.search);
+ const shown=feeds.filter(f=>(view.status==='all'||feedStatus(f)===view.status)&&(!q||fold(f.title).includes(q)||fold(sourceHost(f.url)).includes(q))).sort((a,b)=>sorters[view.sort](a,b)||byTitle(a,b));
+ // Every card is rebuilt, so put keyboard focus back on the same control of
+ // the same feed; the toolbar sits outside the list and keeps its own.
+ const focused=document.activeElement,from=focused?.closest?.('.feed-card');
+ const keep=from&&list.contains(from)&&focused.dataset.focus?{id:from.dataset.feedId,key:focused.dataset.focus}:null;
+ list.replaceChildren(...shown.map(feedCard));
+ if(keep)list.querySelector(`.feed-card[data-feed-id="${CSS.escape(keep.id)}"] [data-focus="${CSS.escape(keep.key)}"]`)?.focus({preventScroll:true});
+ $('#library-tools').hidden=feeds.length===0;$('#no-matches').hidden=feeds.length===0||shown.length>0;
+ const total=`${feeds.length} feed${feeds.length===1?'':'s'}`,count=shown.length===feeds.length?(feeds.length===1?'Showing 1 feed':`Showing all ${total}`):`Showing ${shown.length} of ${total}`;
+ // The count is a live region; rewriting the same text every poll would
+ // announce it again.
+ if($('#feed-count').textContent!==count)$('#feed-count').textContent=count;
+}
+function feedCard(f){
+ const status=feedStatus(f),held=status==='held',focusable=(element,key)=>{element.dataset.focus=key;return element;};
+ const card=node('article',undefined,'feed-card'+(f.enabled?'':' paused'));card.dataset.feedId=f.id;
+ const top=node('div',undefined,'feed-top');top.append(node('h2',f.title),node('span',statusLabels[status],'badge'+(status==='failing'||held?' error':status==='quiet'?' badge-quiet':'')));card.append(top);
+ const source=node('a',f.url,'source');source.href=f.url;source.target='_blank';source.rel='noopener noreferrer';card.append(focusable(source,'source'));
+ const times=node('dl',undefined,'times');for(const [label,value] of [['Saved items',f.count],['Next refresh',!f.enabled?'Paused':held?'Delayed after a failed save':when(f.next_run)],['Failures in a row',f.failures||0],['Last attempt',when(f.last_attempt)],['Last success',when(f.last_success)],['Last change',when(f.last_changed)]]){const pair=node('div');pair.append(node('dt',label),node('dd',String(value)));times.append(pair);}card.append(times);
+ const libraryFilters=window.rssLibrary?.names(f.filter_ids||[])||[];
+ if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
+ if(held)card.append(node('p','Waiting to retry a failed database write. The last refresh could not be saved; it is retried after a delay, or now with Refresh.','diagnostic feed-held'));
+ if(status==='quiet'){
+  const days=Math.max(0,Math.floor((Date.now()-stamp(f.last_changed))/864e5));
+  card.append(node('p',`Output unchanged for ${days} day${days===1?'':'s'}. Refreshes keep succeeding, but nothing they publish has changed. Check that the page still lists new stories, or preview the recipe from Edit.`,'feed-quiet'));
+ }
+ if(f.error)card.append(node('p',f.error,'diagnostic'));
+ const actions=node('div',undefined,'feed-actions');actions.append(focusable(action('Edit',()=>openEditor(f)),'edit'),focusable(action('Duplicate',()=>openEditor(f,true)),'duplicate'),focusable(action('Refresh',async()=>{await api(`/feeds/${f.id}/refresh`,'POST',{});notice('Refresh queued.',true);await load();}),'refresh'),focusable(action(f.enabled?'Pause':'Resume',async()=>{await api(`/feeds/${f.id}/enabled`,'POST',{enabled:!f.enabled});await load();}),'enabled'),focusable(action('Delete',async()=>{if(!confirm(`Delete “${f.title}” and all its saved items? This cannot be undone.`))return;await api(`/feeds/${f.id}`,'DELETE',{});if(form.elements.id.value===f.id)$('#editor').hidden=true;await load();},'quiet danger'),'delete'));card.append(actions);
+ const diagnostics=node('button','Diagnostics','quiet feed-diagnostics');diagnostics.type='button';diagnostics.onclick=()=>window.rssDiagnostics.open(f);diagnostics.dataset.feedId=f.id;actions.append(focusable(diagnostics,'diagnostics'));
+ const exportLink=node('a','Export recipe','quiet button-link');exportLink.href='/api/recipes/export?id='+encodeURIComponent(f.id);exportLink.download='';actions.append(focusable(exportLink,'export'));
+ const links=node('div',undefined,'feed-links');
+ for(const [format,url] of [['RSS',f.rss_url],['Atom',f.atom_url]]){
+  if(!url)continue;
+  const row=node('div',undefined,'feed-format'),link=node('a',`Open ${format} feed ↗`,'rss-link');link.href=url;link.target='_blank';link.rel='noopener noreferrer';row.append(focusable(link,'open-'+format),focusable(action(`Copy ${format} URL`,()=>copyFeedURL(format,url)),'copy-'+format));links.append(row);
+ }
+ links.append(focusable(action('Reset feed links',async()=>{if(!confirm('Reset both RSS and Atom links? Readers using either old link will need the new one.'))return;await api(`/feeds/${f.id}/rotate-token`,'POST',{});await load();}),'reset-links'));card.append(links);
+ return card;
+}
+$('#feed-search').oninput=()=>{view.search=$('#feed-search').value;renderLibrary();};
+$('#feed-status').onchange=()=>{view.status=$('#feed-status').value;saveView();renderLibrary();};
+$('#feed-sort').onchange=()=>{view.sort=$('#feed-sort').value;saveView();renderLibrary();};
+$('#show-all-feeds').onclick=()=>{view.search='';view.status='all';$('#feed-search').value='';$('#feed-status').value='all';saveView();renderLibrary();$('#feed-search').focus();};
+restoreView();
 async function copyFeedURL(format,url){
  if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(url);notice(format+' URL copied.',true);return;}catch{}}
  window.prompt('Copy this '+format+' URL:',url);
 }
-function openEditor(f){
- form.reset();$('#preview').replaceChildren();$('#editor-title').textContent=f?'Edit feed':'New feed';form.elements.id.value=f?.id||'';loadedEnabled=f?f.enabled:null;
- if(f){form.elements.mode.value=f.recipe.mode||"static";form.elements.wait_selector.value=f.recipe.wait_selector||"";form.elements.settle_ms.value=f.recipe.settle_ms||0;form.elements.title.value=f.title;form.elements.url.value=f.url;form.elements.type.value=f.recipe.type;form.elements.items.value=f.recipe.items;form.elements.interval.value=f.interval/60;form.elements.enabled.checked=f.enabled;for(const k of ['title','link','content','image','date']){form.elements[k+'_selector'].value=f.recipe[k].selector;form.elements[k+'_attr'].value=f.recipe[k].attr;}form.elements.date_layout.value=f.recipe.date_layout;form.elements.timezone.value=f.recipe.timezone;
+// validate() allows a title of 200 bytes of UTF-8, while the field's
+// maxlength counts UTF-16 units, so a copy's name is shortened by its encoded
+// size, a whole character at a time.
+function copyTitle(title,limit=200){
+ const full='Copy of '+title,encoder=new TextEncoder(),size=v=>encoder.encode(v).length;
+ if(size(full)<=limit)return full;
+ const parts=typeof Intl.Segmenter==='function'?Array.from(new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(full),part=>part.segment):[...full];
+ let out='',used=0;const room=limit-size('…');
+ for(const part of parts){const n=size(part);if(used+n>room)break;out+=part;used+=n;}
+ return out.trimEnd()+'…';
+}
+// The library filters a copy links, for a save made while the library could
+// not be loaded: a new feed that omitted them would have none.
+let copiedFilterIDs=null;
+// copy opens a new, unsaved feed with f's settings. It has no id, so saving
+// creates a feed with its own reader links, and it never offers to prune
+// saved stories, because it has none.
+function openEditor(f,copy=false){
+ const editing=!!f&&!copy;
+ form.reset();$('#preview').replaceChildren();$('#editor-title').textContent=copy?'Duplicate feed':editing?'Edit feed':'New feed';form.elements.id.value=editing?f.id:'';loadedEnabled=editing?f.enabled:null;
+ copiedFilterIDs=copy?[...(f.filter_ids||[])]:null;$('#duplicate-hint').hidden=!copy;
+ if(f){form.elements.mode.value=f.recipe.mode||"static";form.elements.wait_selector.value=f.recipe.wait_selector||"";form.elements.settle_ms.value=f.recipe.settle_ms||0;form.elements.title.value=copy?copyTitle(f.title):f.title;form.elements.url.value=f.url;form.elements.type.value=f.recipe.type;form.elements.items.value=f.recipe.items;form.elements.interval.value=f.interval/60;form.elements.enabled.checked=!copy&&f.enabled;for(const k of ['title','link','content','image','date']){form.elements[k+'_selector'].value=f.recipe[k].selector;form.elements[k+'_attr'].value=f.recipe[k].attr;}form.elements.date_layout.value=f.recipe.date_layout;form.elements.timezone.value=f.recipe.timezone;
   const full=f.recipe.full_content;form.elements.full_selector.value=full?.selector||'';form.elements.full_attr.value=full?.attr||'';form.elements.full_browser.checked=!!full?.browser;form.elements.user_agent.value=f.recipe.user_agent||'';}
- window.rssFilters?.load(f?.recipe.filters,!!f);window.rssLibrary?.loadFeed(f?.filter_ids);window.rssLibrary?.refresh().catch(()=>{});$('#editor').hidden=false;renderHelp();help();fullContentSummary();userAgentSummary();form.elements.title.focus();
+ window.rssFilters?.load(f?.recipe.filters,editing);window.rssLibrary?.loadFeed(f?.filter_ids);window.rssLibrary?.refresh().catch(()=>{});$('#editor').hidden=false;renderHelp();help();fullContentSummary();userAgentSummary();form.elements.title.focus();
 }
 function readForm(){const v=new FormData(form);const recipe={mode:v.get('mode'),wait_selector:v.get('wait_selector'),settle_ms:Number(v.get('settle_ms')),type:v.get('type'),items:v.get('items'),date_layout:v.get('date_layout'),timezone:v.get('timezone')};for(const k of ['title','link','content','image','date'])recipe[k]={selector:v.get(k+'_selector'),attr:v.get(k+'_attr')};const filters=window.rssFilters?.read();if(filters)recipe.filters=filters;
  const fullSelector=(v.get('full_selector')||'').trim();
@@ -81,8 +157,9 @@ function readForm(){const v=new FormData(form);const recipe={mode:v.get('mode'),
  // Blank is left out, as the server stores it, so the server's default applies.
  const userAgent=(v.get('user_agent')||'').trim();if(userAgent)recipe.user_agent=userAgent;
  const out={title:v.get('title'),url:v.get('url'),interval:Number(v.get('interval'))*60,enabled:form.elements.enabled.checked,recipe};
- // Omitted while the library is unavailable, which keeps the feed's current filters.
- const libraryFilters=window.rssLibrary?.selected();if(libraryFilters)out.filter_ids=libraryFilters;
+ // Omitted while the library is unavailable, which keeps the feed's current
+ // filters; a copy sends the ones it was opened with.
+ const libraryFilters=window.rssLibrary?.selected()??copiedFilterIDs;if(libraryFilters)out.filter_ids=libraryFilters;
  return out;}
 function fullContentSummary(){
  const on=(form.elements.full_selector?.value||'').trim();

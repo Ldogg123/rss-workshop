@@ -52,8 +52,10 @@ type Feed struct {
 	LastSuccess time.Time `json:"last_success"`
 	// LastChanged is when the published output last changed. Unlike
 	// LastSuccess it stays put across refreshes that change nothing, so it is
-	// what reader responses advertise as their modification time.
-	LastChanged  time.Time `json:"-"`
+	// what reader responses advertise as their modification time. The library
+	// listing reports it; like LastSuccess, saves and previews accept and
+	// ignore it, because only the store moves it.
+	LastChanged  time.Time `json:"last_changed"`
 	Error        string    `json:"error"`
 	Failures     int       `json:"failures"`
 	ETag         string    `json:"-"`
@@ -72,6 +74,11 @@ type Feed struct {
 	// never stored. Like the other listed state, saves and previews accept and
 	// ignore it, so a feed taken from the listing can be sent back.
 	Held bool `json:"held"`
+	// Quiet is set only by the library listing, for a feed IsQuiet reports
+	// that is not held: a held feed's latest refresh was never stored, so its
+	// row cannot say whether the output would have changed. Like Held it is
+	// never stored, and saves and previews accept and ignore it.
+	Quiet bool `json:"quiet"`
 }
 type Item struct {
 	Key   string `json:"key"`

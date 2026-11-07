@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -114,7 +116,8 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testEstimatedDatePreview(t, tab)
 		testFlareSolverrSelector(t, tab, f, solver)
 	}
-	if e = chromedp.Run(tab, chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.WaitVisible(".feed-card"), chromedp.Click(`//button[text()='Edit']`, chromedp.BySearch), chromedp.WaitVisible("#editor")); e != nil {
+	if e = chromedp.Run(tab, chromedp.Click(`#recipe-form button[type="submit"]`), chromedp.WaitVisible(".feed-card"),
+		clickCurrent("Edit on the first card", `[...document.querySelectorAll('.feed-card button')].find(b=>b.textContent==='Edit')`), chromedp.WaitVisible("#editor")); e != nil {
 		t.Fatal(e)
 	}
 	var title string
@@ -132,6 +135,7 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testFiltersUI(t, tab, s)
 		testLibraryFiltersUI(t, tab, s)
 		testFeedStateUI(t, tab, s, f)
+		testDashboardUI(t, tab, s)
 	}
 	var overflow bool
 	if e = chromedp.Run(tab, chromedp.EmulateViewport(390, 844), chromedp.Evaluate(`document.documentElement.scrollWidth>innerWidth+1`, &overflow)); e != nil || overflow {
@@ -146,4 +150,60 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	if len(exceptions) > 0 {
 		t.Fatal("browser JavaScript errors", exceptions)
 	}
+}
+
+// clickCurrent clicks the element that a JavaScript expression returns, in
+// the same evaluation that finds it. Scripts rebuild some parts of the page
+// after requests the test does not wait for: every feed card on each load of
+// the dashboard, including its ten-second poll, and the filter library's list
+// and the editor's library filter picker each time the library reloads.
+// chromedp.Click finds a node and then makes several more calls with its id,
+// so a rebuild between them fails the click with "Could not find node with
+// given id", or loses it without an error when it lands between the press and
+// the release. Use this for anything inside those lists; chromedp.Click stays
+// right for the page template's own elements, which no script replaces.
+//
+// Like a user, it waits until the element is visible, enabled and on top at
+// its centre once scrolled into view, then focuses and clicks it. Each
+// attempt either clicks or reports why it did not, so waiting never clicks
+// twice, and the reason is in the error if the tab's deadline passes first.
+func clickCurrent(name, element string) chromedp.Action {
+	script := `(()=>{let el;try{el=(` + element + `);}catch(e){return 'not found: '+e.message}
+ if(!(el instanceof HTMLElement))return 'not found';
+ if(el.matches(':disabled'))return 'disabled';
+ if(!el.checkVisibility())return 'not visible';
+ el.scrollIntoView({block:'nearest',inline:'nearest'});
+ const box=el.getBoundingClientRect();if(!box.width||!box.height)return 'not visible';
+ const top=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);
+ if(!top||!el.contains(top))return top?'covered by <'+top.localName+(top.id?' id="'+top.id+'"':'')+(top.getAttribute('class')?' class="'+top.getAttribute('class')+'"':'')+'>':'outside the viewport';
+ el.focus({preventScroll:true});el.click();return '';
+})()`
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		last := ""
+		for {
+			var reason string
+			if err := chromedp.Evaluate(script, &reason).Do(ctx); err != nil {
+				// The deadline can also pass during an attempt's round trip.
+				if last != "" && ctx.Err() != nil {
+					return fmt.Errorf("click %s: %s: %w", name, last, err)
+				}
+				return fmt.Errorf("click %s: %w", name, err)
+			}
+			if reason == "" {
+				return nil
+			}
+			last = reason
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("click %s: %s: %w", name, reason, ctx.Err())
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	})
+}
+
+// clickQuery is clickCurrent for the first element matching a CSS selector.
+func clickQuery(selector string) chromedp.Action {
+	quoted, _ := json.Marshal(selector)
+	return clickCurrent(selector, `document.querySelector(`+string(quoted)+`)`)
 }

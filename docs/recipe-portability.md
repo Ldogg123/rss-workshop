@@ -37,7 +37,7 @@ A feed's own User-Agent is the optional `recipe.user_agent`, left out when blank
 
 Filters are optional recipe settings in this same format. Older RSS Workshop versions reject files containing `recipe.filters`; filter-free version-1 files remain compatible. Empty or invalid rule groups are rejected when reviewing and submitting an import. Imported filtered feeds still start paused and do not change existing history.
 
-[Library filters](filtering.md#library-filters) belong to one server, so exports copy them into each recipe: `recipe.filters` holds the feed's own rules combined with every library filter it uses. An imported feed keeps those rules as its own and is not linked to a library filter, even on the server that exported it.
+[Library filters](filtering.md#library-filters) belong to one server, so exports copy them into each recipe: `recipe.filters` holds the feed's own rules combined with every library filter it uses. An imported feed keeps those rules as its own and is not linked to a library filter, even on the server that exported it. To copy a feed within one server, use **Duplicate** on its card instead: it needs no file, and the copy stays linked to the same library filters. See [duplicating a feed](operations.md#the-library-dashboard).
 
 The [example recipes](examples/) can be selected directly in the import dialog, and use this same versioned format. They build feeds from a demo site that ships beside them, so they work offline and cannot break when a real site is redesigned; [examples/README.md](examples/README.md) explains how to serve it. Preview any recipe before resuming it, particularly one written against a site you do not control.
 

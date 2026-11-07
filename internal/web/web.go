@@ -63,11 +63,14 @@ func (a *App) Handler() http.Handler {
 	}
 	// The editor renders these bounds and rejects oversized filters before saving.
 	// They come from internal/filter so the UI cannot drift from the validator.
+	// The quiet threshold comes from internal/model for the same reason.
 	page := struct {
 		Version                                               string
 		MaxKeywords, MaxNodes, MaxDepth, MaxKeywordCharacters int
 		MaxRuns, MaxArticles                                  int
-	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns, scheduler.MaxArticlesPerRun}
+		QuietDays, QuietIntervals                             int
+	}{version, filter.MaxKeywords, filter.MaxNodes, filter.MaxDepth, filter.MaxKeywordCharacters, store.MaxRuns, scheduler.MaxArticlesPerRun,
+		int(model.QuietFloor / (24 * time.Hour)), model.QuietIntervals}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, page)
@@ -261,14 +264,16 @@ func (a *App) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	due := 0
+	now := time.Now()
 	for i := range fs {
 		a.readerLinks(&fs[i])
-		if fs[i].Enabled && !fs[i].NextRun.After(time.Now()) {
+		if fs[i].Enabled && !fs[i].NextRun.After(now) {
 			due++
 		}
 		// A held feed's stored schedule says it is due, so without this the
 		// card would show a past next refresh and no reason.
 		fs[i].Held = fs[i].Enabled && a.Scheduler.Held(fs[i].ID)
+		fs[i].Quiet = !fs[i].Held && fs[i].IsQuiet(now)
 	}
 	active, limit := a.Scheduler.Stats()
 	solverActive, solverLimit := 0, 0

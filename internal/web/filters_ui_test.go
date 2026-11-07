@@ -75,8 +75,8 @@ func testFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	if err := s.Complete(context.Background(), f, items, "", "", 200, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	openEdit := `document.querySelector('.feed-diagnostics[data-feed-id="'+window.filterFeedID+'"]').closest('.feed-card').querySelector('button').click()`
-	must(chromedp.Evaluate(openEdit, nil), chromedp.Evaluate(`JSON.stringify(readForm().recipe.filters)===JSON.stringify(window.expectedFilters)&&!document.querySelector('#apply-filter-history').hidden&&!document.querySelector('#apply-filters-to-history').checked`, &correct))
+	openEdit := clickCurrent("Edit on the Filtered reading card", `document.querySelector('.feed-diagnostics[data-feed-id="'+window.filterFeedID+'"]').closest('.feed-card').querySelector('button')`)
+	must(openEdit, chromedp.Evaluate(`JSON.stringify(readForm().recipe.filters)===JSON.stringify(window.expectedFilters)&&!document.querySelector('#apply-filter-history').hidden&&!document.querySelector('#apply-filters-to-history').checked`, &correct))
 	if !correct {
 		t.Fatal("editing lost nested filters or defaulted to removing history")
 	}
@@ -85,7 +85,7 @@ func testFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	if err != nil || f.Count != 2 {
 		t.Fatal("ordinary filter edit removed existing stories", err)
 	}
-	must(chromedp.Evaluate(openEdit, nil), chromedp.Click("#apply-filters-to-history"), chromedp.Click("#preview-button"),
+	must(openEdit, chromedp.Click("#apply-filters-to-history"), chromedp.Click("#preview-button"),
 		chromedp.Poll(`!document.querySelector('#preview-button').disabled&&document.querySelectorAll('#preview .preview-item').length===1`, nil),
 		chromedp.Evaluate(`window.filterRequests.filter(r=>r.path==='/api/preview').every(r=>!('apply_filters_to_history' in r.body))`, &correct))
 	f, err = s.Get(context.Background(), id)
@@ -97,7 +97,7 @@ func testFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 	if err != nil || f.Count != 1 {
 		t.Fatal("explicit history removal did not remove the excluded story", err)
 	}
-	must(chromedp.Evaluate(openEdit, nil), chromedp.Evaluate(`!document.querySelector('#apply-filters-to-history').checked&&window.filterRequests.some(r=>r.path==='/api/feeds/'+window.filterFeedID&&r.body.apply_filters_to_history===true)`, &correct))
+	must(openEdit, chromedp.Evaluate(`!document.querySelector('#apply-filters-to-history').checked&&window.filterRequests.some(r=>r.path==='/api/feeds/'+window.filterFeedID&&r.body.apply_filters_to_history===true)`, &correct))
 	if !correct {
 		t.Fatal("history option was lost or stayed checked on the next edit")
 	}
@@ -143,7 +143,7 @@ func testFiltersUI(t *testing.T, tab context.Context, s *store.Store) {
 		if imported.Enabled || !reflect.DeepEqual(imported.Recipe.Filters, exported.Feeds[0].Recipe.Filters) {
 			t.Fatal("import changed nested filters or enabled the new feed")
 		}
-		must(chromedp.WaitVisible(`.feed-diagnostics[data-feed-id="`+imported.ID+`"]`), chromedp.Evaluate(`document.querySelector('.feed-diagnostics[data-feed-id="`+imported.ID+`"]').closest('.feed-card').querySelector('button').click()`, nil),
+		must(clickCurrent("Edit on the imported card", `document.querySelector('.feed-diagnostics[data-feed-id="`+imported.ID+`"]').closest('.feed-card').querySelector('button')`),
 			chromedp.Evaluate(`(()=>{const words=readForm().recipe.filters.include.rules[0].keywords;return words.length===100&&words[1]==='climate change'})()`, &correct))
 		if !correct {
 			t.Fatal("editing an imported multiline phrase changed its meaning")

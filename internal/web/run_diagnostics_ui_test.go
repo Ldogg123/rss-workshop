@@ -97,12 +97,14 @@ func testRunDiagnosticsUI(t *testing.T, tab context.Context, s *store.Store, job
 			t.Fatal(err)
 		}
 	}
+	// The cards are rebuilt on every load, including the dashboard's poll, so
+	// their buttons are clicked where they are found.
 	button := `.feed-diagnostics[data-feed-id="` + id + `"]`
 	emptyButton := `.feed-diagnostics[data-feed-id="` + emptyID + `"]`
 	var correct bool
 	must(chromedp.Evaluate(`load()`, nil), chromedp.WaitVisible(button))
 	staticBefore, solverBefore := fetcher.calls.Load(), solver.calls.Load()
-	must(chromedp.Click(button), chromedp.WaitVisible("#feed-diagnostics"),
+	must(clickQuery(button), chromedp.WaitVisible("#feed-diagnostics"),
 		chromedp.Poll(`document.querySelectorAll('#diagnostics-runs .run-entry').length===3&&!document.querySelector('#diagnostics-reload').disabled`, nil),
 		chromedp.Evaluate(`(()=>{
 	 const entries=[...document.querySelectorAll('#diagnostics-runs .run-entry')];
@@ -126,15 +128,15 @@ func testRunDiagnosticsUI(t *testing.T, tab context.Context, s *store.Store, job
 	captureTrial(t, tab, "run-diagnostics-dark-mobile")
 	must(chromedp.EmulateViewport(1280, 900), chromedp.Click("#diagnostics-reload"),
 		chromedp.Poll(`document.querySelectorAll('#diagnostics-runs .run-entry').length===3&&!document.querySelector('#diagnostics-reload').disabled`, nil),
-		chromedp.Click("#diagnostics-close"), chromedp.Poll(`document.activeElement.dataset.feedId==='`+id+`'`, nil), chromedp.Click(emptyButton),
+		chromedp.Click("#diagnostics-close"), chromedp.Poll(`document.activeElement.dataset.feedId==='`+id+`'`, nil), clickQuery(emptyButton),
 		chromedp.Poll(`document.querySelector('#diagnostics-status').textContent.startsWith('No refresh runs yet')`, nil))
 	// Hold a real response, close the dialog, and open another feed before it
 	// arrives. Even a transport that ignores cancellation must not restore it.
 	must(chromedp.Click("#diagnostics-close"), chromedp.Evaluate(`(()=>{
 	 const original=window.fetch;window.restoreRunFetch=()=>{window.fetch=original};
 	 window.fetch=async(...args)=>{const response=await original(...args);if(args[0]==='/api/feeds/`+id+`/runs')await new Promise(resolve=>window.releaseRunResponse=resolve);return response};
-	})()`, nil), chromedp.Click(button), chromedp.Poll(`typeof window.releaseRunResponse==='function'`, nil),
-		chromedp.Click("#diagnostics-close"), chromedp.Click(emptyButton),
+	})()`, nil), clickQuery(button), chromedp.Poll(`typeof window.releaseRunResponse==='function'`, nil),
+		chromedp.Click("#diagnostics-close"), clickQuery(emptyButton),
 		chromedp.Poll(`document.querySelector('#diagnostics-status').textContent.startsWith('No refresh runs yet')`, nil),
 		chromedp.Evaluate(`window.restoreRunFetch();window.releaseRunResponse();delete window.restoreRunFetch;delete window.releaseRunResponse`, nil),
 		chromedp.Poll(`document.querySelector('#diagnostics-feed').textContent==='No history fixture'&&document.querySelectorAll('#diagnostics-runs .run-entry').length===0`, nil))
@@ -144,7 +146,7 @@ func testRunDiagnosticsUI(t *testing.T, tab context.Context, s *store.Store, job
 	must(chromedp.Evaluate(`load()`, nil), chromedp.Poll(`!document.querySelector('#feed-diagnostics').open&&document.querySelector('#diagnostics-feed').textContent===''`, nil))
 	// Expire the actual server session while the modal is open. Its next read
 	// must return to sign-in and discard history, including preview traces.
-	must(chromedp.Click(button), chromedp.Poll(`document.querySelectorAll('#diagnostics-runs .run-entry').length===3`, nil),
+	must(clickQuery(button), chromedp.Poll(`document.querySelectorAll('#diagnostics-runs .run-entry').length===3`, nil),
 		chromedp.Evaluate(`api('/logout','POST',{}).then(()=>document.querySelector('#diagnostics-reload').click())`, nil),
 		chromedp.Poll(`!document.querySelector('#login-panel').hidden&&!document.querySelector('#feed-diagnostics').open&&document.querySelector('#diagnostics-runs').childElementCount===0&&!document.querySelector('.preview-diagnostics')`, nil))
 	if fetcher.calls.Load() != staticBefore || solver.calls.Load() != solverBefore {
@@ -153,5 +155,10 @@ func testRunDiagnosticsUI(t *testing.T, tab context.Context, s *store.Store, job
 	if err := s.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	must(chromedp.SendKeys("#password", "ui-test-password-123"), chromedp.Click("#login-form button"), chromedp.WaitVisible("#workspace"))
+	// Wait until signing in has finished: the library reload it starts redraws
+	// the editor's library picker, which sits above the filter tree and the
+	// preview button that the next test clicks. busy() re-enables the sign-in
+	// button only after showApp has reloaded the library and the feeds.
+	must(chromedp.SendKeys("#password", "ui-test-password-123"), chromedp.Click("#login-form button"), chromedp.WaitVisible("#workspace"),
+		chromedp.Poll(`!document.querySelector('#login-form button').disabled&&Array.isArray(window.rssLibrary.selected())`, nil))
 }

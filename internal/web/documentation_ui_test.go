@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -80,6 +81,15 @@ func TestBrowserUIDocumentation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		// The second feed shows a quiet one: still refreshing, but with
+		// nothing new published for a few weeks.
+		if i == 1 {
+			for _, query := range []string{"UPDATE feeds SET last_changed=%d WHERE id='%s'", "UPDATE items SET last_changed=%d WHERE feed_id='%s'"} {
+				if _, err := s.DB.Exec(fmt.Sprintf(query, time.Now().Add(-23*24*time.Hour).Unix(), id)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 	}
 	app := &App{Store: s, Scheduler: jobs, Auth: a, Version: "0.2 preview"}
 	server := httptest.NewServer(app.Handler())
@@ -101,9 +111,10 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	}
 	must(chromedp.EmulateViewport(1440, 1100), chromedp.Navigate(server.URL), chromedp.WaitVisible("#login-form"),
 		chromedp.SendKeys("#password", "documentation-fixture-only"), chromedp.Click("#login-form button"), chromedp.WaitVisible(".feed-card"),
-		chromedp.Evaluate(`if(document.documentElement.dataset.theme!=='dark')document.querySelector('#theme-toggle').click()`, nil))
+		chromedp.Evaluate(`if(document.documentElement.dataset.theme!=='dark')document.querySelector('#theme-toggle').click()`, nil),
+		chromedp.Poll(`document.querySelectorAll('.feed-card .badge')[1]?.textContent==='Quiet'`, nil))
 	captureTrial(t, tab, "docs-dashboard")
-	must(chromedp.Evaluate(`document.querySelectorAll('.feed-card')[0].querySelector('button').click()`, nil),
+	must(clickCurrent("Edit on the first card", `document.querySelectorAll('.feed-card')[0].querySelector('button')`),
 		chromedp.Click("#visual-button"), chromedp.WaitVisible("#selector-frame"), chromedp.Poll(`document.querySelector('#selector-matches').dataset.items==='3'`, nil),
 		chromedp.Click("#selector-convert"), chromedp.Poll(`document.querySelector('#visual-type').value==='xpath'&&document.querySelector('#selector-matches').dataset.items==='3'`, nil),
 		chromedp.Focus("#visual-items"))
@@ -153,7 +164,7 @@ func TestBrowserUIDocumentation(t *testing.T) {
 
 	// Per-feed diagnostics: the answer to "why did this feed stop working".
 	must(chromedp.EmulateViewport(1100, 1000), chromedp.Click("#close-editor"),
-		chromedp.Evaluate(`document.querySelector('.feed-diagnostics').click()`, nil),
+		clickQuery(".feed-diagnostics"),
 		chromedp.WaitVisible("#diagnostics-runs"),
 		chromedp.Poll(`document.querySelector('#diagnostics-status').textContent.length>0`, nil))
 	captureTrial(t, tab, "docs-diagnostics")
