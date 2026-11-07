@@ -44,6 +44,8 @@ Rules apply to each description in the order above before it is chosen, because 
 
 A story is identified by its `guid`, Atom `id` or `rdf:about`, else by its link, else by its title, which is what feed readers do. Entries that share one link therefore stay separate stories. A story with a `guid`, `id` or `rdf:about` keeps its identity, its GUID in your feed and its publication date when its source edits its text, link or update time. One identified by its link gets a new identity if the link changes, and one identified by its title if the title changes: readers then see it again as a new story. A source that changes its identifiers, for example after moving to new software, publishes every story again under new GUIDs until retention removes the old ones; feed readers subscribed to the source directly see the same.
 
+For [Quiet](operations.md#quiet-feeds), a story is new when an entry with an identity the feed has not stored is first stored, as for any feed. An entry whose text or link changes under the same `guid` or `id` is a changed story, which readers receive but which does not count as new.
+
 ## Fetching
 
 A feed source is fetched as Static HTTP only, through the same guarded fetcher and [outbound policy](deployment.md) as web pages. Its request asks for RSS, Atom or XML in its `Accept` header, and its encoding comes from a byte order mark, then the `Content-Type` charset, then the XML declaration, so a Latin-1 feed that names its encoding only there reads correctly. The feed's User-Agent and Accept-Language are sent as for a web page, and the source's `ETag` and `Last-Modified` make later requests conditional: a source that answers `304 Not Modified` publishes nothing new, and readers keep receiving 304 too.
@@ -59,7 +61,7 @@ Article pages are web pages: they are requested as HTML and fetched as plain HTM
 - Characters XML does not allow, such as a control character pasted into a title, are removed rather than failing the feed, and bytes that are not UTF-8 become `�`.
 - An HTML page or a JSON Feed fails with `source is not an RSS or Atom feed`.
 - Anything after the feed's root element, such as a notice or a script a server printed after the feed, is ignored.
-- A well-formed feed with no entries is a successful refresh: saved stories are kept and nothing backs off, and Diagnostics notes that the feed lists no entries. If it stays empty, the library marks the feed [Quiet](operations.md#quiet-feeds).
+- A well-formed feed with no entries is a successful refresh: saved stories are kept and nothing backs off, and Diagnostics notes that the feed lists no entries. If it stays empty, the library marks the feed [Quiet](operations.md#quiet-feeds) once its threshold has passed without a new story: counted from the last new story it stored, or, for a feed that has never stored one, from its first successful refresh or the latest change to its title, address or refresh interval.
 - An entry is skipped, with a warning in the preview and Diagnostics, when its link is not a web address, when it has neither a title nor description text, when it repeats an earlier entry's identity, or when it is too large to store as a story. A feed whose entries are all skipped fails like a page with no valid stories.
 
 ## Published output
