@@ -19,13 +19,13 @@
 </div>
 <div class="library-summary"><p id="feed-count" class="meta" role="status"></p>
 <details id="status-help"><summary>What each status means</summary><dl class="status-help">
-<dt>Active</dt><dd>Refreshing on schedule, and its published output changed recently.</dd>
-<dt>Quiet</dt><dd>Refreshes keep succeeding, but the published output has not changed for {{.QuietDays}} days, or for {{.QuietIntervals}} refresh intervals when that is longer. The site may have stopped publishing, or the selectors may match a part of the page that no longer changes: check the page and preview the recipe. Any change to a story counts, so a feed whose stories keep changing is never quiet. For a site that publishes rarely, a longer refresh interval raises the threshold.</dd>
+<dt>Active</dt><dd>Refreshing on schedule, and it found a new story recently.</dd>
+<dt>Quiet</dt><dd>Refreshes keep succeeding, but none has found a new story for {{.QuietDays}} days, or for {{.QuietIntervals}} refresh intervals when that is longer. The site may have stopped publishing, or the selectors may match a part of the page that no longer lists new stories: check the page and preview the recipe. Only a story the feed did not already have counts: edited stories do not, nor do stories its filters leave out. For a site that publishes rarely, a longer refresh interval raises the threshold.</dd>
 <dt>Needs attention</dt><dd>The latest refresh failed, and the card shows why. Readers keep the last good output.</dd>
 <dt>Waiting to retry</dt><dd>The database could not save the latest refresh. It is retried after a delay, or at once with Refresh.</dd>
 <dt>Pending</dt><dd>Not refreshed successfully yet, so readers get no stories.</dd>
 <dt>Paused</dt><dd>Not refreshing automatically. Readers still get its saved stories.</dd>
-<dt>Last change</dt><dd>When the feed’s published output last changed. A refresh that finds nothing new leaves it alone.</dd>
+<dt>Last change</dt><dd>When the feed’s published output last changed, edits to its stories included. A refresh that changes nothing leaves it alone.</dd>
 </dl></details></div>
 </div>
 <div id="feeds"></div><div id="no-matches" class="panel empty" hidden><h2>No feeds match.</h2><p>Change the search or the status, or show every feed.</p><button id="show-all-feeds" class="secondary" type="button">Show all feeds</button></div><div id="empty" class="panel empty" hidden><div class="empty-icon">◔</div><h2>Your first feed starts here.</h2><p>Add a page URL, select its article cards, and preview the results.</p><button id="empty-new">Create a feed</button></div></section>

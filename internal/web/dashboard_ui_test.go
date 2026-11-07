@@ -51,7 +51,8 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 		}
 	}()
 	// add stores a feed with the given refreshes, then sets the times the
-	// sorts compare, so feeds stored in the same second still differ.
+	// sorts compare, so feeds stored in the same second still differ. changed
+	// is also when its story was first seen, and so its last new story.
 	add := func(f model.Feed, runs []error, succeeded, changed time.Time, next time.Duration) string {
 		t.Helper()
 		enabled := f.Enabled
@@ -78,7 +79,7 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 			}
 		}
 		if !changed.IsZero() {
-			queries = append(queries, fmt.Sprintf("UPDATE feeds SET last_changed=%d WHERE id='%s'", changed.Unix(), id), fmt.Sprintf("UPDATE items SET last_changed=%d WHERE feed_id='%s'", changed.Unix(), id))
+			queries = append(queries, fmt.Sprintf("UPDATE feeds SET last_changed=%[1]d,last_new=%[1]d WHERE id='%[2]s'", changed.Unix(), id), fmt.Sprintf("UPDATE items SET first_seen=%[1]d,last_changed=%[1]d WHERE feed_id='%[2]s'", changed.Unix(), id))
 		}
 		if enabled {
 			queries = append(queries, fmt.Sprintf("UPDATE feeds SET enabled=TRUE,next_run=%d WHERE id='%s'", now.Add(next).Unix(), id))
@@ -92,6 +93,11 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 	}
 	quiet := add(model.Feed{Title: "Morning briefing", URL: "https://alpha.example/zebra-desk", Interval: 3600, Enabled: true, Recipe: recipe},
 		[]error{nil}, now.Add(-30*time.Minute), now.Add(-20*24*time.Hour-time.Hour), 2*time.Hour)
+	// Its story's text changed two days ago, such as a comment count, which
+	// changes the output but is not a new story: it stays quiet for 20 days.
+	if _, err := s.DB.Exec(fmt.Sprintf("UPDATE feeds SET last_changed=%d WHERE id='%s'", now.Add(-2*24*time.Hour).Unix(), quiet)); err != nil {
+		t.Fatal(err)
+	}
 	failing := add(model.Feed{Title: "Beta bulletin", URL: "https://beta.example/news", Interval: 3600, Enabled: true, Recipe: recipe},
 		[]error{nil, errors.New("source unavailable"), errors.New("source unavailable")}, now.Add(-3*time.Hour), time.Time{}, time.Hour)
 	paused := add(model.Feed{Title: "Gamma gazette", URL: "https://gamma.example/news", Interval: 3600, Recipe: recipe},
@@ -112,8 +118,8 @@ func testDashboardUI(t *testing.T, tab context.Context, s *store.Store) {
 		"a library control has no label")
 
 	// The quiet badge and its explanation, in the dark theme's colors.
-	check(card(quiet)+`.querySelector('.badge').textContent==='Quiet'&&`+card(quiet)+`.querySelector('.feed-quiet').textContent.startsWith('Output unchanged for 20 days.')`,
-		"the quiet feed has no Quiet badge and explanation")
+	check(card(quiet)+`.querySelector('.badge').textContent==='Quiet'&&`+card(quiet)+`.querySelector('.feed-quiet').textContent.startsWith('No new story for 20 days.')`,
+		"the quiet feed has no Quiet badge and explanation, or counts from its last output change")
 	check(card(failing)+`.querySelector('.badge').textContent==='Needs attention'&&`+card(failing)+`.querySelector('.times').textContent.includes('Failures in a row2')&&!`+card(failing)+`.querySelector('.feed-quiet')`,
 		"the failing feed is not reported as failing")
 	check(card(paused)+`.querySelector('.badge').textContent==='Paused'&&!`+card(paused)+`.querySelector('.feed-quiet')`, "a paused feed is reported as quiet")

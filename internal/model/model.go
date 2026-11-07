@@ -65,8 +65,8 @@ type Feed struct {
 	// have stored, and that retention kept; zero if none is known. A story
 	// that retention or history pruning removed counts again if its source
 	// still lists it; a changed story does not move it. It is reported state
-	// like LastChanged, which saves and previews accept and ignore, and reader
-	// output never reads it.
+	// like LastChanged, which saves and previews accept and ignore. Quiet
+	// measures from it (QuietSince); reader output never reads it.
 	LastNew      time.Time `json:"last_new"`
 	Error        string    `json:"error"`
 	Failures     int       `json:"failures"`
@@ -88,7 +88,7 @@ type Feed struct {
 	Held bool `json:"held"`
 	// Quiet is set only by the library listing, for a feed IsQuiet reports
 	// that is not held: a held feed's latest refresh was never stored, so its
-	// row cannot say whether the output would have changed. Like Held it is
+	// row cannot say whether that refresh found a new story. Like Held it is
 	// never stored, and saves and previews accept and ignore it.
 	Quiet bool `json:"quiet"`
 }

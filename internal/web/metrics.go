@@ -78,7 +78,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		{"rss_workshop_feeds_enabled", "Feeds set to refresh automatically.", enabled},
 		{"rss_workshop_feeds_due", "Enabled feeds whose next refresh is due.", due},
 		{"rss_workshop_feeds_held", "Enabled feeds waiting to retry a refresh the database could not store.", held},
-		{"rss_workshop_feeds_quiet", "Enabled feeds that keep refreshing successfully but whose published output has not changed for the quiet threshold.", quiet},
+		{"rss_workshop_feeds_quiet", "Enabled feeds that keep refreshing successfully but have stored no new story for the quiet threshold.", quiet},
 		{"rss_workshop_feeds_failing", "Feeds whose last refresh failed.", failing},
 		{"rss_workshop_items", "Stories saved across all feeds.", items},
 	} {
@@ -133,6 +133,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 		{"rss_workshop_feed_enabled", "Whether this feed refreshes automatically.", "gauge"},
 		{"rss_workshop_feed_last_success_timestamp_seconds", "Unix time of this feed's last successful refresh, or 0.", "gauge"},
 		{"rss_workshop_feed_last_changed_timestamp_seconds", "Unix time this feed's published output last changed, or 0.", "gauge"},
+		{"rss_workshop_feed_last_new_story_timestamp_seconds", "Unix time this feed last stored a new story, or 0.", "gauge"},
 	} {
 		metric(m.name, m.help, m.kind)
 		for _, f := range feeds {
@@ -146,8 +147,10 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 				value(m.name, labels, boolValue(f.Enabled))
 			case "rss_workshop_feed_last_success_timestamp_seconds":
 				value(m.name, labels, timestamp(f.LastSuccess))
-			default:
+			case "rss_workshop_feed_last_changed_timestamp_seconds":
 				value(m.name, labels, timestamp(f.LastChanged))
+			default:
+				value(m.name, labels, timestamp(f.LastNew))
 			}
 		}
 	}

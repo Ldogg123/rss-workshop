@@ -81,10 +81,10 @@ func TestBrowserUIDocumentation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		// The second feed shows a quiet one: still refreshing, but with
-		// nothing new published for a few weeks.
+		// The second feed shows a quiet one: still refreshing, but with no
+		// new story for a few weeks.
 		if i == 1 {
-			for _, query := range []string{"UPDATE feeds SET last_changed=%d WHERE id='%s'", "UPDATE items SET last_changed=%d WHERE feed_id='%s'"} {
+			for _, query := range []string{"UPDATE feeds SET last_changed=%[1]d,last_new=%[1]d WHERE id='%[2]s'", "UPDATE items SET first_seen=%[1]d,last_changed=%[1]d WHERE feed_id='%[2]s'"} {
 				if _, err := s.DB.Exec(fmt.Sprintf(query, time.Now().Add(-23*24*time.Hour).Unix(), id)); err != nil {
 					t.Fatal(err)
 				}
