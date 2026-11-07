@@ -115,6 +115,59 @@ func TestCleanupRulePanicNamesOnlyTheRuleNumber(t *testing.T) {
 	}
 }
 
+// A cleanup rule that fails only on an article page fails that article, as a
+// failed article selector does: the refresh succeeds, the story keeps its
+// list-page description, and the warning names the rule by its number only.
+func TestCleanupRulePanicOnAnArticleKeepsTheTeaser(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	p := newPageFetcher(listPage(1), map[string]string{
+		"https://example.com/a1": `<div class="body"><p data-score="n/a">Full ` + sourceSecret + `</p></div>`,
+	})
+	jobs := New(s, p, 1, 10*time.Second)
+	h, _ := alerting(jobs, 1)
+	r := panicRecipeFor("//article")
+	r.Content.Selector = ".//p"
+	r.Full = &model.FullContent{Selector: "//div[@class='body']"}
+	// The list page has no data-score, so only the article page fails.
+	r.Remove = []string{".//aside", `.//p[@data-score > 1][contains(@id,'https://selector.example/')]`}
+	f := saveFeed(t, jobs, r)
+
+	log := captureLog(t)
+	jobs.refresh(ctx, f)
+	f = reload(t, s, f.ID)
+	if f.Failures != 0 || f.Error != "" || f.LastSuccess.IsZero() {
+		t.Fatalf("the refresh failed: %d failures, %q", f.Failures, f.Error)
+	}
+	if events := h.take(); len(events) != 0 {
+		t.Errorf("events: %+v", events)
+	}
+	stories, err := s.Items(ctx, f.ID)
+	if err != nil || len(stories) != 1 || stories[0].HTML != "<p>teaser 1</p>" || stories[0].FullHTML != "" {
+		t.Fatalf("stories: %+v, %v", stories, err)
+	}
+	runs, err := s.Runs(ctx, f.ID)
+	if err != nil || len(runs) != 1 || runs[0].Diagnostics == nil || len(runs[0].Diagnostics.Attempts) != 1 {
+		t.Fatalf("runs: %+v, %v", runs, err)
+	}
+	warnings := runs[0].Diagnostics.Attempts[0].Warnings
+	want := `Article "Story 1": ` + extract.ErrSelectorFailed.Error() + " on the cleanup rule 2 selector"
+	if !slices.ContainsFunc(warnings, func(w string) bool { return strings.HasPrefix(w, want) }) {
+		t.Errorf("diagnostics warnings: %q", warnings)
+	}
+	for _, text := range append(warnings, log.String()) {
+		for _, leaked := range []string{"source.example", "token=secret", "selector.example", "data-score"} {
+			if strings.Contains(text, leaked) {
+				t.Errorf("%q leaked into %s", leaked, text)
+			}
+		}
+	}
+}
+
 // Articles are fetched only for the stories a refresh stores. After a refresh
 // whose stories the filters all left out, no stored story is listed, so a
 // cleanup edit keeps every article: discarded, they would never be fetched
