@@ -191,8 +191,13 @@ func TestRecoveryAfterAnEditIsStillReported(t *testing.T) {
 	}
 	edit()
 	source.err = nil
-	if events := run(1); len(events) != 1 || events[0] != (notify.Event{Kind: notify.Recovered, Feed: "Evening news", FeedID: f.ID}) {
-		t.Fatalf("recovery after an edit: %+v", events)
+	// A tick performs the recovering refresh, as in the running app: the save
+	// made the feed due, and the tick first forgets reported feeds that no
+	// longer exist, which must keep this one.
+	jobs.tick(ctx)
+	jobs.Wait()
+	if events := h.take(); len(events) != 1 || events[0] != (notify.Event{Kind: notify.Recovered, Feed: "Evening news", FeedID: f.ID}) {
+		t.Fatalf("recovery after an edit and a tick: %+v", events)
 	}
 	if events := run(1); len(events) != 0 {
 		t.Fatalf("a second success: %v", kinds(events))
