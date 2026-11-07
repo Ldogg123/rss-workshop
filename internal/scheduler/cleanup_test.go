@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"rss-workshop/internal/extract"
+	"rss-workshop/internal/model"
 	"rss-workshop/internal/notify"
 )
 
@@ -111,5 +112,63 @@ func TestCleanupRulePanicNamesOnlyTheRuleNumber(t *testing.T) {
 	}
 	if _, err := jobs.Preview(ctx, f); !errors.Is(err, extract.ErrSelectorFailed) || !strings.Contains(err.Error(), "cleanup rule 2") {
 		t.Errorf("preview: %v", err)
+	}
+}
+
+// Articles are fetched only for the stories a refresh stores. After a refresh
+// whose stories the filters all left out, no stored story is listed, so a
+// cleanup edit keeps every article: discarded, they would never be fetched
+// again, and the stories would lose them for good.
+func TestCleanupEditAfterAnAllFilteredRefreshKeepsTheArticles(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	p := newPageFetcher(listPage(2), articlePages(2))
+	jobs := New(s, p, 2, 10*time.Second)
+	r := fullRecipe()
+	r.Filters = &model.FilterSet{Include: &model.FilterRule{Op: "contains_any", Field: "title", Keywords: []string{"story"}}}
+	f := saveFeed(t, jobs, r)
+	jobs.refresh(ctx, f)
+	want := map[string]string{"Story 1": "<div><p>Full article 1.</p></div>", "Story 2": "<div><p>Full article 2.</p></div>"}
+	check := func(when string) {
+		t.Helper()
+		stories, err := s.Items(ctx, f.ID)
+		if err != nil || len(stories) != len(want) {
+			t.Fatalf("%s: stories %+v, %v", when, stories, err)
+		}
+		for _, story := range stories {
+			if story.FullHTML != want[story.Title] {
+				t.Errorf("%s: %s body %q, want %q", when, story.Title, story.FullHTML, want[story.Title])
+			}
+		}
+	}
+	check("first refresh")
+
+	p.list = `<article><h2>Other 3</h2><a href="https://example.com/a3">l</a><p>teaser 3</p></article>`
+	jobs.refresh(ctx, reload(t, s, f.ID))
+	f = reload(t, s, f.ID)
+	if f.Failures != 0 || f.Error != "" {
+		t.Fatalf("the all-filtered refresh failed: %d failures, %q", f.Failures, f.Error)
+	}
+	before := f.LastChanged
+	f.Recipe.Remove = []string{".share"}
+	if _, err := s.Save(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	if f = reload(t, s, f.ID); !f.LastChanged.Equal(before) {
+		t.Errorf("the edit moved the feed's change time %v -> %v", before, f.LastChanged)
+	}
+	for range 3 {
+		jobs.refresh(ctx, reload(t, s, f.ID))
+	}
+	check("after the edit")
+	// Only the first refresh fetched articles; the story left out has none.
+	for u, want := range map[string]int{"https://example.com/a1": 1, "https://example.com/a2": 1, "https://example.com/a3": 0} {
+		if n := p.count(u); n != want {
+			t.Errorf("%s requested %d times, want %d", u, n, want)
+		}
 	}
 }

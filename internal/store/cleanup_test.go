@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"rss-workshop/internal/model"
@@ -67,10 +68,11 @@ func bodies(t *testing.T, s *Store, id string) map[string]model.Item {
 }
 
 // Changing the cleanup rules of a full-content feed discards the bodies of
-// the stories its latest stored merge listed, which the next refreshes fetch
-// again with the new rules. Older stories are no longer listed, so a
-// discarded body would never come back: they keep theirs. Readers are told
-// through last_changed, strictly later, as for any edit that changes output.
+// the stories its latest stored refresh that read the page listed, which the
+// next refreshes fetch again with the new rules. Older stories are no longer
+// listed, so a discarded body would never come back: they keep theirs, and so
+// does every story when that refresh listed none. Readers are told through
+// last_changed, strictly later, as for any edit that changes output.
 func TestCleanupRuleEditsClearTheListedStoriesBodies(t *testing.T) {
 	ctx := context.Background()
 	css := articleFeed(".body").Recipe
@@ -80,13 +82,21 @@ func TestCleanupRuleEditsClearTheListedStoriesBodies(t *testing.T) {
 		r.Remove = rules
 		return r
 	}
-	refresh := func(s *Store, items []model.Item, status int) func(model.Feed) {
+	type run struct {
+		items  []model.Item
+		status int
+		err    error
+	}
+	refresh := func(s *Store, runs ...run) func(model.Feed) {
 		return func(f model.Feed) {
-			if err := s.Complete(ctx, f, items, "etag", "", status, nil, 0); err != nil {
-				t.Fatal(err)
+			for _, r := range runs {
+				if err := s.Complete(ctx, f, r.items, "etag", "", r.status, r.err, 0); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 	}
+	listedAgain := run{items: []model.Item{{Key: "listed", Title: "Listed", URL: "https://example.com/listed", HTML: "<p>listed teaser</p>"}}, status: 200}
 	for _, tc := range []struct {
 		name          string
 		stored        model.Recipe
@@ -100,11 +110,34 @@ func TestCleanupRuleEditsClearTheListedStoriesBodies(t *testing.T) {
 		{name: "rules removed", stored: withRules(css, ".share"), edit: func(f *model.Feed) { f.Recipe.Remove = nil }, old: true, changesOutput: true},
 		// A source that answers 304, the steady state for one that sends
 		// validators, succeeds without merging a story: last_success moves
-		// and last_seen does not. So does a refresh that filters every story.
-		{name: "rules added after a 304", stored: css, between: func(s *Store) func(model.Feed) { return refresh(s, nil, 304) },
+		// and last_seen does not, and the stories the page listed before
+		// are still listed. A failed refresh stores nothing either.
+		{name: "rules added after a 304", stored: css, between: func(s *Store) func(model.Feed) { return refresh(s, run{status: 304}) },
 			edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, old: true, changesOutput: true},
-		{name: "rules added after every story was filtered out", stored: css, between: func(s *Store) func(model.Feed) { return refresh(s, []model.Item{}, 200) },
-			edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, old: true, changesOutput: true},
+		{name: "rules added after a failed refresh", stored: css, between: func(s *Store) func(model.Feed) {
+			return refresh(s, run{status: 500, err: errors.New("source returned 500")})
+		}, edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, old: true, changesOutput: true},
+		// A refresh that read the page and stored no story, because the
+		// filters left every story out, lists none: articles are fetched
+		// only for stored stories, so a body cleared now would never come
+		// back, even when 304s follow.
+		{name: "rules added after every story was filtered out", stored: css, between: func(s *Store) func(model.Feed) { return refresh(s, run{items: []model.Item{}, status: 200}) },
+			edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, listed: true, old: true},
+		{name: "rules added after an all-filtered refresh and a 304", stored: css, between: func(s *Store) func(model.Feed) {
+			return refresh(s, run{status: 200}, run{status: 304})
+		}, edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, listed: true, old: true},
+		{name: "rules added once a story is listed again", stored: css, between: func(s *Store) func(model.Feed) {
+			return refresh(s, run{status: 200}, listedAgain)
+		}, edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, old: true, changesOutput: true},
+		// Only the latest 50 runs are kept, so a long run of 304s can leave
+		// none that read the page; the latest merge then stands in for it.
+		{name: "rules added with no run on record", stored: css, between: func(s *Store) func(model.Feed) {
+			return func(f model.Feed) {
+				if _, err := s.DB.ExecContext(ctx, s.bind("DELETE FROM runs WHERE feed_id=?"), f.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}, edit: func(f *model.Feed) { f.Recipe.Remove = []string{".share"} }, old: true, changesOutput: true},
 		// The same rules read differently in the other selector language.
 		{name: "selector type changed with rules", stored: withRules(css, ".share"), edit: func(f *model.Feed) { f.Recipe.Type = "xpath" }, old: true, changesOutput: true},
 		{name: "selector type changed without rules", stored: css, edit: func(f *model.Feed) { f.Recipe.Type = "xpath" }, listed: true, old: true},

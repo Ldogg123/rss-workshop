@@ -165,7 +165,8 @@ type bodyClear int
 const (
 	keepBodies bodyClear = iota
 	// clearListedBodies discards the bodies of the stories the latest stored
-	// merge listed, which the next refreshes can fetch again.
+	// refresh that read the page listed, which the next refreshes can fetch
+	// again.
 	clearListedBodies
 	clearAllBodies
 )
@@ -226,11 +227,29 @@ func (s *Store) markChanged(ctx context.Context, tx *sql.Tx, feedID string) erro
 }
 
 // clearArticleBodies discards a feed's stored article bodies, or with
-// listedOnly those of the stories the latest stored merge listed. Each cleared
-// story takes the feed's next change time rather than the clock, so its Atom
-// updated moves forward even when earlier changes in the same second already
-// pushed the feed's time ahead.
+// listedOnly those of the stories the latest stored refresh that read the page
+// listed. Each cleared story takes the feed's next change time rather than the
+// clock, so its Atom updated moves forward even when earlier changes in the
+// same second already pushed the feed's time ahead.
 func (s *Store) clearArticleBodies(ctx context.Context, tx *sql.Tx, feedID string, listedOnly bool) error {
+	if listedOnly {
+		// Articles are fetched only for the stories a refresh stores. When the
+		// newest successful run that read the page stored none, because the
+		// filters left every story out, no stored story is listed, and a body
+		// cleared now would never be fetched again: every story keeps its body,
+		// as older stories do. A 304 reads no page and lists what the refresh
+		// before it did; a failure stores nothing. With no such run among those
+		// kept, the latest merge below stands in for it.
+		var count int
+		err := tx.QueryRowContext(ctx, s.bind("SELECT count FROM runs WHERE feed_id=? AND status<>304 AND error='' ORDER BY id DESC LIMIT 1"), feedID).Scan(&count)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		case count == 0:
+			return nil
+		}
+	}
 	now := time.Now().Unix()
 	var changedAt int64
 	if err := tx.QueryRowContext(ctx, s.bind("SELECT "+bumpChanged+" FROM feeds WHERE id=?"), now, now, feedID).Scan(&changedAt); err != nil {
@@ -239,8 +258,8 @@ func (s *Store) clearArticleBodies(ctx context.Context, tx *sql.Tx, feedID strin
 	query, args := "UPDATE items SET content_full='',last_changed=? WHERE feed_id=? AND content_full<>''", []any{changedAt, feedID}
 	if listedOnly {
 		// A merge gives every story it lists its own time as last_seen. This is
-		// not last_success: a 304, or a refresh whose stories were all
-		// filtered out, succeeds without merging a story or moving last_seen.
+		// not last_success: a 304 succeeds without merging a story or moving
+		// last_seen, and lists what the merge before it did.
 		query += " AND last_seen>=(SELECT COALESCE(MAX(last_seen),0) FROM items WHERE feed_id=?)"
 		args = append(args, feedID)
 	}
