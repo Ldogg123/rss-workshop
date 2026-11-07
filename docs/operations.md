@@ -59,7 +59,7 @@ Docker keeps container logs until the disk fills, so the Compose files rotate th
 
 ### Metrics
 
-Setting `METRICS_TOKEN` enables `GET /metrics` in the Prometheus text format. Leave it blank and the endpoint returns 404, which is the default. Generate a token with `python3 -c 'import secrets; print(secrets.token_hex(24))'` and scrape it as a bearer credential:
+Setting `METRICS_TOKEN` enables `GET /metrics` in the Prometheus text format. Leave it blank and the endpoint returns 404, which is the default. A token shorter than 16 characters stops startup. Generate one with `python3 -c 'import secrets; print(secrets.token_hex(24))'` and scrape it as a bearer credential:
 
 ```yaml
 scrape_configs:
@@ -70,18 +70,27 @@ scrape_configs:
       - targets: ["rss-workshop:8080"]
 ```
 
-Aggregates cover the library, saved stories, and refresh/Chromium/FlareSolverr capacity. Per-feed series are labelled with the feed title and its internal ID, so an alert can name the feed that broke:
+Aggregates cover the library, saved stories, refresh/Chromium/FlareSolverr capacity, and notification delivery. Per-feed series carry the labels `feed`, the feed title, and `id`, its internal ID, so an alert can name the feed that broke:
 
 | Metric | Use |
 | --- | --- |
-| `rss_workshop_feeds_failing` | Feeds whose last refresh failed |
+| `rss_workshop_build_info` | Always `1`; its `version` label names the running release |
+| `rss_workshop_feeds` / `_enabled` | Feeds in the library, and those set to refresh automatically |
+| `rss_workshop_feeds_due` | Enabled feeds whose next refresh is due |
+| `rss_workshop_feeds_failing` | Feeds whose last refresh failed, paused ones included |
 | `rss_workshop_feeds_held` | Enabled feeds [waiting to retry](#waiting-to-retry-after-a-failed-save) a refresh the database could not store. They still count in `rss_workshop_feeds_due`, because their stored schedule says they are due |
 | `rss_workshop_feeds_quiet` | Feeds the dashboard marks [quiet](#quiet-feeds): still refreshing, but with output unchanged past the threshold. It counts the whole library |
+| `rss_workshop_items` | Stories saved across all feeds |
+| `rss_workshop_feed_enabled` | `1` for a feed that refreshes automatically, `0` for a paused one |
 | `rss_workshop_feed_failures` | Consecutive failures for one feed |
 | `rss_workshop_feed_last_success_timestamp_seconds` | Alert when a feed has not succeeded for too long; `0` means it never has |
 | `rss_workshop_feed_last_changed_timestamp_seconds` | When a feed's published output last changed, the time readers receive as `Last-Modified`; `0` means it has published nothing |
 | `rss_workshop_feed_items` | Stories saved for one feed |
 | `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
+| `rss_workshop_browser_active` / `_capacity` | Chromium jobs running and allowed; `0` without Chromium |
+| `rss_workshop_browser_ready` | `1` while a started Chromium is running. Chromium starts on first use, so this is `0` after every app start until the first render, and always `0` without Chromium; it is not a health check |
+| `rss_workshop_browser_restarts_total` | Chromium launches since the app started: the first one, a relaunch after a crash, and the routine relaunch after every 100 renders, so a rise alone does not mean a crash |
+| `rss_workshop_flaresolverr_active` / `_capacity` | FlareSolverr slots in use and configured, counting a slot still held after an interrupted request (see [capacity](flaresolverr.md#capacity)); `0` without a solver |
 | `rss_workshop_notifications_total` | [Notification](#notifications) messages by `result`: `sent`, or `failed` after every attempt. `0` while notifications are off |
 | `rss_workshop_notification_events_dropped_total` | Notification events dropped because more than 256 feed events, or 8 database events, waited for a slow service |
 
@@ -133,7 +142,7 @@ The address is trusted configuration, like `FLARESOLVERR_URL`: it may be on your
 
 Events are collected for 60 seconds and sent as one message, so an outage that fails every feed at once sends one notification. A message lists at most 20 events, the database events (`not_saved`, `db_unavailable` and `db_available`, which concern the whole server) first, and counts the rest as `...and 12 more`; an ntfy message is also kept within 4,000 bytes. A window keeps at most 256 feed events; the database events are always kept, so a busy window cannot hide them. A refresh thrown away because its feed was edited or deleted while it ran sends nothing, nor does a FlareSolverr feed that waits for a free solver slot, which is not a failure. Paused feeds do not refresh, and [quiet feeds](#quiet-feeds) are not notified.
 
-`failing` and `recovered` follow the failure count stored with each feed, the **Failures in a row** on its card, so a restart neither repeats an alert nor misses a recovery. Nor does a restart cause one: a refresh cut short because the app is stopping is [discarded](#log-detail), not counted as a failure. Saving a feed in the editor resets that count, so a feed that still fails after an edit is reported again when it reaches the threshold. A feed reported as failing still reports its recovery after an edit, with the failures since the save, unless the app has restarted since the alert: the save cleared the count a restart reads. **Pause**, **Resume** and **Refresh** keep the count, and Resume continues the backoff, so a feed already past the threshold stays silent until it recovers. A changed `NOTIFY_AFTER_FAILURES` applies from the next refresh: a feed already past the new number is not reported as failing, but its recovery is, and a feed reported as failing that is now below a raised number recovers without a message.
+`failing` and `recovered` follow the failure count stored with each feed, the **Failures in a row** on its card, so a restart neither repeats an alert nor misses a recovery. Nor does a restart cause one: a refresh cut short because the app is stopping is [discarded](#log-detail), not counted as a failure. Saving a feed in the editor resets that count, so a feed that still fails after an edit is reported again when it reaches the threshold. A feed reported as failing still reports its recovery after an edit, with the failures since the save, unless the app has restarted since the alert: the save cleared the count a restart reads. **Pause**, **Resume** and **Refresh** keep the count, and Resume continues the backoff, so a feed already past the threshold stays silent until it recovers. Turning notifications on, or changing `NOTIFY_AFTER_FAILURES`, applies from the next refresh: a feed already at or past the number is not reported as failing, but its recovery is, so look for **Needs attention** in the library when you turn them on. A feed reported as failing that is now below a raised number recovers without a message.
 
 #### Message formats
 
@@ -277,7 +286,7 @@ Named-volume restore remains available for existing deployments and accepts back
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image ghcr.io/ldogg123/rss-workshop:v1.1.1-browser
+  --image ghcr.io/ldogg123/rss-workshop:v1.2.0-browser
 ```
 
 This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; backups of every schema the utility supports, including [automatic pre-upgrade copies](#automatic-copy-before-an-sqlite-upgrade), remain usable with the current utility. Select an app version that supports the restored database schema.
@@ -331,9 +340,9 @@ Direct upgrades are supported from every released SQLite or PostgreSQL app schem
 | v0.1.2 | 2 | 2 → 3 → 4 → 5 in one transaction |
 | v0.2.0 | 3 | 3 → 4 → 5 in one transaction |
 | v1.0.0 | 4 | 4 → 5 in one transaction |
-| v1.1.0 | 5 | None; opened as it is |
+| v1.1.0, v1.1.1 | 5 | None; opened as it is |
 
-Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **An installation older than v1.1.0 migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. SQLite databases also get an [automatic copy](#automatic-copy-before-an-sqlite-upgrade) first. A v1.1.0 database is already at schema 5, so it is opened unchanged, without a copy, and v1.1.0 can still open it. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
+Schema 2 adds diagnostic storage; schema 3 protects stored filter rules from older binaries that would ignore them; schema 4 stores fetched article bodies beside each story's list-page description; schema 5 adds the filter library, and prevents older binaries from refreshing feeds without the library filters they use. **An installation older than v1.1.0 migrates when it starts this version, so take a backup first**: once upgraded, an older release will refuse to open the database. SQLite databases also get an [automatic copy](#automatic-copy-before-an-sqlite-upgrade) first. A v1.1.0 or v1.1.1 database is already at schema 5, so it is opened unchanged, without a copy, and both releases can still open it. The upgrade preserves feeds, reader tokens, saved items, GUIDs, publication dates and run history. A failed migration rolls back the entire upgrade. Unknown or newer schema versions are refused rather than rewritten. Switching `DATABASE_URL` between SQLite and PostgreSQL does not migrate data between backends.
 
 Released migrations and frozen database fixtures remain in the project as new versions are added, with tests for direct upgrades and rollback. Back up before each upgrade: the SQLite utility accepts schemas 1 through 5, verifies the copied data, and restores its original schema without changing it. PostgreSQL users retain a verified [logical dump](postgresql.md#backup-and-restore).
 
@@ -362,7 +371,7 @@ Source bodies are limited to 4 MiB, both as received and once decoded to UTF-8, 
 
 ### Pausing and resuming
 
-**Pause** on a feed card stops its automatic refreshes and **Resume** restarts them. Nothing else about the feed changes: its recipe, error message, failure count and the source's conditional-request validators stay as they were, a refresh already running is still saved, and readers keep receiving the same output, so a paused feed goes on serving its saved stories. Resuming makes the feed due at once, even during an error backoff. Its failure count is kept, so if it fails again the backoff continues where it left off instead of starting over at 2 minutes.
+**Pause** on a feed card stops its automatic refreshes and **Resume** restarts them. Nothing else about the feed changes: its recipe, error message, failure count and the source's conditional-request validators stay as they were, a refresh already running is still saved, and readers keep receiving the same output, so a paused feed goes on serving its saved stories. Resuming makes the feed due at once, even during an error backoff. Its failure count is kept, so if it fails again the backoff continues where it left off instead of starting over at 2 minutes. A paused failing feed therefore still counts in `rss_workshop_feeds_failing` and keeps its `rss_workshop_feed_failures`; to leave paused feeds out of an alert, join it with `and on (id) rss_workshop_feed_enabled == 1`, as the [metrics](#metrics) example does.
 
 The editor's **Refresh automatically** checkbox is saved with the rest of the feed, and a save, like any edit, clears the error, failure count and validators and discards a running refresh. If you leave the checkbox as it was when the editor opened, the save keeps the feed's current setting, so a feed you paused or resumed from its card while the editor was open stays that way.
 

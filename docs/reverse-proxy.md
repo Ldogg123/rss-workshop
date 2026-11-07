@@ -66,7 +66,7 @@ location / {
     proxy_pass http://rss-workshop:8080;
     proxy_set_header Host $host;
     proxy_set_header Origin $http_origin;
-    proxy_read_timeout 160s;
+    proxy_read_timeout 150s;
 }
 ```
 
@@ -80,8 +80,10 @@ it. Forwarded headers do not replace it, and a path prefix is unsupported.
 **Preserve the browser's `Origin` header.** A proxy that strips or rewrites it
 makes every save, delete and refresh fail with a cross-origin rejection.
 
-**Allow at least 160 seconds** for the response, so the longest FlareSolverr
-timeout and its cleanup fit inside the proxy's own limit.
+**Allow at least 150 seconds** for the response. The app answers within 140
+seconds at most: the 2-minute maximum `FLARESOLVERR_TIMEOUT`, 10 seconds for
+transport and cleanup, and 10 more to write the response. A shorter proxy limit
+turns a slow preview into a gateway error.
 
 **Do not cache management or API responses.** The app sends `no-store` for
 them; a proxy that overrides it can serve one visitor's session data to
