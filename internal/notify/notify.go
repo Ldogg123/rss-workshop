@@ -55,8 +55,10 @@ const (
 	Test Kind = "test"
 )
 
-// Event is one thing worth telling the operator. Feed and FeedID are empty
-// for database events. Failures is the feed's failed refreshes in a row for
+// Event is one thing worth telling the operator. Feed and FeedID name the
+// feed for Failing, Recovered and NotSaved, and are empty otherwise. A
+// NotSaved is still a server-wide event, since a database that refuses one
+// feed's results likely refuses them all. Failures is the feed's failed refreshes in a row for
 // Failing and Recovered, and 0 otherwise. Error is redacted and shortened again
 // here, so a caller cannot send more than the stored error would show.
 type Event struct {
