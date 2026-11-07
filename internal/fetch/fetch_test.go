@@ -246,7 +246,7 @@ func TestValidateAcceptLanguage(t *testing.T) {
 		}
 	}
 	for _, v := range []string{
-		"secretsecret", "1en", "en-", "-en", "en--GB", "en_GB", "en.GB", "secrét", "*-GB", "en-*", "**", "en,", ",en", "en,,de", "en de",
+		"secretsecret", "abcdefghi", "en-123456789", "1en", "en-", "-en", "en--GB", "en_GB", "en.GB", "secrét", "*-GB", "en-*", "**", "en,", ",en", "en,,de", "en de",
 		"en;q=1.1", "en;q=2", "en;q=-0", "en;q=0.1234", "en;q=.5", "en;q=", "en;q", "en;Q =0.5", "en;q= 0.5", "en;q=0.5;x=1", "en;level=1", "en;", ";q=0.5", "en;q=0x1",
 		"Cookie: secret", "secret=1", `"secret"`,
 	} {
