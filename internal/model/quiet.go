@@ -26,10 +26,13 @@ func QuietAfter(interval int) time.Duration {
 
 // QuietSince is the time Quiet measures from: when the feed last stored a new
 // story, or, for a feed that has stored none, such as one whose filters have
-// excluded every story, when its output last changed, which its first
-// successful refresh sets.
+// excluded every story, when its output last changed: its first successful
+// refresh, or an edit to its title, URL or interval, so such an edit restarts
+// the count of a feed that has stored no story. Nothing stored records the
+// first success on its own.
 //
-// Only a new story moves it. A story whose text keeps changing, such as a
+// Once a feed has stored a story, only a new story moves it. A story whose
+// text keeps changing, such as a
 // relative age or a comment count, an image, a story that retention removes
 // and an edit to the title, URL or interval all change the output, and so
 // LastChanged, but none of them is a new story.

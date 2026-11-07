@@ -144,6 +144,72 @@ func TestQuietFeedIsListedAndCounted(t *testing.T) {
 	}
 }
 
+// A feed that has never stored a story, such as one whose filters leave out
+// every story, has no last_new, so Quiet counts from its last output change:
+// its first successful refresh, or an edit to its title, URL or interval,
+// which therefore restarts the count. Pausing and resuming do not, and once
+// the feed has stored a story the same edit no longer does either.
+func TestQuietWithoutAStoryCountsFromTheLastOutputChange(t *testing.T) {
+	ctx := context.Background()
+	h := newPortabilityHarness(t)
+	s := h.app.Store
+	id, err := s.Save(ctx, model.Feed{Title: "Filtered site", URL: "https://example.com/news", Interval: 3600, Enabled: true,
+		Recipe: model.Recipe{Type: "css", Items: "article", Title: model.Field{Selector: "h2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh := func(items []model.Item) {
+		t.Helper()
+		f, err := s.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Complete(ctx, f, items, "", "", 200, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := func(method, path string, body []byte) {
+		t.Helper()
+		if w := h.request(method, path, body); w.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d %s", method, path, w.Code, w.Body.String())
+		}
+	}
+	rename := func(title string) model.Feed {
+		t.Helper()
+		listed := h.listed(t, id)
+		listed.Title = title
+		request("PUT", "/api/feeds/"+id, jsonBody(t, listed))
+		return h.listed(t, id)
+	}
+	old := time.Now().Add(-model.QuietFloor - time.Hour).Truncate(time.Second)
+
+	// A refresh whose filters left out every story.
+	refresh(nil)
+	if f := h.listed(t, id); f.Quiet || f.LastChanged.IsZero() || !f.LastNew.IsZero() {
+		t.Fatalf("after the first success: quiet=%v, last_changed=%v, last_new=%v", f.Quiet, f.LastChanged, f.LastNew)
+	}
+	if _, err := s.DB.Exec(fmt.Sprintf("UPDATE feeds SET last_changed=%d WHERE id='%s'", old.Unix(), id)); err != nil {
+		t.Fatal(err)
+	}
+	if f := h.listed(t, id); !f.Quiet {
+		t.Fatal("a feed without a story whose first success is past the threshold is not quiet")
+	}
+	request("POST", "/api/feeds/"+id+"/enabled", []byte(`{"enabled":false}`))
+	request("POST", "/api/feeds/"+id+"/enabled", []byte(`{"enabled":true}`))
+	if f := h.listed(t, id); !f.Quiet || !f.LastChanged.Equal(old) {
+		t.Fatalf("pausing and resuming: quiet=%v, last_changed=%v", f.Quiet, f.LastChanged)
+	}
+	if f := rename("Filtered site, renamed"); f.Quiet || !f.LastChanged.After(old) || !f.LastNew.IsZero() {
+		t.Fatalf("a rename of a feed without a story: quiet=%v, last_changed=%v, last_new=%v", f.Quiet, f.LastChanged, f.LastNew)
+	}
+
+	refresh([]model.Item{{Key: "one", Title: "One"}})
+	ageStories(t, h, id, old)
+	if f := rename("Filtered site, renamed again"); !f.Quiet || !f.LastChanged.After(old) || !f.LastNew.Equal(old) {
+		t.Fatalf("a rename of a feed with a story: quiet=%v, last_changed=%v, last_new=%v", f.Quiet, f.LastChanged, f.LastNew)
+	}
+}
+
 // A held feed's latest refresh was never stored, so its unchanged row says
 // nothing about whether the output would have changed.
 func TestHeldFeedIsNotQuiet(t *testing.T) {

@@ -112,8 +112,8 @@ function feedCard(f){
  if(libraryFilters.length)card.append(node('p',`Library filters: ${libraryFilters.join(', ')}`,'feed-filters'));
  if(held)card.append(node('p','Waiting to retry a failed database write. The last refresh could not be saved; it is retried after a delay, or now with Refresh.','diagnostic feed-held'));
  if(status==='quiet'){
-  // As the server measures it: from the last new story, or from the first
-  // output of a feed that has stored none.
+  // As the server measures it: from the last new story, or from the last
+  // output change of a feed that has stored none.
   const days=Math.max(0,Math.floor((Date.now()-(stamp(f.last_new)??stamp(f.last_changed)))/864e5));
   card.append(node('p',`No new story for ${days} day${days===1?'':'s'}. Refreshes keep succeeding, but none has found a story this feed did not already have. Check that the page still lists new stories, or preview the recipe from Edit.`,'feed-quiet'));
  }

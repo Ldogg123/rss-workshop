@@ -63,8 +63,8 @@ type Feed struct {
 	LastChanged time.Time `json:"last_changed"`
 	// LastNew is when a stored refresh last inserted a story this feed did not
 	// have stored, and that retention kept; zero if none is known. A story
-	// that retention or history pruning removed counts again if its source
-	// still lists it; a changed story does not move it. It is reported state
+	// that retention or history pruning removed counts again if a later
+	// refresh stores it again; a changed story does not move it. It is reported state
 	// like LastChanged, which saves and previews accept and ignore. Quiet
 	// measures from it (QuietSince); reader output never reads it.
 	LastNew      time.Time `json:"last_new"`
