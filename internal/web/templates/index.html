@@ -56,6 +56,13 @@
 <div class="field-row"><label>Article body<textarea name="full_selector" placeholder="article.content" rows="2" maxlength="1000" spellcheck="false"></textarea></label><label>Article attribute<input name="full_attr" placeholder="HTML by default"></label></div>
 <label class="check"><input name="full_browser" type="checkbox">Render article pages with this feed's fetch mode</label><p class="hint">Off by default: article pages are fetched as plain HTML, which is faster and leaves the shared browser free for list pages. Turn this on only when article pages need JavaScript.</p>
 </details>
+<details id="content-cleanup"><summary>Content cleanup <span id="cleanup-summary" class="meta">Off</span></summary>
+<p class="hint">Leave out parts of each description and article body that the selectors cannot avoid, such as share buttons, newsletter boxes or “Related” lists. Each rule is a selector of the selector type above, matched inside the selected description or article body, which itself is never removed. One rule per line, at most {{.MaxCleanupRules}}. Use Preview items to check what is left.</p>
+<label>Remove elements<textarea name="cleanup" rows="4" spellcheck="false" autocomplete="off" placeholder=".share" aria-describedby="cleanup-syntax-help"></textarea></label>
+<p class="hint" id="cleanup-syntax-help"></p>
+<p class="hint">Cleanup does not change the story’s image, which the Image field chooses: removing the image here only moves it to the top of the description. Story filters read the cleaned description.</p>
+<p class="hint">With full article content, saving changed rules discards the article bodies of the stories the last refresh listed and the story filters kept, and the next refreshes fetch them again, cleaned. Other stories keep their article and their description as they are.</p>
+</details>
 <details id="story-filters"><summary>Story filters <span id="filter-summary-count" class="meta">Optional</span></summary>
 <p class="hint">Keep the topics you care about. Matching ignores case and repeated whitespace. Each line is a literal phrase, not a regular expression.</p>
 <details class="filter-help"><summary>How include, exclude, and groups work</summary><p class="hint">A story must pass the include rules, then avoid the exclude rules. Leave either panel empty to skip it. “All” requires every condition; “Any” requires just one. Nest groups to combine them. Descriptions match readable text; links match the complete item URL.</p><p class="hint">Paste up to {{.MaxKeywords}} phrases across both panels, one per line. Each phrase can contain up to {{.MaxKeywordCharacters}} characters. Use up to {{.MaxNodes}} rules and {{.MaxDepth}} levels of nesting.</p></details>

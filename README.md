@@ -11,7 +11,7 @@ RSS Workshop is designed for people looking for a self-hosted alternative to hos
 - Fully self-hosted, MIT licensed, no account and no third-party service
 - Visual selector editor, with CSS and XPath side by side and live match highlighting
 - JavaScript rendering with sandboxed Chromium, or an optional external FlareSolverr
-- Full article content: follow each story’s link and publish the article, not the teaser
+- Full article content: follow each story’s link and publish the article, not the teaser, with cleanup rules for share bars and other clutter
 - Story include/exclude filters with nested rules and bulk keyword lists, plus a filter library to reuse rules across feeds
 - RSS and Atom output with stable item identities, plus OPML export of every feed
 - A searchable library that points out feeds gone quiet, plus per-feed diagnostics, Prometheus metrics, and verified backup and restore

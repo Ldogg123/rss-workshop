@@ -87,7 +87,7 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		// article selector changes makes the editor a repair path: the next
 		// refreshes refetch them with the new selector, or leave the list-page
 		// description in place if the operator turned the feature off.
-		cleared, err := s.articleSelectorChanged(ctx, tx, f)
+		cleared, err := s.articleBodiesChanged(ctx, tx, f)
 		if err != nil {
 			return "", err
 		}
@@ -119,8 +119,8 @@ title=?,url=?,recipe=?,interval=?,`+enabled+`next_run=?,etag='',modified='',erro
 		// Clear only while holding the feed row. On PostgreSQL a refresh merging
 		// bodies from the old selector holds that lock; clearing before it would
 		// miss the rows it has not committed yet, and they would survive.
-		if cleared {
-			if err := s.clearArticleBodies(ctx, tx, f.ID); err != nil {
+		if cleared != keepBodies {
+			if err := s.clearArticleBodies(ctx, tx, f.ID, cleared == clearListedBodies); err != nil {
 				return "", err
 			}
 		}
@@ -159,32 +159,58 @@ title=?,url=?,recipe=?,interval=?,`+enabled+`next_run=?,etag='',modified='',erro
 	return f.ID, nil
 }
 
-// articleSelectorChanged reports whether the saved recipe asks for a different
-// article body than the stored one does. Only the selector and attribute
-// matter: the fetch mode changes how a page is retrieved, not which part of it
-// becomes the story.
-func (s *Store) articleSelectorChanged(ctx context.Context, tx *sql.Tx, f model.Feed) (bool, error) {
+// bodyClear says which stored article bodies an edit discards.
+type bodyClear int
+
+const (
+	keepBodies bodyClear = iota
+	// clearListedBodies discards the bodies of the stories the latest stored
+	// refresh that read the page listed, which the next refreshes can fetch
+	// again.
+	clearListedBodies
+	clearAllBodies
+)
+
+// articleBodiesChanged reports whether the saved recipe asks for a different
+// article body than the stored one does. The selector and attribute choose the
+// block, so changing either discards every body. The fetch mode changes how a
+// page is retrieved, not which part of it becomes the story.
+//
+// Cleanup rules only trim that block, so changing them discards just the
+// bodies of the stories still listed. Older stories keep the body they have:
+// they are no longer on the list page, so a discarded body would never be
+// fetched again, and stored bodies have lost the class names the rules match,
+// so they cannot be cleaned again in place. Rules do not apply to a body read
+// from an attribute.
+func (s *Store) articleBodiesChanged(ctx context.Context, tx *sql.Tx, f model.Feed) (bodyClear, error) {
 	var raw string
 	if err := tx.QueryRowContext(ctx, s.bind("SELECT recipe FROM feeds WHERE id=?"), f.ID).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
+			return keepBodies, nil
 		}
-		return false, err
+		return keepBodies, err
 	}
 	var stored model.Recipe
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 		// An unreadable stored recipe cannot be compared. Refetching is the safe
 		// direction: it costs requests, never content.
-		return true, nil
+		return clearAllBodies, nil
 	}
 	was, now := stored.Full, f.Recipe.Full
-	if was == nil || now == nil {
+	switch {
+	case was == nil || now == nil:
 		// One side asks for an article body and the other does not: either the
 		// feature was just turned on, or it was turned off and the bodies it
 		// left behind would otherwise keep being published.
-		return (was == nil) != (now == nil), nil
+		if (was == nil) != (now == nil) {
+			return clearAllBodies, nil
+		}
+	case was.Selector != now.Selector || was.Attr != now.Attr:
+		return clearAllBodies, nil
+	case now.Attr == "" && (!slices.Equal(stored.Remove, f.Recipe.Remove) || len(f.Recipe.Remove) > 0 && stored.Type != f.Recipe.Type):
+		return clearListedBodies, nil
 	}
-	return was.Selector != now.Selector || was.Attr != now.Attr, nil
+	return keepBodies, nil
 }
 
 // bumpChanged is the modification time for a feed whose output just changed:
@@ -200,17 +226,44 @@ func (s *Store) markChanged(ctx context.Context, tx *sql.Tx, feedID string) erro
 	return err
 }
 
-// clearArticleBodies discards a feed's stored article bodies. Each cleared
-// story takes the feed's next change time rather than the clock, so its Atom
-// updated moves forward even when earlier changes in the same second already
-// pushed the feed's time ahead.
-func (s *Store) clearArticleBodies(ctx context.Context, tx *sql.Tx, feedID string) error {
+// clearArticleBodies discards a feed's stored article bodies, or with
+// listedOnly those of the stories the latest stored refresh that read the page
+// listed. Each cleared story takes the feed's next change time rather than the
+// clock, so its Atom updated moves forward even when earlier changes in the
+// same second already pushed the feed's time ahead.
+func (s *Store) clearArticleBodies(ctx context.Context, tx *sql.Tx, feedID string, listedOnly bool) error {
+	if listedOnly {
+		// Articles are fetched only for the stories a refresh stores. When the
+		// newest successful run that read the page stored none, because the
+		// filters left every story out, no stored story is listed, and a body
+		// cleared now would never be fetched again: every story keeps its body,
+		// as older stories do. A 304 reads no page and lists what the refresh
+		// before it did; a failure stores nothing. With no such run among those
+		// kept, the latest merge below stands in for it.
+		var count int
+		err := tx.QueryRowContext(ctx, s.bind("SELECT count FROM runs WHERE feed_id=? AND status<>304 AND error='' ORDER BY id DESC LIMIT 1"), feedID).Scan(&count)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		case count == 0:
+			return nil
+		}
+	}
 	now := time.Now().Unix()
 	var changedAt int64
 	if err := tx.QueryRowContext(ctx, s.bind("SELECT "+bumpChanged+" FROM feeds WHERE id=?"), now, now, feedID).Scan(&changedAt); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, s.bind("UPDATE items SET content_full='',last_changed=? WHERE feed_id=? AND content_full<>''"), changedAt, feedID)
+	query, args := "UPDATE items SET content_full='',last_changed=? WHERE feed_id=? AND content_full<>''", []any{changedAt, feedID}
+	if listedOnly {
+		// A merge gives every story it lists its own time as last_seen. This is
+		// not last_success: a 304 succeeds without merging a story or moving
+		// last_seen, and lists what the merge before it did.
+		query += " AND last_seen>=(SELECT COALESCE(MAX(last_seen),0) FROM items WHERE feed_id=?)"
+		args = append(args, feedID)
+	}
+	result, err := tx.ExecContext(ctx, s.bind(query), args...)
 	if err != nil {
 		return err
 	}

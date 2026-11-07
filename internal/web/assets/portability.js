@@ -32,6 +32,8 @@
     const rule=feed.recipe[field],name={title:'Title',link:'Link',content:'Description',image:'Image',date:'Date'}[field];
     return [name,rule?.selector?rule.selector+(rule.attr?' → '+rule.attr:''):'Not specified'];
    })]){mapping.append(node('dt',label),node('dd',value));}
+   // Cleanup rules change what is published, one rule per line.
+   if(Array.isArray(feed.recipe.remove)&&feed.recipe.remove.length)mapping.append(node('dt','Cleanup'),node('dd',feed.recipe.remove.join('\n')));
    selectors.append(mapping);item.append(selectors);preview.append(item);
   }
   preview.hidden=false;

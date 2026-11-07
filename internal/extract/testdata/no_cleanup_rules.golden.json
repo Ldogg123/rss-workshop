@@ -1,0 +1,337 @@
+{
+  "article attribute": {
+    "article": "\u003cp\u003eBody from an attribute\u003c/p\u003e"
+  },
+  "article css": {
+    "article": "\u003ch1\u003eHeadline\u003c/h1\u003e\u003cp\u003eBody \u003ca href=\"https://example.com/news/rel.html\" rel=\"nofollow\"\u003elink\u003c/a\u003e\u003c/p\u003e\u003cdiv\u003eShare this\u003c/div\u003e\u003cimg src=\"https://example.com/news/pic.jpg\"/\u003e"
+  },
+  "article invisible": {
+    "article": "\u003cdiv\u003e\u003cdiv\u003e\u003cspan\u003e \u003c/span\u003e\u003c/div\u003e\u003c/div\u003e"
+  },
+  "article sanitized": {
+    "article": ""
+  },
+  "article xpath": {
+    "article": "\u003ch1\u003eHeadline\u003c/h1\u003e\u003cp\u003eBody \u003ca href=\"https://example.com/news/rel.html\" rel=\"nofollow\"\u003elink\u003c/a\u003e\u003c/p\u003e\u003cdiv\u003eShare this\u003c/div\u003e\u003cimg src=\"https://example.com/news/pic.jpg\"/\u003e"
+  },
+  "list cards attribute": {
+    "preview": {
+      "matches": 2,
+      "valid": 2,
+      "filtered": 0,
+      "items": [
+        {
+          "key": "https://example.com/news/first?edition=1",
+          "guid": "",
+          "title": "First \u0026 best",
+          "url": "https://example.com/news/first?edition=1",
+          "html": "\u003cp\u003e\u003cimg src=\"https://example.com/images/one.jpg\" alt=\"\"\u003e\u003c/p\u003e",
+          "image": "https://example.com/images/one.jpg",
+          "published": "2026-09-01T12:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/second",
+          "guid": "",
+          "title": "Second story",
+          "url": "https://example.com/news/second",
+          "html": "\u003cp\u003e\u003cimg src=\"https://example.com/images/large.jpg\" alt=\"\"\u003e\u003c/p\u003e",
+          "image": "https://example.com/images/large.jpg",
+          "published": "2026-09-02T14:30:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        }
+      ],
+      "warnings": [
+        "Match 1: Content expected text or safe HTML but received nothing (selected element has no \"data-teaser\" attribute); content omitted",
+        "Match 2: Content expected text or safe HTML but received nothing (selected element has no \"data-teaser\" attribute); content omitted"
+      ]
+    }
+  },
+  "list cards css": {
+    "preview": {
+      "matches": 2,
+      "valid": 2,
+      "filtered": 0,
+      "items": [
+        {
+          "key": "https://example.com/news/first?edition=1",
+          "guid": "",
+          "title": "First \u0026 best",
+          "url": "https://example.com/news/first?edition=1",
+          "html": "\u003cdiv\u003e\u003cp\u003eHello \u003cstrong\u003ereader\u003c/strong\u003e \u003ca href=\"https://example.com/about\" rel=\"nofollow\"\u003eAbout\u003c/a\u003e\u003c/p\u003e\u003cimg src=\"https://example.com/images/one.jpg\"/\u003ebad\u003c/div\u003e",
+          "image": "https://example.com/images/one.jpg",
+          "published": "2026-09-01T12:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/second",
+          "guid": "",
+          "title": "Second story",
+          "url": "https://example.com/news/second",
+          "html": "\u003cdiv\u003e\u003cp\u003eAnother update\u003c/p\u003e\u003cimg src=\"https://example.com/images/large.jpg\"/\u003e\u003c/div\u003e",
+          "image": "https://example.com/images/large.jpg",
+          "published": "2026-09-02T14:30:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        }
+      ],
+      "warnings": []
+    }
+  },
+  "list cards xpath": {
+    "preview": {
+      "matches": 2,
+      "valid": 2,
+      "filtered": 0,
+      "items": [
+        {
+          "key": "https://example.com/news/first?edition=1",
+          "guid": "",
+          "title": "First \u0026 best",
+          "url": "https://example.com/news/first?edition=1",
+          "html": "\u003cdiv\u003e\u003cp\u003eHello \u003cstrong\u003ereader\u003c/strong\u003e \u003ca href=\"https://example.com/about\" rel=\"nofollow\"\u003eAbout\u003c/a\u003e\u003c/p\u003e\u003cimg src=\"https://example.com/images/one.jpg\"/\u003ebad\u003c/div\u003e",
+          "image": "https://example.com/images/one.jpg",
+          "published": "2026-09-01T12:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/second",
+          "guid": "",
+          "title": "Second story",
+          "url": "https://example.com/news/second",
+          "html": "\u003cdiv\u003e\u003cp\u003eAnother update\u003c/p\u003e\u003cimg src=\"https://example.com/images/large.jpg\"/\u003e\u003c/div\u003e",
+          "image": "https://example.com/images/large.jpg",
+          "published": "2026-09-02T14:30:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        }
+      ],
+      "warnings": []
+    }
+  },
+  "list edge attribute": {
+    "preview": {
+      "matches": 5,
+      "valid": 5,
+      "filtered": 0,
+      "items": [
+        {
+          "key": "https://example.com/news/one",
+          "guid": "",
+          "title": "Share bar",
+          "url": "https://example.com/news/one",
+          "html": "\u003cp\u003e\u003cimg src=\"https://example.com/images/one.jpg\" alt=\"\"\u003e\u003c/p\u003e",
+          "image": "https://example.com/images/one.jpg",
+          "published": "2026-09-01T12:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/two",
+          "guid": "",
+          "title": "Image outside",
+          "url": "https://example.com/news/two",
+          "html": "\u003cp\u003e\u003cimg src=\"https://example.com/images/two.jpg\" alt=\"\"\u003e\u003c/p\u003e",
+          "image": "https://example.com/images/two.jpg",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/three",
+          "guid": "",
+          "title": "Invisible",
+          "url": "https://example.com/news/three",
+          "html": "",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/four",
+          "guid": "",
+          "title": "Sanitized away",
+          "url": "https://example.com/news/four",
+          "html": "",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/five",
+          "guid": "",
+          "title": "Attribute",
+          "url": "https://example.com/news/five",
+          "html": "\u0026lt;p\u0026gt;From an attribute\u0026lt;/p\u0026gt;",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        }
+      ],
+      "warnings": [
+        "Match 1: Content expected text or safe HTML but received nothing (selected element has no \"data-teaser\" attribute); content omitted",
+        "Match 2: Content expected text or safe HTML but received nothing (selected element has no \"data-teaser\" attribute); content omitted",
+        "Match 2: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 3: Content expected text or safe HTML but received nothing (selected element has no \"data-teaser\" attribute); content omitted",
+        "Match 3: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 4: Content expected text or safe HTML but received nothing (selected element has no \"data-teaser\" attribute); content omitted",
+        "Match 4: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 5: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time"
+      ]
+    }
+  },
+  "list edge css": {
+    "preview": {
+      "matches": 5,
+      "valid": 5,
+      "filtered": 0,
+      "items": [
+        {
+          "key": "https://example.com/news/one",
+          "guid": "",
+          "title": "Share bar",
+          "url": "https://example.com/news/one",
+          "html": "\u003cdiv\u003e\u003cp\u003eKept \u003cb\u003etext\u003c/b\u003e \u003ca href=\"https://example.com/about\" rel=\"nofollow\"\u003eAbout\u003c/a\u003e\u003c/p\u003e\u003cdiv id=\"share-1\"\u003e\u003ca href=\"https://social.example/share?u=1\" rel=\"nofollow\"\u003eShare\u003c/a\u003e\u003c/div\u003e\u003cimg src=\"https://example.com/images/one.jpg\" alt=\"\"/\u003e\u003c/div\u003e",
+          "image": "https://example.com/images/one.jpg",
+          "published": "2026-09-01T12:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/two",
+          "guid": "",
+          "title": "Image outside",
+          "url": "https://example.com/news/two",
+          "html": "\u003cp\u003e\u003cimg src=\"https://example.com/images/two.jpg\" alt=\"\"\u003e\u003c/p\u003e\u003cdiv\u003e\u003cp\u003eText only\u003c/p\u003e\u003c/div\u003e",
+          "image": "https://example.com/images/two.jpg",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/three",
+          "guid": "",
+          "title": "Invisible",
+          "url": "https://example.com/news/three",
+          "html": "\u003cdiv\u003e\u003cdiv\u003e\u003cspan\u003e \u003c/span\u003e\u003c/div\u003e\u003c/div\u003e",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/four",
+          "guid": "",
+          "title": "Sanitized away",
+          "url": "https://example.com/news/four",
+          "html": "",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/five",
+          "guid": "",
+          "title": "Attribute",
+          "url": "https://example.com/news/five",
+          "html": "",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        }
+      ],
+      "warnings": [
+        "Match 2: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 3: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 4: Content expected text or safe HTML but received nothing (selected value is empty); content omitted",
+        "Match 4: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 5: Content expected text or safe HTML but received nothing (selector matched no nodes); content omitted",
+        "Match 5: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time"
+      ]
+    }
+  },
+  "list edge xpath": {
+    "preview": {
+      "matches": 5,
+      "valid": 5,
+      "filtered": 0,
+      "items": [
+        {
+          "key": "https://example.com/news/one",
+          "guid": "",
+          "title": "Share bar",
+          "url": "https://example.com/news/one",
+          "html": "\u003cdiv\u003e\u003cp\u003eKept \u003cb\u003etext\u003c/b\u003e \u003ca href=\"https://example.com/about\" rel=\"nofollow\"\u003eAbout\u003c/a\u003e\u003c/p\u003e\u003cdiv id=\"share-1\"\u003e\u003ca href=\"https://social.example/share?u=1\" rel=\"nofollow\"\u003eShare\u003c/a\u003e\u003c/div\u003e\u003cimg src=\"https://example.com/images/one.jpg\" alt=\"\"/\u003e\u003c/div\u003e",
+          "image": "https://example.com/images/one.jpg",
+          "published": "2026-09-01T12:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/two",
+          "guid": "",
+          "title": "Image outside",
+          "url": "https://example.com/news/two",
+          "html": "\u003cp\u003e\u003cimg src=\"https://example.com/images/two.jpg\" alt=\"\"\u003e\u003c/p\u003e\u003cdiv\u003e\u003cp\u003eText only\u003c/p\u003e\u003c/div\u003e",
+          "image": "https://example.com/images/two.jpg",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/three",
+          "guid": "",
+          "title": "Invisible",
+          "url": "https://example.com/news/three",
+          "html": "\u003cdiv\u003e\u003cdiv\u003e\u003cspan\u003e \u003c/span\u003e\u003c/div\u003e\u003c/div\u003e",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/four",
+          "guid": "",
+          "title": "Sanitized away",
+          "url": "https://example.com/news/four",
+          "html": "",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        },
+        {
+          "key": "https://example.com/news/five",
+          "guid": "",
+          "title": "Attribute",
+          "url": "https://example.com/news/five",
+          "html": "",
+          "image": "",
+          "published": "0001-01-01T00:00:00Z",
+          "first_seen": "0001-01-01T00:00:00Z",
+          "last_seen": "0001-01-01T00:00:00Z"
+        }
+      ],
+      "warnings": [
+        "Match 2: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 3: Image expected an HTTP(S) image URL but received nothing (selector matched no nodes); image omitted",
+        "Match 3: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 4: Content expected text or safe HTML but received nothing (selected value is empty); content omitted",
+        "Match 4: Image expected an HTTP(S) image URL but received nothing (selector matched no nodes); image omitted",
+        "Match 4: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time",
+        "Match 5: Content expected text or safe HTML but received nothing (selector matched no nodes); content omitted",
+        "Match 5: Image expected an HTTP(S) image URL but received nothing (selector matched no nodes); image omitted",
+        "Match 5: date not recognized; Date expected a date or relative age but received nothing (selector matched no nodes); using first-seen time"
+      ]
+    }
+  }
+}
