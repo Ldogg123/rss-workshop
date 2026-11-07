@@ -42,9 +42,19 @@ Changing fetch settings invalidates source validators and in-flight results. Bro
 
 [Story filters](filtering.md) apply after extraction in every fetch mode. If valid stories exist but your rules exclude them all, Auto succeeds with zero included stories and does not render again.
 
-## Bounds and recovery
+## Capacity
 
-`BROWSER_SLOTS` defaults to 2 and permits 1–8 concurrent browser jobs. Previews and scheduled renders share this pool as well as the overall `STATIC_WORKERS` job admission limit. Waiting renders occupy bounded job slots; there is no unbounded browser queue. The authenticated dashboard reports browser capacity and current activity. One additional blank control tab belongs to the managed process.
+`BROWSER_SLOTS` defaults to 2 and permits 1–8 pages rendering at once. Every Chromium render shares these slots: list pages, [article pages](atom.md#full-article-content), Auto fallbacks, previews and the visual selector's page loads. Each of those jobs also holds one of the `STATIC_WORKERS` refresh/preview slots shared by every fetch mode, so a render waiting for Chromium never queues without bound. The authenticated dashboard reports browser capacity and current activity. One additional blank control tab belongs to the managed process.
+
+RSS Workshop starts a scheduled refresh that renders in Chromium only when a slot is free: a feed in Chromium mode, and a feed in any mode but FlareSolverr that renders its article pages. When more such feeds are due than there are slots, as after a restart, an outage or an import, the rest stay due and start oldest first as slots free up. Waiting for a slot is not a failure: it records no error, does not back a feed off and sends no [notification](operations.md#notifications). Feeds in other fetch modes are not held back. A Chromium-mode feed whose article pages are plain HTML, the default, gives its slot back once its list page is rendered, before it fetches them. A feed that renders its article pages renders them one at a time, so it holds a single slot until the last one; with many new stories, some of the 10 it may fetch per refresh can be left for the next refresh.
+
+**Auto** feeds start without waiting for a slot. Most find their stories as static HTML and never render, and holding a slot through every static fetch would let only `BROWSER_SLOTS` of them run at once. A fallback render instead waits for a free slot inside the feed's `FETCH_TIMEOUT`. A feed that always falls back is better set to Chromium mode, which waits for a slot before it starts.
+
+**Preview items** and **Choose elements visually** are never refused for want of a Chromium slot, unlike [FlareSolverr](flaresolverr.md#capacity): a Chromium render can be cancelled, and frees its slot as soon as it ends. They take a free slot when there is one, so a refresh due meanwhile stays due until they finish. Otherwise they wait for one inside their own deadline. A preview of a feed that renders its article pages fetches its three sample articles one at a time.
+
+A render that cannot get a slot within its deadline fails with `no free Chromium slot before the deadline`. A scheduled refresh meets this only when renders that started without a slot (Auto fallbacks, previews and page loads) kept the pool busy for its whole `FETCH_TIMEOUT`; it then fails and backs off as usual. If it recurs, raise `BROWSER_SLOTS` where the host has the memory for more renders, or set frequently falling-back Auto feeds to Chromium mode.
+
+## Bounds and recovery
 
 The existing `FETCH_TIMEOUT` bounds each refresh/preview, including readiness and settling. Browser initialization has its own 15-second watchdog. Tabs and contexts are disposed on success, error, cancellation, and timeout. A crashed process fails its active jobs and is recreated for later jobs. The process recycles after 100 completed renders when no renders are active. Downloads are denied and popup targets are closed.
 
@@ -67,7 +77,7 @@ make browser-test
 make docker-smoke
 ```
 
-Use `DOCKER='sudo docker'` with Make when needed; the smoke target forwards it to the Python checks. Direct smoke-script runs can also set `DOCKER='sudo docker'`. These checks require Python 3.11+. Browser tests run with the deployed sandbox profile and Go's race detector. They cover rendering, context isolation, private redirects/subresources, WebRTC UDP, WebSockets, readiness timeouts, slot bounds, process recovery, and the visual editor. The WebRTC test needs a non-loopback interface, because a loopback-only network produces no ICE activity, and fails rather than passing without one. The Compose smoke checks use temporary fixture projects and host directories. See [contributing](../CONTRIBUTING.md) for the complete validation workflow.
+Use `DOCKER='sudo docker'` with Make when needed; the smoke target forwards it to the Python checks. Direct smoke-script runs can also set `DOCKER='sudo docker'`. These checks require Python 3.11+. Browser tests run with the deployed sandbox profile and Go's race detector. They cover rendering, context isolation, private redirects/subresources, WebRTC UDP, WebSockets, readiness timeouts, slot bounds, process recovery, and the visual editor. `make check` covers the scheduler's [Chromium admission](#capacity) without Chromium, through a stand-in for the pool and the pool's own slot wait. The WebRTC test needs a non-loopback interface, because a loopback-only network produces no ICE activity, and fails rather than passing without one. The Compose smoke checks use temporary fixture projects and host directories. See [contributing](../CONTRIBUTING.md) for the complete validation workflow.
 
 Live-site trials are opt-in checks whose source pages may change. With native Chromium installed, run them as a non-root user:
 

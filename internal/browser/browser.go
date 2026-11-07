@@ -56,6 +56,11 @@ func (p *Pool) Stats() Stats {
 	defer p.mu.Unlock()
 	return Stats{Active: p.active, Capacity: cap(p.slots), Restarts: p.restarts, Ready: p.root != nil && p.root.Err() == nil}
 }
+
+// Capacity is the number of renders that can run at once, BROWSER_SLOTS. The
+// scheduler admits jobs against it while holding its own lock, so it takes
+// none: Stats waits on p.mu, which a Chromium start holds for up to 15 s.
+func (p *Pool) Capacity() int { return cap(p.slots) }
 func (p *Pool) Close() {
 	p.mu.Lock()
 	p.closed = true
@@ -130,7 +135,13 @@ func (p *Pool) Render(ctx context.Context, raw, waitSelector string, settleMS in
 	case p.slots <- struct{}{}:
 		defer func() { <-p.slots }()
 	case <-ctx.Done():
-		return out, ctx.Err()
+		// A bare context error reads as if the source were slow. Say what the
+		// render waited for, without the URL: the error is stored on the card,
+		// logged and sent in notifications.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return out, fmt.Errorf("no free Chromium slot before the deadline: %w", ctx.Err())
+		}
+		return out, fmt.Errorf("canceled while waiting for a free Chromium slot: %w", ctx.Err())
 	}
 	p.mu.Lock()
 	if e := p.startLocked(); e != nil {

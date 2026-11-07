@@ -19,7 +19,8 @@ const (
 	// few cycles instead of hammering the source in one burst.
 	MaxArticlesPerRun = 10
 	// articleWorkers bounds concurrent requests to a single source. Through
-	// FlareSolverr a feed fetches its articles one at a time instead.
+	// FlareSolverr or a Chromium pool a feed fetches its articles one at a
+	// time instead.
 	articleWorkers = 4
 	// articleRecency keeps re-fetching a recently discovered item, because a
 	// source may publish its images or finish its article body minutes after
@@ -91,10 +92,11 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 	}
 
 	workers := articleWorkers
-	if articlesUseSolver(f) {
-		// A FlareSolverr job is admitted for one solver slot (see solverFree).
-		// Fetching its articles in parallel would take the slots of jobs
-		// admitted after it, which then wait inside their own deadlines.
+	if articlesUseSolver(f) || articlesUseChromium(f) && s.chromiumSlots() > 0 {
+		// A FlareSolverr job is admitted for one solver slot (see solverFree),
+		// and a Chromium job for one pool slot (see chromium). Fetching its
+		// articles in parallel would take the slots of jobs admitted after it,
+		// which then wait inside their own deadlines.
 		workers = 1
 	}
 	var mu sync.Mutex
@@ -150,6 +152,13 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 // list page is solved, and gives its admission back before any article.
 func articlesUseSolver(f model.Feed) bool {
 	return f.Recipe.Mode == "flaresolverr" && f.Recipe.Full != nil && f.Recipe.Full.Selector != "" && f.Recipe.Full.Browser
+}
+
+// articlesUseChromium reports whether a feed renders its article pages in the
+// local Chromium pool: in every fetch mode but FlareSolverr, Static HTTP
+// included, once the option is on (see article).
+func articlesUseChromium(f model.Feed) bool {
+	return f.Recipe.Mode != "flaresolverr" && f.Recipe.Full != nil && f.Recipe.Full.Selector != "" && f.Recipe.Full.Browser
 }
 
 // article fetches and extracts one item page. It uses the plain guarded fetcher
