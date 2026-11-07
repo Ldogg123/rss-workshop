@@ -131,7 +131,7 @@ For direct LAN access, deliberately bind the app to a LAN address and set `PUBLI
 | `FETCH_TIMEOUT` | `30s` | 1s–2m static/local Chromium deadline |
 | `FETCH_USER_AGENT` | empty: `RSS-Workshop (+https://github.com/Ldogg123/rss-workshop)` | User-Agent of static requests: list pages, article pages and the visual selector's static snapshot. At most 256 printable ASCII characters. A feed's own User-Agent replaces it for that feed. Chromium and FlareSolverr send their own. See [identifying requests](#identifying-requests) |
 | `CHROMIUM_PATH` | empty | Native browser executable; browser image sets `/usr/bin/chromium` |
-| `BROWSER_SLOTS` | `2` | 1–8 pages rendering at once in local Chromium. Due feeds that render wait for a free slot without failing; see [Chromium capacity](browser.md#capacity) |
+| `BROWSER_SLOTS` | `2` | 1–8 pages rendering at once in local Chromium. Chromium-mode feeds, and feeds whose article pages Chromium renders, wait for a free slot without failing; see [Chromium capacity](browser.md#capacity) |
 | `FLARESOLVERR_URL` | empty | Trusted service base URL or `/v1` endpoint |
 | `FLARESOLVERR_TIMEOUT` | `60s` | 5s–2m solver deadline, independent of `FETCH_TIMEOUT` |
 | `FLARESOLVERR_SLOTS` | `1` | 1–4 solver jobs |

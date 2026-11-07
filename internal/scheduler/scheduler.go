@@ -115,7 +115,8 @@ func (s *Scheduler) usesSolver(mode string) bool {
 type chromium int
 
 const (
-	// noChromium: the job renders nothing there.
+	// noChromium: the job is not admitted there. It renders nothing, or only
+	// an Auto fallback, which waits for a pool slot inside its deadline.
 	noChromium chromium = iota
 	// shareChromium takes a free Chromium admission when there is one and
 	// starts either way. Previews and page loads, which an operator waits on,
@@ -123,9 +124,10 @@ const (
 	// cancelled and frees its slot when it ends, so one without an admission
 	// waits for a pool slot inside its own deadline rather than being refused.
 	shareChromium
-	// needChromium starts only with a free Chromium admission. A refresh that
-	// renders its list page or its article pages is admitted so; refused, it
-	// stays due rather than waiting out its deadline for a pool slot.
+	// needChromium starts only with a free Chromium admission. A refresh in
+	// Chromium mode, or one that renders its article pages, is admitted so;
+	// refused, it stays due rather than waiting out its deadline for a pool
+	// slot.
 	needChromium
 )
 
@@ -141,12 +143,12 @@ func (s *Scheduler) chromiumSlots() int {
 }
 
 // rendersPages reports whether a job for f is set to render pages in the
-// Chromium pool: its list page in Chromium mode, or its article pages. Auto
-// renders only when static HTML yields no stories, which is not known in
-// advance. Admitting it as well would hold a Chromium admission through every
-// Auto feed's static fetch and limit those to BROWSER_SLOTS at a time, so it
-// is not admitted, and a fallback waits for a pool slot inside the feed's
-// deadline.
+// Chromium pool: its list page in Chromium mode, or its article pages in any
+// mode but FlareSolverr, Auto included. An Auto list page renders only when
+// static HTML yields no stories, which is not known in advance. Admitting
+// every Auto feed for that would hold a Chromium admission through each one's
+// static fetch and limit them to BROWSER_SLOTS at a time, so the fallback
+// alone is not admitted and waits for a pool slot inside the feed's deadline.
 func rendersPages(f model.Feed) bool {
 	return f.Recipe.Mode == "browser" || articlesUseChromium(f)
 }

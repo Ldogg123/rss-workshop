@@ -424,11 +424,12 @@ func TestChromiumStaticFeedRenderingArticlesIsAdmitted(t *testing.T) {
 	}
 }
 
-// Auto feeds are not admitted: most find their stories as static HTML, and
-// holding an admission through every static fetch would let only
-// BROWSER_SLOTS of them run at once. With the only Chromium admission taken,
-// Auto feeds still start. One that finds its stories never renders, and a
-// fallback waits for a pool slot inside its own deadline, as before.
+// An Auto feed whose article pages are plain HTML is not admitted: most find
+// their stories as static HTML, and holding an admission through every static
+// fetch would let only BROWSER_SLOTS of them run at once. With the only
+// Chromium admission taken, such feeds still start. One that finds its
+// stories never renders, and a fallback waits for a pool slot inside its own
+// deadline, as before.
 func TestChromiumAutoFeedsAreNotHeldBack(t *testing.T) {
 	ctx := context.Background()
 	s, err := openTestStore(t, 50)
@@ -475,6 +476,84 @@ func TestChromiumAutoFeedsAreNotHeldBack(t *testing.T) {
 	}
 	if slices.Contains(pool.renders(), "https://example.com/auto-static") {
 		t.Fatal("an Auto feed with static stories rendered")
+	}
+}
+
+// An Auto feed that renders its article pages is admitted as a Chromium-mode
+// one is: unlike a fallback, those renders follow from its recipe. With every
+// admission taken it stays due and unfailed, without even its static list
+// fetch, then starts once one frees and renders its articles one at a time.
+func TestChromiumAutoFeedRenderingArticlesIsAdmitted(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	pool := newChromiumPool(2)
+	pool.delay = func(u string) time.Duration {
+		if strings.Contains(u, "/story-") {
+			return 20 * time.Millisecond
+		}
+		return 0
+	}
+	var page strings.Builder
+	for a := range 4 {
+		link := fmt.Sprintf("https://example.com/auto/story-%d", a)
+		fmt.Fprintf(&page, `<article><h2>Auto %d</h2><a href="%s">l</a></article>`, a, link)
+		pool.pages[link] = fmt.Sprintf(`<div class="body">Auto article %d</div>`, a)
+	}
+	list := newPageFetcher(page.String(), nil)
+	jobs := New(s, list, 16, 4*time.Second)
+	jobs.Renderer = pool
+	var busyIDs []string
+	for i := range 2 {
+		busy := fmt.Sprintf("https://example.com/busy-%d", i)
+		pool.held[busy] = make(chan struct{})
+		id, err := s.Save(ctx, chromiumFeed(fmt.Sprintf("Busy %d", i), busy))
+		if err != nil {
+			t.Fatal(err)
+		}
+		busyIDs = append(busyIDs, id)
+	}
+	jobs.tick(ctx)
+	waitUntil(t, "both Chromium feeds render", func() bool {
+		return pool.started("https://example.com/busy-0") && pool.started("https://example.com/busy-1")
+	})
+	release := func() {
+		for i := range 2 {
+			close(pool.held[fmt.Sprintf("https://example.com/busy-%d", i)])
+		}
+	}
+	auto := chromiumFeed("Auto articles", "https://example.com/list")
+	auto.Recipe.Mode = "auto"
+	auto.Recipe.Link = model.Field{Selector: "a"}
+	auto.Recipe.Full = &model.FullContent{Selector: ".body", Browser: true}
+	autoID, err := s.Save(ctx, auto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		jobs.tick(ctx)
+		if admitted, _ := jobs.admitted(); admitted[autoID] || list.calls.Load() != 0 {
+			release()
+			jobs.Wait()
+			t.Fatalf("an Auto feed rendering its articles started with every Chromium admission taken (%d list fetches)", list.calls.Load())
+		}
+	}
+	if f, err := s.Get(ctx, autoID); err != nil || f.Failures != 0 || f.NextRun.After(time.Now()) {
+		release()
+		jobs.Wait()
+		t.Fatalf("an Auto feed waiting for its turn was failed or lost it: %+v, %v", f, err)
+	}
+	release()
+	tickUntil(t, jobs, 10*time.Second, refreshed(s, append(busyIDs, autoID)...))
+	requireSuccess(t, s, append(busyIDs, autoID)...)
+	if _, waited := pool.waits(); pool.peakOf("article") != 1 || waited != 0 || list.calls.Load() != 1 {
+		t.Fatalf("articles rendered %d at once, %d renders waited for a slot, %d list fetches", pool.peakOf("article"), waited, list.calls.Load())
+	}
+	if items, err := s.Items(ctx, autoID); err != nil || len(items) != 4 || !allFetched(items, "Auto article") {
+		t.Fatalf("articles: %+v, %v", items, err)
 	}
 }
 
