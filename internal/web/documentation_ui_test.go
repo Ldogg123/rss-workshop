@@ -92,6 +92,10 @@ func TestBrowserUIDocumentation(t *testing.T) {
 		}
 	}
 	app := &App{Store: s, Scheduler: jobs, Auth: a, Version: "0.2 preview"}
+	// Notifications on, so the dashboard's status line shows the channel and
+	// its test button. They go to a local receiver; no capture presses the
+	// button, and the page never shows the address.
+	withNotifier(t, app, newReceiver(t, 200).URL+"/rss-alerts")
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
 	app.BaseURL = server.URL
@@ -112,7 +116,7 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	must(chromedp.EmulateViewport(1440, 1100), chromedp.Navigate(server.URL), chromedp.WaitVisible("#login-form"),
 		chromedp.SendKeys("#password", "documentation-fixture-only"), chromedp.Click("#login-form button"), chromedp.WaitVisible(".feed-card"),
 		chromedp.Evaluate(`if(document.documentElement.dataset.theme!=='dark')document.querySelector('#theme-toggle').click()`, nil),
-		chromedp.Poll(`document.querySelectorAll('.feed-card .badge')[1]?.textContent==='Quiet'`, nil))
+		chromedp.Poll(`document.querySelectorAll('.feed-card .badge')[1]?.textContent==='Quiet'&&document.querySelector('#notifications').textContent==='Notifications: JSON webhook'&&!document.querySelector('#test-notification').hidden`, nil))
 	captureTrial(t, tab, "docs-dashboard")
 	must(clickCurrent("Edit on the first card", `document.querySelectorAll('.feed-card')[0].querySelector('button')`),
 		chromedp.Click("#visual-button"), chromedp.WaitVisible("#selector-frame"), chromedp.Poll(`document.querySelector('#selector-matches').dataset.items==='3'`, nil),
