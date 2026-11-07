@@ -339,7 +339,9 @@ func (a *App) testNotification(w http.ResponseWriter, r *http.Request) {
 // are what validate checks, what a preview sends and what is stored. Every
 // handler that accepts a recipe calls it before validating, which refuses a
 // value with space around it. Cleanup rules are entered one per line, so the
-// space around each and blank lines are dropped the same way.
+// space around each and blank lines are dropped the same way. A line break
+// inside a rule is left for validate to refuse: splitting the rule would
+// change what it removes.
 func trimRecipe(r *model.Recipe) {
 	r.UserAgent, _ = fetch.CheckUserAgent(r.UserAgent)
 	r.AcceptLanguage = strings.TrimSpace(r.AcceptLanguage)

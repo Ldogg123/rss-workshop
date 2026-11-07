@@ -54,6 +54,10 @@ func Article(body []byte, effective string, r model.Recipe) (out string, err err
 	// paper over by concatenating unrelated sections of the page.
 	if r.Full.Attr != "" {
 		out = policy.Sanitize(attr(nodes[0], r.Full.Attr))
+	} else if isAttribute(nodes[0]) {
+		// Rules apply to markup, not to an XPath attribute result, as on the
+		// list page.
+		out = content(nodes[0], base)
 	} else if out = content(clean(nodes[0], r, &selector), base); emptiedByCleanup(out, nodes[0], r, base) {
 		// A failed article keeps the list-page description. A body that
 		// shows nothing even without the rules, such as a video, is stored

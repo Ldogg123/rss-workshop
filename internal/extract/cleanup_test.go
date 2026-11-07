@@ -222,6 +222,33 @@ func TestCleanupRulesRemoveBlocksFromArticles(t *testing.T) {
 	}
 }
 
+// An XPath article selector can end in an attribute instead of naming one as
+// the Article attribute. Its result is text as well, and rules leave it
+// alone, as they do an attribute description on the list page.
+func TestCleanupRulesSkipAnXPathAttributeArticle(t *testing.T) {
+	page := []byte(`<html><head><meta name="body" content="Hello body"></head><body></body></html>`)
+	plain := model.Recipe{Type: "xpath", Full: &model.FullContent{Selector: "//meta[@name='body']/@content"}}
+	want, err := Article(page, "https://example.com/s", plain)
+	if err != nil || !strings.Contains(want, "Hello body") {
+		t.Fatalf("article without rules %q, %v", want, err)
+	}
+	for _, rules := range [][]string{{"./text()"}, {".//text()[contains(., 'Hello')]"}, {"./node()"}} {
+		r := plain
+		r.Remove = rules
+		if body, err := Article(page, "https://example.com/s", r); err != nil || body != want {
+			t.Errorf("rules %q: article %q, %v; want %q", rules, body, err, want)
+		}
+	}
+	// The list page does the same.
+	list := cleanupRecipe("xpath")
+	list.Content.Selector = ".//time/@datetime"
+	plainItem, _ := runOne(t, cleanupPage, list)
+	list.Remove = []string{"./text()"}
+	if it, _ := runOne(t, cleanupPage, list); !strings.HasSuffix(plainItem.HTML, "2026-09-01T12:00:00Z") || it.HTML != plainItem.HTML {
+		t.Fatalf("attribute description %q, without rules %q", it.HTML, plainItem.HTML)
+	}
+}
+
 // An article the rules empty fails like any other failed article, so the
 // story keeps its list-page description; storing it would replace the teaser
 // with nothing. A body that showed nothing before cleanup, such as a video
@@ -319,6 +346,15 @@ func TestCleanupRulesAreValidated(t *testing.T) {
 				"blank":      {[]string{long(typ, 10), ""}, "cleanup rule 2 must be a selector without space around it"},
 				"space":      {[]string{" " + long(typ, 10)}, "cleanup rule 1 must be a selector without space around it"},
 				"no compile": {[]string{long(typ, 10), long(typ, 10), long(typ, 10) + "[["}, "cleanup rule 3: "},
+			}
+			// Each rule compiles with its line break, which the editor would
+			// split into two rules that remove something else.
+			broken := map[string]string{"css": ".a%s.b", "xpath": ".//div[%s@class='share']"}[typ]
+			for name, br := range map[string]string{"line feed": "\n", "carriage return": "\r", "both": "\r\n"} {
+				cases[name] = struct {
+					rules []string
+					want  string
+				}{[]string{long(typ, 10), fmt.Sprintf(broken, br)}, "cleanup rule 2 must be on one line"}
 			}
 			if typ == "css" {
 				cases["the block itself"] = struct {

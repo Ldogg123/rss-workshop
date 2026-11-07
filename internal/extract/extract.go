@@ -163,6 +163,11 @@ func validateCleanup(r model.Recipe) error {
 		if rule == "" || strings.TrimSpace(rule) != rule {
 			return fmt.Errorf("cleanup rule %d must be a selector without space around it", n)
 		}
+		// The editor shows one rule per line, so a rule with a line break
+		// would come back from it as two with another meaning.
+		if strings.ContainsAny(rule, "\r\n") {
+			return fmt.Errorf("cleanup rule %d must be on one line", n)
+		}
 		if len(rule) > 1000 {
 			return fmt.Errorf("cleanup rule %d exceeds 1000 characters", n)
 		}

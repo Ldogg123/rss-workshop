@@ -91,6 +91,10 @@ func TestInvalidCleanupRulesAreRefused(t *testing.T) {
 		{"CSS rule under XPath", xpath(".//aside", ".share"), "XPath cleanup rule 2 must start with ./"},
 		{"too long", cleanupFeed("." + strings.Repeat("a", 1000)), "cleanup rule 1 exceeds 1000 characters"},
 		{"too many", cleanupFeed(slices.Repeat([]string{".share"}, 21)...), "use at most 20 cleanup rules"},
+		// Trimming leaves the inside of a rule alone, and the editor would
+		// split this one into two rules that remove something else.
+		{"line break", cleanupFeed(".share", "article\n.share"), "cleanup rule 2 must be on one line"},
+		{"line break under XPath", xpath(".//div[\r\n@class='share']"), "cleanup rule 1 must be on one line"},
 	} {
 		recipes := marshalRecipes(t, []portableFeed{portableExamples()[0], {Title: tc.feed.Title, URL: tc.feed.URL, Interval: tc.feed.Interval, Recipe: tc.feed.Recipe}})
 		for _, request := range []struct {
