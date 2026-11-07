@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- RSS 1.0: items beside the channel, identified by rdf:about and dated by
+     Dublin Core. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel rdf:about="https://journal.example/">
+    <title>Journal</title>
+    <link>https://journal.example/</link>
+    <description>A fictional journal.</description>
+    <items><rdf:Seq><rdf:li rdf:resource="https://journal.example/1"/><rdf:li rdf:resource="https://journal.example/2"/></rdf:Seq></items>
+  </channel>
+  <item rdf:about="https://journal.example/1">
+    <title>First entry</title>
+    <link>https://journal.example/1</link>
+    <description>Summary one.</description>
+    <content:encoded><![CDATA[<p>Body one.</p>]]></content:encoded>
+    <dc:date>2026-11-05T10:00:00+01:00</dc:date>
+  </item>
+  <item rdf:about="https://journal.example/2">
+    <title>Second entry</title>
+    <link>https://journal.example/2</link>
+    <description>Summary two.</description>
+    <dc:date>2026-11-04</dc:date>
+  </item>
+</rdf:RDF>

@@ -44,7 +44,7 @@ func testBrowserFixture(t *testing.T, body, card string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f := &fixtureFetcher{body: []byte(body)}
+	f := &fixtureFetcher{body: []byte(body), pages: map[string][]byte{feedSourceURL: []byte(feedSourceFixture)}}
 	jobs := scheduler.New(s, f, 2, time.Second)
 	solver := &fixtureSolver{&fixtureFetcher{body: []byte(body)}}
 	jobs.FlareSolverr = solver
@@ -153,6 +153,7 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testDashboardUI(t, tab, s)
 		testNotificationsUI(t, tab, service)
 		testCleanupUI(t, tab, s)
+		testFeedSourceUI(t, tab, s)
 	}
 	var overflow bool
 	if e = chromedp.Run(tab, chromedp.EmulateViewport(390, 844), chromedp.Evaluate(`document.documentElement.scrollWidth>innerWidth+1`, &overflow)); e != nil || overflow {

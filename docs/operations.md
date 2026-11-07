@@ -43,6 +43,8 @@ A new story is one the feed did not have saved, stored by a refresh and kept by 
 
 Pausing and resuming keep the time, and so does any edit to a feed that has saved a story. It is computed from the stored feed alone, so the dashboard's 10-second poll adds no database work for it. A feed [waiting to retry](#waiting-to-retry-after-a-failed-save) is not quiet, because its latest refresh was never stored. `GET /api/feeds` reports each feed's `last_new` time, its `last_changed` time and its `quiet` flag. On a database upgraded from v1.2 or older, each feed's last new story starts at the time it first saw the most recently added of its saved stories.
 
+A [feed source](feed-sources.md) whose feed has emptied counts the same way: a well-formed feed with no entries is a successful refresh, so it keeps its saved stories without failing, and turns quiet once the threshold passes.
+
 ### Log detail
 
 `LOG_LEVEL` selects how much reaches `docker compose logs`:
@@ -381,7 +383,7 @@ Reader requests serialize saved data without fetching sources. Failed or empty e
 
 A full-content feed sends its list request without validators once after each start, and while its [article backlog](atom.md#full-article-content) drains, so a source that answers 304 still gets its remaining articles fetched.
 
-Source bodies are limited to 4 MiB, both as received and once decoded to UTF-8, and extraction to 1,000 cards, 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
+Source bodies are limited to 4 MiB, both as received and once decoded to UTF-8, and extraction to 1,000 cards or the first 1,000 entries of a [feed source](feed-sources.md), 256 KiB of HTML per item, and 8 MiB of total extracted title/content per job. The default retention is 500 items and 50 run records per feed. Disappeared items remain until count pruning; age retention is not supported. Parsing and selector evaluation are synchronous, so pathological selectors can exceed the network deadline.
 
 ### Pausing and resuming
 

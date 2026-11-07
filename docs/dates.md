@@ -71,6 +71,10 @@ A numeric offset such as `-0500` or `+01:00` is used as written, and `UTC` is al
 
 The same rules apply to a Go date layout that contains the zone name element `MST`.
 
+## Feed sources
+
+A [feed source](feed-sources.md) has no Date selector. Each entry's `pubDate`, `published` or `issued` is read first, then `dc:date`, then `updated` or `modified`, and the first one recognized is used. The optional Go date layout, the [standard formats](#standard-formats), [month names](#month-names) and the recipe's [time zone](#time-zones) apply as they do to a selected value; relative phrases do not, because feeds write exact dates. An entry with none recognized falls back to first-seen time with a warning. A later `updated` time never moves a saved story's date.
+
 ## Preview and saved dates
 
 **Preview items** labels relative results **Estimated date**, shows the calculated date, and quotes the source phrase. Preview dates use the current fetch time and are displayed in your browser’s local time zone. Saving an enabled feed triggers its own fetch, so its initial estimate may differ slightly from the preview.

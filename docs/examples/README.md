@@ -10,7 +10,8 @@ whose terms you are agreeing to while you learn the tool.
 | [demo-basic-recipe.json](demo-basic-recipe.json) | Every field: title, link, date from a `datetime` attribute, description, and image |
 | [demo-xpath-recipe.json](demo-xpath-recipe.json) | The same feed written in XPath instead of CSS |
 | [demo-full-content-recipe.json](demo-full-content-recipe.json) | Story filters excluding a sponsored card, plus full article content from each story's own page |
-| [all-demo-recipes.json](all-demo-recipes.json) | All three, to import in one step |
+| [demo-feed-recipe.json](demo-feed-recipe.json) | A [feed source](../feed-sources.md): the site's own RSS feed, with the same filter and full article content, and no selectors |
+| [all-demo-recipes.json](all-demo-recipes.json) | All four, to import in one step |
 
 ## Run the demo
 
@@ -21,8 +22,9 @@ cd docs/examples/demo-site
 python3 -m http.server 8000 --bind 127.0.0.1
 ```
 
-The recipes fetch `http://127.0.0.1:8000/index.html`. RSS Workshop blocks
-private and loopback addresses by default, so allow that one address:
+The recipes fetch `http://127.0.0.1:8000/index.html`, and the feed source
+`http://127.0.0.1:8000/feed.xml`. RSS Workshop blocks private and loopback
+addresses by default, so allow that one address:
 `ALLOW_CIDRS=127.0.0.1/32` in `.env`, or exported before a native run. Leave it
 unset again afterwards — see [deployment](../deployment.md).
 
@@ -46,6 +48,9 @@ selectors are the ones you would write for a real source:
 - Each story links to its own page, where `.article-body` holds the full text.
   The front page carries only a one-line standfirst, so full article content is
   the difference between a teaser and something worth reading.
+- `feed.xml` is the site's own RSS feed, listing the same five stories with
+  their dates and images. `demo-feed-recipe.json` reads it as a feed source, so
+  it needs no selectors, then applies the same filter and article selector.
 
 Recipes are portable: see [recipe import and export](../recipe-portability.md).
 To build one against a real site, use the [visual selector](../visual-selector.md).

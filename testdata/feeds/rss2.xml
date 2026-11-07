@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- RSS 2.0 as publishers write it: CDATA and entities, content:encoded
+     beside a teaser, explicit images, relative links, and entries that a feed
+     source must skip or keep apart. -->
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel>
+  <title>Riverside Weekly</title>
+  <link>https://news.example/</link>
+  <atom:link href="https://news.example/feed.xml" rel="self" type="application/rss+xml"/>
+  <description>A fictional weekly.</description>
+  <item>
+    <title>Bridges &amp; tunnels &mdash; <![CDATA[the <b>spring</b> survey]]></title>
+    <link>/2026/11/bridges</link>
+    <guid isPermaLink="false">riverside-1001</guid>
+    <description><![CDATA[<p>Short teaser.</p>]]></description>
+    <content:encoded><![CDATA[<p>The full survey. <img src="/img/bridge.jpg" alt="Bridge" onerror="alert(1)"></p><script>steal()</script><p><a href="javascript:alert(1)">bad</a> <a href="/more">more</a></p>]]></content:encoded>
+    <pubDate>Thu, 05 Nov 2026 10:00:00 EST</pubDate>
+  </item>
+  <item>
+    <title>Thumbnail only</title>
+    <link>https://news.example/2026/11/thumb</link>
+    <guid>https://news.example/2026/11/thumb</guid>
+    <description>A plain &lt;i&gt;teaser&lt;/i&gt;.</description>
+    <media:thumbnail url="https://cdn.news.example/thumb.jpg?w=400&amp;h=300"/>
+    <pubDate>Fri, 06 Nov 2026 01:00:00 +0100</pubDate>
+  </item>
+  <item>
+    <title>Enclosure image</title>
+    <link>https://news.example/2026/11/enclosure</link>
+    <description>Teaser with an enclosed picture.</description>
+    <enclosure url="https://cdn.news.example/episode.mp3" length="1000" type="audio/mpeg"/>
+    <enclosure url="/img/cover.png" length="2000" type="image/png"/>
+    <dc:date>2026-11-04T08:30:00Z</dc:date>
+  </item>
+  <item>
+    <title>Tracking pixel first</title>
+    <link>https://news.example/2026/11/pixel</link>
+    <guid isPermaLink="false">riverside-1004</guid>
+    <description><![CDATA[<img src="https://stats.example/px.gif" width="1" height="1"><p><img src="/img/avatar.png" alt=""> Story with a hero image.</p>]]></description>
+    <media:content url="https://cdn.news.example/hero.jpg" medium="image"/>
+  </item>
+  <item>
+    <title>Pixel, then a picture</title>
+    <link>https://news.example/2026/11/picture</link>
+    <guid isPermaLink="false">riverside-1005</guid>
+    <description><![CDATA[<img src="https://stats.example/px.gif" width="0" height="0"><p><img src="/img/inline.jpg" alt=""> Inline picture.</p>]]></description>
+  </item>
+  <item>
+    <title>Raw markup description</title>
+    <link>https://news.example/2026/11/raw</link>
+    <guid isPermaLink="false">riverside-1006</guid>
+    <description><p>Para <b>bold</b> tail &amp; more</p></description>
+  </item>
+  <item>
+    <title>Permalink guid only</title>
+    <guid>https://news.example/2026/11/permalink</guid>
+    <description>No link element.</description>
+  </item>
+  <item>
+    <title>Unsafe link</title>
+    <link>javascript:alert(1)</link>
+    <description>Skipped.</description>
+  </item>
+  <item>
+    <title>Repeated guid</title>
+    <link>https://news.example/2026/11/repeat</link>
+    <guid isPermaLink="false">riverside-1001</guid>
+  </item>
+  <item>
+    <title>Shared link, first</title>
+    <link>https://news.example/live</link>
+    <guid isPermaLink="false">live-1</guid>
+  </item>
+  <item>
+    <title>Shared link, second</title>
+    <link>https://news.example/live</link>
+    <guid isPermaLink="false">live-2</guid>
+    <pubDate>sometime last week</pubDate>
+  </item>
+</channel>
+</rss>

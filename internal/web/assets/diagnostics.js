@@ -9,7 +9,7 @@
  // Keep only the bounded, public diagnostic fields. Rendering below always
  // uses textContent, including source-derived error and warning strings.
  function normalize(value){
-  if(!value||value.version!==1||typeof value.requested_mode!=='string'||!Object.hasOwn(modes,value.requested_mode)||!['css','xpath'].includes(value.selector_type)||!Array.isArray(value.attempts))return null;
+  if(!value||value.version!==1||typeof value.requested_mode!=='string'||!Object.hasOwn(modes,value.requested_mode)||!['css','xpath','feed'].includes(value.selector_type)||!Array.isArray(value.attempts))return null;
   const attempts=[];
   for(const attempt of value.attempts.slice(0,2)){
    if(!attempt||!['static','browser','flaresolverr'].includes(attempt.mode)||!['success','failed','not_modified'].includes(attempt.outcome)||!['fetch','extract'].includes(attempt.stage))continue;
@@ -27,7 +27,8 @@
  }
  function renderTrace(trace){
   const body=node('div',undefined,'run-trace');
-  const pairs=[['Fetch mode',modes[trace.requested_mode]],['Selectors',trace.selector_type==='xpath'?'XPath':'CSS'],['Started',date(trace.started)],['Total time',elapsed(trace.duration_ms)]];
+  const feed=trace.selector_type==='feed';
+  const pairs=[['Fetch mode',modes[trace.requested_mode]],feed?['Source','RSS or Atom feed']:['Selectors',trace.selector_type==='xpath'?'XPath':'CSS'],['Started',date(trace.started)],['Total time',elapsed(trace.duration_ms)]];
   if(trace.recipe_version>0)pairs.push(['Recipe version',trace.recipe_version]);
   body.append(metrics(pairs));
   if(trace.requested_mode==='auto'&&trace.attempts.length>1)body.append(node('p','Auto tried static HTML, then Chromium.','hint'));
@@ -39,7 +40,7 @@
    item.append(node('h3',`${modes[attempt.mode]} · ${outcome}`));
    const details=[['Source response',attempt.status>0?`HTTP ${attempt.status}`:'No HTTP status recorded'],['Time',elapsed(attempt.duration_ms)]];
    if(attempt.bytes!==null)details.push(['Received',bytes(attempt.bytes)]);
-   if(attempt.matches!==null)details.push(['Matched elements',attempt.matches]);
+   if(attempt.matches!==null)details.push([feed?'Feed entries':'Matched elements',attempt.matches]);
    if(attempt.valid!==null){details.push(['Valid before filters',attempt.valid]);if(attempt.items!==null)details.push(['Included items',attempt.items]);details.push(['Filtered out',attempt.filtered]);}
    else if(attempt.items!==null)details.push(['Valid items',attempt.items]);
    item.append(metrics(details));

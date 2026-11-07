@@ -26,6 +26,8 @@
    if(feed.recipe.user_agent)item.append(node('p',`User-Agent: ${feed.recipe.user_agent}`,'meta'));
    if(feed.recipe.accept_language)item.append(node('p',`Accept-Language: ${feed.recipe.accept_language}`,'meta'));
    if(feed.recipe.quiet_days)item.append(node('p',`Mark as Quiet after: ${feed.recipe.quiet_days<0?'Never':feed.recipe.quiet_days+' days'}`,'meta'));
+   // A feed source has no selectors to review.
+   if(feed.recipe.type==='feed'){item.append(node('p','Source: RSS or Atom feed','meta'));preview.append(item);continue;}
    const selectors=node('details'),summary=node('summary','Recipe selectors');selectors.append(summary);
    const mapping=node('dl',undefined,'import-mapping');
    for(const [label,value] of [['Items',`${feed.recipe.type.toUpperCase()}: ${feed.recipe.items}`],...['title','link','content','image','date'].map(field=>{

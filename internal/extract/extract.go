@@ -80,10 +80,14 @@ func validateSelectors(r model.Recipe) error {
 	if err := ValidateRender(r); err != nil {
 		return err
 	}
-	if r.Type != "css" && r.Type != "xpath" {
-		return fmt.Errorf("selector type must be css or xpath")
-	}
-	if strings.TrimSpace(r.Items) == "" || strings.TrimSpace(r.Title.Selector) == "" {
+	switch {
+	case r.Type == FeedType:
+		if err := validateFeedSource(r); err != nil {
+			return err
+		}
+	case r.Type != "css" && r.Type != "xpath":
+		return fmt.Errorf("selector type must be css or xpath, or feed for an RSS or Atom source")
+	case strings.TrimSpace(r.Items) == "" || strings.TrimSpace(r.Title.Selector) == "":
 		return fmt.Errorf("item and title selectors are required")
 	}
 	for i, s := range []string{r.Items, r.Title.Selector, r.Link.Selector, r.Date.Selector, r.Content.Selector, r.Image.Selector} {
@@ -110,7 +114,7 @@ func validateSelectors(r model.Recipe) error {
 	}
 	// The article selector runs against the item's own page, not against a card
 	// on the list page, so XPath here is absolute like Items rather than
-	// relative like the per-field selectors.
+	// relative like the per-field selectors. A feed source's is CSS.
 	if r.Full != nil {
 		s := strings.TrimSpace(r.Full.Selector)
 		if s == "" {
@@ -141,9 +145,33 @@ func validateSelectors(r model.Recipe) error {
 	return nil
 }
 
+// validateFeedSource refuses what a feed source cannot use: the entries'
+// own fields replace every item and field selector, and it is fetched as
+// Static HTTP, with its article pages as plain HTML, so it never takes a
+// Chromium or FlareSolverr slot.
+func validateFeedSource(r model.Recipe) error {
+	if r.Mode != "" && r.Mode != "static" {
+		return fmt.Errorf("an RSS or Atom source is fetched as Static HTTP; set the fetch mode to static")
+	}
+	for _, f := range []model.Field{{Selector: r.Items}, r.Title, r.Link, r.Date, r.Content, r.Image} {
+		if f.Selector != "" || f.Attr != "" {
+			return fmt.Errorf("an RSS or Atom source takes no item or field selectors; its entries supply every field")
+		}
+	}
+	if r.Full != nil && r.Full.Browser {
+		return fmt.Errorf("an RSS or Atom source fetches article pages as plain HTML; turn off rendering them")
+	}
+	return nil
+}
+
 // articleType is the selector language of the article body selector and of
-// the cleanup rules: the recipe's own.
+// the cleanup rules: the recipe's own, or CSS for a feed source, which has
+// none. Validation, clean and Article all use it, so a selector is compiled
+// as it is evaluated.
 func articleType(r model.Recipe) string {
+	if r.Type == FeedType {
+		return "css"
+	}
 	return r.Type
 }
 
@@ -663,6 +691,45 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 	if e != nil || base.Host == "" {
 		return out, fmt.Errorf("invalid document URL")
 	}
+	loc := time.UTC
+	if r.Timezone != "" {
+		loc, _ = time.LoadLocation(r.Timezone)
+	}
+	totalBytes := 0
+	// add takes a story that passed its required-field checks. Cards and feed
+	// entries both arrive here, so their limits, counts and filters agree, in
+	// a preview as in a refresh.
+	add := func(it model.Item) error {
+		if len(it.Title) > 2048 || len(it.HTML) > 256<<10 || len(it.URL) > 8192 || len(it.Image) > maxImageAddress {
+			return fmt.Errorf("extracted item exceeds size limits; narrow content selector")
+		}
+		totalBytes += len(it.HTML) + len(it.Title)
+		if totalBytes > 8<<20 {
+			return fmt.Errorf("extracted output exceeds 8 MiB limit")
+		}
+		out.Valid++
+		decision := matcher.Evaluate(it)
+		if !decision.Matched {
+			out.Filtered++
+			if len(out.FilterExamples) < 20 {
+				title := strings.Join(strings.Fields(diagnostics.SafeText(it.Title, 512)), " ")
+				runes := []rune(title)
+				if len(runes) > 120 {
+					title = string(runes[:119]) + "…"
+				}
+				out.FilterExamples = append(out.FilterExamples, model.FilterExample{Title: title, Reason: diagnostics.SafeText(decision.Reason, 512)})
+			}
+			return nil
+		}
+		out.Items = append(out.Items, it)
+		return nil
+	}
+	if r.Type == FeedType {
+		// Its descriptions go through content(), the only selectors it uses.
+		selector = "Description"
+		err = runFeed(body, base, r, loc, &out, add)
+		return out, err
+	}
 	doc, e := html.Parse(bytes.NewReader(body))
 	if e != nil {
 		return out, e
@@ -678,11 +745,6 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 		return out, fmt.Errorf("selector matched more than 1000 items; narrow the selector")
 	}
 	seen := map[string]bool{}
-	loc := time.UTC
-	if r.Timezone != "" {
-		loc, _ = time.LoadLocation(r.Timezone)
-	}
-	totalBytes := 0
 	for i, n := range nodes {
 		if r.Type == "xpath" {
 			n = clone(n)
@@ -788,28 +850,9 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 			out.Warnings = append(out.Warnings, fmt.Sprintf("Match %d: date not recognized; %s; using first-seen time", i+1,
 				fieldMismatch("Date", "a date or relative age", raw, dateNode, dateField, "")))
 		}
-		if len(it.Title) > 2048 || len(it.HTML) > 256<<10 || len(it.URL) > 8192 || len(it.Image) > maxImageAddress {
-			return out, fmt.Errorf("extracted item exceeds size limits; narrow content selector")
+		if e := add(it); e != nil {
+			return out, e
 		}
-		totalBytes += len(it.HTML) + len(it.Title)
-		if totalBytes > 8<<20 {
-			return out, fmt.Errorf("extracted output exceeds 8 MiB limit")
-		}
-		out.Valid++
-		decision := matcher.Evaluate(it)
-		if !decision.Matched {
-			out.Filtered++
-			if len(out.FilterExamples) < 20 {
-				title := strings.Join(strings.Fields(diagnostics.SafeText(it.Title, 512)), " ")
-				runes := []rune(title)
-				if len(runes) > 120 {
-					title = string(runes[:119]) + "…"
-				}
-				out.FilterExamples = append(out.FilterExamples, model.FilterExample{Title: title, Reason: diagnostics.SafeText(decision.Reason, 512)})
-			}
-			continue
-		}
-		out.Items = append(out.Items, it)
 	}
 	if out.Valid == 0 {
 		return out, fmt.Errorf("%w: selector produced zero valid items (%d matches); saved history is retained", ErrNoItems, out.Matches)

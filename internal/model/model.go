@@ -47,9 +47,10 @@ type Recipe struct {
 }
 
 // FullContent follows each item's own link and extracts the article body from
-// that page. Selector uses the recipe's existing CSS/XPath Type. Browser opts a
-// single feed into its configured fetch mode for articles; the default is the
-// plain guarded fetcher, which is cheap enough to run on every refresh.
+// that page. Selector uses the recipe's existing CSS/XPath Type, or CSS for a
+// feed source (Type feed, an RSS or Atom source with no selectors). Browser
+// opts a single feed into its configured fetch mode for articles; the default
+// is the plain guarded fetcher, which is cheap enough to run on every refresh.
 type FullContent struct {
 	Selector string `json:"selector"`
 	Attr     string `json:"attr,omitempty"`

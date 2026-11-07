@@ -15,9 +15,10 @@ import (
 const MaxArticleBytes = 256 << 10
 
 // Article extracts the body of a single item's own page, using the recipe's
-// CSS/XPath Type and the same sanitization, URL absolutization and <base>
-// handling as list-page content. It deliberately returns only the content: an
-// article page must never be able to change an item's identity, date or link.
+// CSS/XPath Type, or CSS for a feed source (see articleType), and the same
+// sanitization, URL absolutization and <base> handling as list-page content.
+// It deliberately returns only the content: an article page must never be able
+// to change an item's identity, date or link.
 func Article(body []byte, effective string, r model.Recipe) (out string, err error) {
 	// Article pages are extracted on the article workers' own goroutines, so a
 	// panic here stops the server even from a preview.

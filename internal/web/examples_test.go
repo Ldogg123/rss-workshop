@@ -81,9 +81,14 @@ func TestShippedExampleRecipesImport(t *testing.T) {
 
 // An example that imports but extracts nothing is worse than no example. Each
 // demo recipe is run against the demo site it targets, which ships beside it
-// and therefore cannot drift out from under it.
+// and therefore cannot drift out from under it: its front page, or for a feed
+// source its RSS feed.
 func TestDemoRecipesExtractFromTheDemoSite(t *testing.T) {
 	index, err := os.ReadFile(filepath.Join(examplesDir, "demo-site/index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rss, err := os.ReadFile(filepath.Join(examplesDir, "demo-site/feed.xml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,18 +106,29 @@ func TestDemoRecipesExtractFromTheDemoSite(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Feeds) < 3 {
-		t.Fatalf("the demo bundle has %d feeds; it should show CSS, XPath and filtering", len(doc.Feeds))
+	types := map[string]bool{}
+	for _, feed := range doc.Feeds {
+		types[feed.Recipe.Type] = true
+	}
+	if len(doc.Feeds) < 4 || !types["css"] || !types["xpath"] || !types[extract.FeedType] {
+		t.Fatalf("the demo bundle has %d feeds; it should show CSS, XPath, filtering and a feed source", len(doc.Feeds))
 	}
 
 	for _, feed := range doc.Feeds {
 		t.Run(feed.Title, func(t *testing.T) {
-			out, err := extract.Run(index, feed.URL, feed.Recipe)
+			page := index
+			if feed.Recipe.Type == extract.FeedType {
+				page = rss
+				if !strings.HasSuffix(feed.URL, "/feed.xml") {
+					t.Fatalf("the feed source does not read the demo feed: %s", feed.URL)
+				}
+			}
+			out, err := extract.Run(page, feed.URL, feed.Recipe)
 			if err != nil {
 				t.Fatalf("extraction failed: %v", err)
 			}
 			if out.Matches != 5 {
-				t.Errorf("matched %d cards on the demo front page, want 5", out.Matches)
+				t.Errorf("matched %d stories on the demo site, want 5", out.Matches)
 			}
 			// Filtering is what the third recipe demonstrates; the others keep
 			// everything. Either way every story must carry every field.
@@ -149,42 +165,46 @@ func TestDemoRecipesExtractFromTheDemoSite(t *testing.T) {
 	}
 }
 
-// The full-content example points at a selector that must exist on the demo
-// site's article pages, not only on its front page.
+// The full-content examples point at a selector that must exist on the demo
+// site's article pages, not only on its front page or in its feed.
 func TestDemoFullContentSelectorMatchesTheArticlePages(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(examplesDir, "demo-full-content-recipe.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Feeds []struct {
-			Recipe model.Recipe `json:"recipe"`
-		} `json:"feeds"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	recipe := doc.Feeds[0].Recipe
-	if recipe.Full == nil || recipe.Full.Selector == "" {
-		t.Fatal("the full-content example does not configure an article selector")
-	}
-	pages, err := filepath.Glob(filepath.Join(examplesDir, "demo-site/articles/*.html"))
-	if err != nil || len(pages) == 0 {
-		t.Fatalf("the demo site ships no article pages: %v", err)
-	}
-	for _, page := range pages {
-		body, err := os.ReadFile(page)
-		if err != nil {
-			t.Fatal(err)
-		}
-		article, err := extract.Article(body, "http://127.0.0.1:8000/articles/"+filepath.Base(page), recipe)
-		if err != nil {
-			t.Errorf("%s: %v", filepath.Base(page), err)
-			continue
-		}
-		if !strings.Contains(article, "<p>") || len(article) < 200 {
-			t.Errorf("%s produced a thin article body: %q", filepath.Base(page), article)
-		}
+	for _, name := range []string{"demo-full-content-recipe.json", "demo-feed-recipe.json"} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(examplesDir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Feeds []struct {
+					Recipe model.Recipe `json:"recipe"`
+				} `json:"feeds"`
+			}
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			recipe := doc.Feeds[0].Recipe
+			if recipe.Full == nil || recipe.Full.Selector == "" {
+				t.Fatal("the full-content example does not configure an article selector")
+			}
+			pages, err := filepath.Glob(filepath.Join(examplesDir, "demo-site/articles/*.html"))
+			if err != nil || len(pages) == 0 {
+				t.Fatalf("the demo site ships no article pages: %v", err)
+			}
+			for _, page := range pages {
+				body, err := os.ReadFile(page)
+				if err != nil {
+					t.Fatal(err)
+				}
+				article, err := extract.Article(body, "http://127.0.0.1:8000/articles/"+filepath.Base(page), recipe)
+				if err != nil {
+					t.Errorf("%s: %v", filepath.Base(page), err)
+					continue
+				}
+				if !strings.Contains(article, "<p>") || len(article) < 200 {
+					t.Errorf("%s produced a thin article body: %q", filepath.Base(page), article)
+				}
+			}
+		})
 	}
 }
 

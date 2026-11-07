@@ -19,12 +19,18 @@ import (
 )
 
 type fixtureFetcher struct {
-	body  []byte
+	body []byte
+	// pages answers the URLs it lists with their own body, and is set before
+	// the fetcher is shared; every other URL gets body.
+	pages map[string][]byte
 	calls atomic.Int32
 }
 
 func (f *fixtureFetcher) Fetch(ctx context.Context, u, e, m string) (fetch.Result, error) {
 	f.calls.Add(1)
+	if page, ok := f.pages[u]; ok {
+		return fetch.Result{Body: page, URL: u, Status: 200}, nil
+	}
 	return fetch.Result{Body: f.body, URL: u, Status: 200}, nil
 }
 func TestManagementAndRSSWorkflow(t *testing.T) {

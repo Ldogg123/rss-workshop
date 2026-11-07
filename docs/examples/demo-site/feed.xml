@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The Bramblewood Gazette's own RSS feed, listing the same five stories as
+     the front page. Real feeds use absolute links; these are relative so the
+     demo works from any address, and RSS Workshop resolves them against the
+     feed's own. -->
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>The Bramblewood Gazette</title>
+    <link>index.html</link>
+    <description>A fictional local newspaper, used as a worked example for a feed source.</description>
+    <language>en-gb</language>
+    <item>
+      <title>Harbour footbridge reopens after two-year refit</title>
+      <link>articles/harbour.html</link>
+      <guid isPermaLink="false">bramblewood-2026-harbour</guid>
+      <category>Transport</category>
+      <description>&lt;p&gt;The eastern span carries pedestrians and cyclists again, with the long detour through Quay Street finally lifted.&lt;/p&gt;</description>
+      <media:content url="images/harbour.svg" type="image/svg+xml" medium="image"/>
+      <pubDate>Wed, 18 Mar 2026 07:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Tramway extension reaches Bramblewood Fields</title>
+      <link>articles/tramway.html</link>
+      <guid isPermaLink="false">bramblewood-2026-tramway</guid>
+      <category>Transport</category>
+      <description>&lt;p&gt;Services begin in April, adding four stops and cutting the journey from the northern estates to roughly eleven minutes.&lt;/p&gt;</description>
+      <media:content url="images/tramway.svg" type="image/svg+xml" medium="image"/>
+      <pubDate>Mon, 16 Mar 2026 16:45:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Central library returns to seven-day opening</title>
+      <link>articles/library.html</link>
+      <guid isPermaLink="false">bramblewood-2026-library</guid>
+      <category>Community</category>
+      <description>&lt;p&gt;Sunday hours resume for the first time since the refurbishment, alongside a restored evening timetable on weekdays.&lt;/p&gt;</description>
+      <media:content url="images/library.svg" type="image/svg+xml" medium="image"/>
+      <pubDate>Sat, 14 Mar 2026 09:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Sponsored: replace your windows before the autumn</title>
+      <link>index.html</link>
+      <guid isPermaLink="false">bramblewood-2026-sponsored-windows</guid>
+      <category>Sponsored</category>
+      <description>&lt;p&gt;A message from a local glazing firm. Book a survey this month and the call-out fee is waived.&lt;/p&gt;</description>
+      <media:content url="images/almanac.svg" type="image/svg+xml" medium="image"/>
+      <pubDate>Tue, 10 Mar 2026 08:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Bramblewood Almanac: a reader’s guide to the spring markets</title>
+      <link>articles/almanac.html</link>
+      <guid isPermaLink="false">bramblewood-2026-almanac</guid>
+      <category>Community</category>
+      <description>&lt;p&gt;Where to find the seasonal stalls, which days are busiest, and what the weather is likely to do to the outdoor pitches.&lt;/p&gt;</description>
+      <media:content url="images/almanac.svg" type="image/svg+xml" medium="image"/>
+      <pubDate>Wed, 11 Mar 2026 11:15:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

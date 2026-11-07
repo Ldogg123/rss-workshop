@@ -68,7 +68,7 @@ func Sanitize(value *model.RunDiagnostics) *model.RunDiagnostics {
 	out.Version = 1
 	out.RecipeVersion = max(value.RecipeVersion, 0)
 	out.RequestedMode = mode(value.RequestedMode)
-	if out.SelectorType != "css" && out.SelectorType != "xpath" {
+	if out.SelectorType != "css" && out.SelectorType != "xpath" && out.SelectorType != "feed" {
 		out.SelectorType = "unknown"
 	}
 	if value.Started.Year() < 1 || value.Started.Year() > 9999 {
