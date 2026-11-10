@@ -207,3 +207,42 @@ func TestImportKeepsAnUnfinishedXPathSelectorAndReviewWarns(t *testing.T) {
 		t.Fatal("reviewing or importing reached the fetcher")
 	}
 }
+
+// The editor trims the article body field before sending it, while a recipe
+// file or an API call can have stored that selector with a line break after
+// it. That is the stored selector, not a new one, so the feed can still be
+// renamed from the editor; a different selector is refused as before.
+func TestSaveKeepsAStoredArticleSelectorTheEditorTrims(t *testing.T) {
+	h := newPortabilityHarness(t)
+	ctx := context.Background()
+	f := leftoverFeed()
+	f.Recipe.Content.Selector = ".//p"
+	f.Recipe.Full = &model.FullContent{Selector: ".entry-body\n"}
+	w := h.request("POST", "/api/recipes/import", marshalRecipes(t, []portableFeed{{Title: f.Title, URL: f.URL, Interval: f.Interval, Recipe: f.Recipe}}))
+	var imported struct{ IDs []string }
+	if err := json.Unmarshal(w.Body.Bytes(), &imported); w.Code != http.StatusCreated || err != nil || len(imported.IDs) != 1 {
+		t.Fatalf("import = %d %s", w.Code, w.Body.String())
+	}
+	stored, err := h.app.Store.Get(ctx, imported.IDs[0])
+	if err != nil || stored.Recipe.Full == nil || stored.Recipe.Full.Selector != ".entry-body\n" {
+		t.Fatalf("the import did not store the selector as written: %+v, %v", stored.Recipe.Full, err)
+	}
+	path := "/api/feeds/" + stored.ID
+
+	changed := stored
+	changed.Recipe.Full = &model.FullContent{Selector: ".entry"}
+	refusal(t, h, "PUT", path, changed, "Article body")
+
+	edit := stored
+	edit.Title = "Renamed"
+	edit.Recipe.Full = &model.FullContent{Selector: ".entry-body"}
+	if w := h.request("PUT", path, feedJSON(t, edit)); w.Code != http.StatusOK {
+		t.Fatalf("renaming the feed with the article selector trimmed, as the editor sends it = %d %s", w.Code, w.Body.String())
+	}
+	if got, err := h.app.Store.Get(ctx, stored.ID); err != nil || got.Title != "Renamed" || got.Recipe.Full == nil || got.Recipe.Full.Selector != ".entry-body" {
+		t.Fatalf("stored %+v, %v", got, err)
+	}
+	if h.fetcher.calls.Load() != 0 {
+		t.Fatal("a save reached the fetcher")
+	}
+}

@@ -2,6 +2,7 @@ package extract
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/antchfx/xpath"
 	"rss-workshop/internal/model"
@@ -86,17 +87,20 @@ func SelectorWarnings(r model.Recipe) []string {
 // changed, or when the recipe's type just became XPath, since the type menu
 // keeps the existing text. A selector saved as it is stored passes, as it
 // does in Validate, so an existing feed can still be renamed or rescheduled
-// without rewriting it first. Imports use Validate alone and stay as lenient
-// as the release that wrote the file.
+// without rewriting it first. The comparison ignores space around the text:
+// the editor trims the article body field, while a recipe file or an API
+// call can have stored that selector with a line break after it, and trimmed
+// text is what Validate compiles. Imports use Validate alone and stay as
+// lenient as the release that wrote the file.
 func ValidateNew(r model.Recipe, stored *model.Recipe) error {
 	kept := map[string]string{}
 	if stored != nil {
 		for _, s := range xpathSelectors(*stored) {
-			kept[s.name] = s.text
+			kept[s.name] = strings.TrimSpace(s.text)
 		}
 	}
 	for _, s := range xpathSelectors(r) {
-		if unfinishedXPath(s.text) && kept[s.name] != s.text {
+		if unfinishedXPath(s.text) && kept[s.name] != strings.TrimSpace(s.text) {
 			return fmt.Errorf("invalid XPath in the %s", s.unfinished())
 		}
 	}

@@ -54,6 +54,9 @@ func TestUnfinishedXPathIsToldFromCompleteXPath(t *testing.T) {
 		"./self::article//*[" + class("share") + "] | .//article//*[" + class("share") + "]",
 		"./self::*[" + class("nested") + "]//p | .//*[" + class("nested") + "]//p | ./self::article//blockquote | .//article//blockquote",
 		"//*[self::article or " + class("entry-content") + "]",
+		// CSS that is also one XPath name: it reads as an element name, so
+		// nothing is cut short, and it matches nothing. The guide says so.
+		"article.card", "article.content", "div.a.b",
 	} {
 		if unfinishedXPath(s) {
 			t.Errorf("%q is complete XPath and is reported as unfinished", s)
@@ -185,6 +188,10 @@ func TestValidateNewRefusesOnlyWhatTheSaveIntroduces(t *testing.T) {
 		change(&r)
 		return r
 	}
+	storedAs := func(change func(*model.Recipe)) *model.Recipe {
+		r := edit(change)
+		return &r
+	}
 	css := model.Recipe{Type: "css", Items: ".post", Title: model.Field{Selector: ".headline"}, Content: model.Field{Selector: ".teaser-text"}}
 	asXPath := css
 	asXPath.Type = "xpath"
@@ -204,9 +211,15 @@ func TestValidateNewRefusesOnlyWhatTheSaveIntroduces(t *testing.T) {
 		{"article turned off", edit(func(r *model.Recipe) { r.Full = nil }), &stored, ""},
 		{"changed text", edit(func(r *model.Recipe) { r.Content.Selector = ".teaser" }), &stored, "invalid XPath in the Description selector"},
 		{"changed article text", edit(func(r *model.Recipe) { r.Full.Selector = ".entry" }), &stored, "invalid XPath in the Article body selector"},
+		// The editor trims the article body field, and a recipe file can have
+		// stored it with space around it: the same selector, not a new one.
+		{"article text trimmed by the editor", stored, storedAs(func(r *model.Recipe) { r.Full.Selector = " .entry-body\n" }), ""},
+		{"space added around stored text", edit(func(r *model.Recipe) { r.Content.Selector, r.Full.Selector = ".teaser-text\n", "\t.entry-body " }), &stored, ""},
+		{"changed article text stored with space", edit(func(r *model.Recipe) { r.Full.Selector = ".entry" }),
+			storedAs(func(r *model.Recipe) { r.Full.Selector = ".entry-body\n" }), "invalid XPath in the Article body selector"},
 		{"moved to another field", edit(func(r *model.Recipe) { r.Content.Selector, r.Date.Selector = "", ".teaser-text" }), &stored, "invalid XPath in the Date selector"},
 		{"another field added", edit(func(r *model.Recipe) { r.Image.Selector = ".thumb" }), &stored, "invalid XPath in the Image selector"},
-		{"article added", stored, func() *model.Recipe { r := edit(func(r *model.Recipe) { r.Full = nil }); return &r }(), "invalid XPath in the Article body selector"},
+		{"article added", stored, storedAs(func(r *model.Recipe) { r.Full = nil }), "invalid XPath in the Article body selector"},
 		{"type changed to XPath", asXPath, &css, "invalid XPath in the Repeated item selector"},
 		{"stored as XPath", asXPath, &asXPath, ""},
 		{"complete XPath over stored CSS", leftoverRecipe(), &css, ""},
