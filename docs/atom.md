@@ -48,7 +48,7 @@ Rules are stored in the recipe as `remove` and travel with [recipe exports](reci
 
 **Export OPML** downloads `rss-workshop.opml`, an [OPML 2.0](http://opml.org/spec2.opml) subscription list naming every feed in the library. Import it into your reader to subscribe to all of them in one step, instead of copying each URL by hand. Add `?format=atom` to `/api/opml` for a list of Atom links; the default advertises the RSS ones, which more readers accept.
 
-Each entry carries the feed title, its reader link as `xmlUrl`, and the source page as `htmlUrl`, so a reader can link back to the site the feed was built from. Paused feeds are included, because their links keep serving the stories already saved. A feed that has not yet refreshed successfully is listed, but returns 503 until it does.
+Each entry carries the feed title, its reader link as `xmlUrl`, and the source page as `htmlUrl`, so a reader can link back to the site the feed was built from. A [feed source](feed-sources.md#published-output) has no `htmlUrl`: its address is the feed it reads, which a reader would open as raw XML. Paused feeds are included, because their links keep serving the stories already saved. A feed that has not yet refreshed successfully is listed, but returns 503 until it does.
 
 The export covers up to 1,000 feeds. A larger library is refused rather than truncated, so the file never silently omits a subscription; the recipe export has the same limit.
 
