@@ -128,7 +128,7 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != "GET" && r.Method != "HEAD" {
 			if !a.acceptsOrigin(r) {
-				reply(w, 403, map[string]string{"error": "cross-origin request rejected; open the app using its configured address"})
+				reply(w, 403, map[string]string{"error": "cross-origin request rejected; open the app at the address set in PUBLIC_BASE_URL"})
 				return
 			}
 			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
