@@ -24,12 +24,18 @@ type Stats struct {
 	Restarts int  `json:"restarts"`
 	Ready    bool `json:"ready"`
 }
+
+// Pool holds mu while Chromium starts, which takes up to 15 s. What Stats
+// reports (root, active and restarts) therefore changes only with mu and
+// statsMu both held, statsMu taken second and for the assignment alone: the
+// pool reads those fields under mu, and Stats under statsMu without waiting.
 type Pool struct {
 	path                        string
 	timeout                     time.Duration
 	slots                       chan struct{}
 	proxy                       *proxy
 	mu                          sync.Mutex
+	statsMu                     sync.Mutex
 	root                        context.Context
 	stop                        context.CancelFunc
 	active, completed, restarts int
@@ -51,25 +57,42 @@ func New(path string, capacity int, timeout time.Duration, policy *fetch.Client)
 	}
 	return &Pool{path: path, timeout: timeout, slots: make(chan struct{}, capacity), proxy: proxy}, nil
 }
+
+// Stats answers the library listing, which the dashboard polls every 10
+// seconds, and /metrics. It must not wait for mu, which a Chromium start
+// holds for up to 15 s; until a start finishes it reports Chromium not ready.
 func (p *Pool) Stats() Stats {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
 	return Stats{Active: p.active, Capacity: cap(p.slots), Restarts: p.restarts, Ready: p.root != nil && p.root.Err() == nil}
 }
 
 // Capacity is the number of renders that can run at once, BROWSER_SLOTS. The
 // scheduler admits jobs against it while holding its own lock, so it takes
-// none: Stats waits on p.mu, which a Chromium start holds for up to 15 s.
+// none: not mu, which a Chromium start holds for up to 15 s, nor statsMu.
 func (p *Pool) Capacity() int { return cap(p.slots) }
 func (p *Pool) Close() {
 	p.mu.Lock()
 	p.closed = true
 	if p.stop != nil {
 		p.stop()
-		p.root = nil
+		p.setRoot(nil)
 	}
 	p.mu.Unlock()
 	p.proxy.Close()
+}
+
+// addActive and setRoot are called with mu held.
+func (p *Pool) addActive(n int) {
+	p.statsMu.Lock()
+	p.active += n
+	p.statsMu.Unlock()
+}
+
+func (p *Pool) setRoot(root context.Context) {
+	p.statsMu.Lock()
+	p.root = root
+	p.statsMu.Unlock()
 }
 
 // startLocked is called only after a job has acquired a bounded slot.
@@ -91,7 +114,7 @@ func (p *Pool) startLocked() error {
 		if p.stop != nil {
 			p.stop()
 		}
-		p.root = nil
+		p.setRoot(nil)
 	}
 	opts := []chromedp.ExecAllocatorOption{
 		chromedp.ExecPath(p.path), chromedp.Headless, chromedp.NoFirstRun, chromedp.NoDefaultBrowserCheck,
@@ -118,9 +141,11 @@ func (p *Pool) startLocked() error {
 		allocCancel()
 		return fmt.Errorf("Chromium could not start; check executable, sandbox support, and container profile: %w", err)
 	}
+	p.statsMu.Lock()
 	p.root = root
-	p.completed = 0
 	p.restarts++
+	p.statsMu.Unlock()
+	p.completed = 0
 	p.stop = func() { rootCancel(); allocCancel() }
 	return nil
 }
@@ -164,9 +189,9 @@ func (p *Pool) Render(ctx context.Context, raw, waitSelector string, settleMS in
 		return out, e
 	}
 	root := p.root
-	p.active++
+	p.addActive(1)
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.active--; p.completed++; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.addActive(-1); p.completed++; p.mu.Unlock() }()
 	jobCtx, jobCancel := context.WithCancel(root)
 	defer jobCancel()
 	stopCancel := context.AfterFunc(ctx, jobCancel)
