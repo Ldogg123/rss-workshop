@@ -104,28 +104,39 @@
   for(let i=0;i<selector.length;i++){const c=selector[i];if(c==='\\')throw Error('CSS escapes need manual XPath conversion.');if(quote){if(c===quote)quote='';continue;}if(c==='"'||c==="'"){quote=c;continue;}if(c==='('||c==='[')depth++;if(c===')'||c===']')depth--;if(depth<0)throw Error('Unbalanced CSS selector.');if(c===','&&depth===0){groups.push(selector.slice(start,i));start=i+1;}}
   if(depth||quote)throw Error('Unbalanced CSS selector.');groups.push(selector.slice(start));return groups;
  }
- function cssXPath(selector,relative=false,depth=0){
+ function cssXPath(selector,relative=false,depth=0,block=false){
   if(!selector||selector==='.')return selector;
   if(depth>12)throw Error('CSS selector is too deeply nested to convert.');
   return splitGroups(selector).map(group=>{
-   let rest=group.trim(), path='', relation=relative?'.//':'//';
+   let rest=group.trim(), path='', relation=relative?'.//':'//', self='';
    if(rest.startsWith('>')){if(!relative)throw Error('A child selector needs a parent.');relation='./';rest=rest.slice(1).trim();}
    while(rest){
     let end=0,nesting=0,quote='';for(;end<rest.length;end++){const c=rest[end];if(quote){if(c===quote)quote='';continue;}if(c==='"'||c==="'"){quote=c;continue;}if(c==='('||c==='[')nesting++;if(c===')'||c===']')nesting--;if(!nesting&&(/[\s>+~]/.test(c)))break;}
     if(!end)throw Error('This CSS combinator needs manual XPath conversion.');
-    const compound=rest.slice(0,end);rest=rest.slice(end).trim();path+=relation+compoundXPath(compound,depth);
+    const compound=rest.slice(0,end), step=compoundXPath(compound,depth);rest=rest.slice(end).trim();
+    // A cleanup rule runs on a detached copy of its block, and CSS there
+    // still counts the block as an ancestor: "article .share" cleans an
+    // article. Only a first part that others follow can name the block, so
+    // a rule never selects the block itself, and a block without a parent
+    // is no :nth-of-type. The self axis is written out because the Go
+    // library misreads descendant-or-self before a child step or a predicate.
+    if(block&&!path&&relation==='.//'&&rest&&!/^[^\[]+\[[0-9]+\]/.test(step))self='./self::';
+    path+=relation+step;
     relation='//';if(rest.startsWith('>')){relation='/';rest=rest.slice(1).trim();if(!rest)throw Error('Incomplete CSS child selector.');}
    }
-   if(!path)throw Error('Empty CSS selector.');return path;
+   if(!path)throw Error('Empty CSS selector.');return self?self+path.slice(3)+' | '+path:path;
   }).join(' | ');
  }
+ // CSS matches element and attribute names in any case, and XPath compares
+ // them exactly with the lowercase names an HTML parser stores, so both are
+ // lowercased. Classes, ids and values keep their case in both languages.
  function compoundXPath(source,depth){
-  const match=source.match(/^(\*|[a-zA-Z_][a-zA-Z0-9_-]*)/), tag=match?match[0]:'*';
+  const match=source.match(/^(\*|[a-zA-Z_][a-zA-Z0-9_-]*)/), tag=match?match[0].toLowerCase():'*';
   let rest=source.slice(match?match[0].length:0), predicates=[],position=[];
   while(rest){
    let m;
    if((m=rest.match(/^([.#])([a-zA-Z_][a-zA-Z0-9_-]*)/))){predicates.push(m[1]==='#'?'@id='+literal(m[2]):"contains(concat(' ', normalize-space(@class), ' '), "+literal(' '+m[2]+' ')+')');rest=rest.slice(m[0].length);continue;}
-   if((m=rest.match(/^\[([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-zA-Z0-9_-]+)))?\]/))){predicates.push('@'+m[1]+(m[2]!==undefined||m[3]!==undefined||m[4]!==undefined?'='+literal(m[2]??m[3]??m[4]):''));rest=rest.slice(m[0].length);continue;}
+   if((m=rest.match(/^\[([a-zA-Z_][a-zA-Z0-9_-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-zA-Z0-9_-]+)))?\]/))){predicates.push('@'+m[1].toLowerCase()+(m[2]!==undefined||m[3]!==undefined||m[4]!==undefined?'='+literal(m[2]??m[3]??m[4]):''));rest=rest.slice(m[0].length);continue;}
    if((m=rest.match(/^:nth-of-type\(([1-9][0-9]*)\)/))){if(tag==='*')throw Error('Wildcard :nth-of-type needs manual XPath conversion.');position.push(m[1]);rest=rest.slice(m[0].length);continue;}
    if(rest.startsWith(':has(')){
     let i=5,level=1,quote='';for(;i<rest.length;i++){const c=rest[i];if(quote){if(c===quote)quote='';continue;}if(c==='"'||c==="'"){quote=c;continue;}if(c==='(')level++;if(c===')'&&!--level)break;}
@@ -144,10 +155,15 @@
  // them, and they are compiled but not matched.
  function convertRecipe(source){
   if(source.type!=='css')throw Error('Only CSS recipes can be converted to XPath.');
-  const convert=(css,relative,label)=>{
+  const convert=(css,relative,label,block)=>{
    try{
     if(label&&(!css||css==='.'))throw Error('This CSS selector needs manual XPath conversion: '+css);
-    const selector=cssXPath(css,relative);
+    // Only the article selector's first match is published. CSS takes it in
+    // page order, while the Go XPath library returns a union's left side
+    // first, so a converted list could publish a different block. A rule
+    // removes every match, so a list is safe there.
+    if(label&&!block&&splitGroups(css).length>1)throw Error('A CSS selector list (a, b) needs manual XPath conversion, because XPath can take a different first match.');
+    const selector=cssXPath(css,relative,0,block);
     if(selector.length>1000)throw Error('Converted XPath exceeds the 1,000-character selector limit.');
     if(selector)mirror.createExpression(selector,null);
     return selector;
@@ -156,7 +172,7 @@
   const result=JSON.parse(JSON.stringify(source)), full=source.full_content;result.type='xpath';result.items=convert(source.items||'',false);
   for(const name of fields.slice(1))if(source[name])result[name]={...source[name],selector:convert(source[name].selector||'',true)};
   if(full&&typeof full==='object'&&full.selector)result.full_content={...full,selector:convert(String(full.selector),false,'Article body selector')};
-  if(Array.isArray(source.remove))result.remove=source.remove.map((rule,i)=>convert(String(rule),true,'Cleanup rule '+(i+1)));
+  if(Array.isArray(source.remove))result.remove=source.remove.map((rule,i)=>convert(String(rule),true,'Cleanup rule '+(i+1),true));
   return result;
  }
  function segment(el){return el.localName+[...el.classList].filter(c=>simple.test(c)).slice(0,3).map(c=>'.'+c).join('');}
