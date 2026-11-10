@@ -700,6 +700,9 @@ func RunAt(body []byte, effective string, r model.Recipe, observedAt time.Time) 
 	if e := validateSelectors(r); e != nil {
 		return out, e
 	}
+	// First, so the per-match warnings of a page full of cards cannot push
+	// them past what Diagnostics keeps.
+	out.Warnings = append(out.Warnings, SelectorWarnings(r)...)
 	matcher, e := filter.Compile(r.Filters)
 	if e != nil {
 		return out, e
