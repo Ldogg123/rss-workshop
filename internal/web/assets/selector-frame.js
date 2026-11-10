@@ -135,11 +135,28 @@
   }
   return tag+[...position,...predicates].map(p=>'['+p+']').join('');
  }
+ // The article body selector and the cleanup rules use the recipe's type too.
+ // Left in CSS they would be read as XPath, where .entry-content is ".", the
+ // whole page. They are converted with the rest, and one that cannot be keeps
+ // the whole recipe in CSS. The article selector is absolute, like the
+ // repeated items; a rule is relative to the block it cleans, and "." there
+ // would name that block. Their page is not loaded here, so an error names
+ // them, and they are compiled but not matched.
  function convertRecipe(source){
   if(source.type!=='css')throw Error('Only CSS recipes can be converted to XPath.');
-  const result=JSON.parse(JSON.stringify(source));result.type='xpath';result.items=cssXPath(source.items||'');
-  for(const name of fields.slice(1))if(source[name])result[name]={...source[name],selector:cssXPath(source[name].selector||'',true)};
-  for(const selector of [result.items,...fields.slice(1).map(name=>result[name]?.selector||'')]){if(selector.length>1000)throw Error('Converted XPath exceeds the 1,000-character selector limit.');if(selector)mirror.createExpression(selector,null);}
+  const convert=(css,relative,label)=>{
+   try{
+    if(label&&(!css||css==='.'))throw Error('This CSS selector needs manual XPath conversion: '+css);
+    const selector=cssXPath(css,relative);
+    if(selector.length>1000)throw Error('Converted XPath exceeds the 1,000-character selector limit.');
+    if(selector)mirror.createExpression(selector,null);
+    return selector;
+   }catch(e){if(!label)throw e;throw Error(label+': '+String(e.message||'Could not convert this selector.'));}
+  };
+  const result=JSON.parse(JSON.stringify(source)), full=source.full_content;result.type='xpath';result.items=convert(source.items||'',false);
+  for(const name of fields.slice(1))if(source[name])result[name]={...source[name],selector:convert(source[name].selector||'',true)};
+  if(full&&typeof full==='object'&&full.selector)result.full_content={...full,selector:convert(String(full.selector),false,'Article body selector')};
+  if(Array.isArray(source.remove))result.remove=source.remove.map((rule,i)=>convert(String(rule),true,'Cleanup rule '+(i+1)));
   return result;
  }
  function segment(el){return el.localName+[...el.classList].filter(c=>simple.test(c)).slice(0,3).map(c=>'.'+c).join('');}
