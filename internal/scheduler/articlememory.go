@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"time"
@@ -24,7 +25,7 @@ type articleKey [sha256.Size]byte
 func keyOf(key string) articleKey { return sha256.Sum256([]byte(key)) }
 
 // articleFailure is what this process remembers of a listed story whose
-// article it tried without getting a body.
+// article it tried without a body being stored for it.
 type articleFailure struct {
 	// tried is when the story was last tried. The least recently tried goes
 	// first among those tried again.
@@ -34,6 +35,9 @@ type articleFailure struct {
 	// leaves both alone, so a story can be remembered with neither.
 	count int
 	retry time.Time
+	// unkept says that the latest try fetched the article and the refresh did
+	// not store it (see unkept). Such a story goes behind the failed ones.
+	unkept bool
 }
 
 // articleMemory holds a feed's failures for one recipe version: any edit may
@@ -46,7 +50,8 @@ type articleMemory struct {
 type articleOutcome int
 
 const (
-	// articleStored: the story has a body now, so it is forgotten.
+	// articleStored: the round gave the story a body. It is forgotten once
+	// that body is stored (see unkept).
 	articleStored articleOutcome = iota
 	// articleFault: the story's own failure, which backs it off.
 	articleFault
@@ -56,9 +61,9 @@ const (
 )
 
 // articleTry is the outcome for one story without a stored body that a
-// refresh tried.
+// refresh tried. It names the story by its key, which only the memory hashes.
 type articleTry struct {
-	key     articleKey
+	key     string
 	outcome articleOutcome
 }
 
@@ -101,14 +106,49 @@ func (s *Scheduler) articleFailures(f model.Feed) map[articleKey]articleFailure 
 	return out
 }
 
+// unkept returns the stories a round gave a body that the refresh did not
+// store with one. MAX_ITEMS retention removes the oldest stories in the save
+// that stored their articles, and a list page longer than MAX_ITEMS shows
+// them again at every refresh. They are remembered as fetched in vain, which
+// says nothing against them: forgotten like the stories that kept a body,
+// they would count as never tried each time and lead the queue for good,
+// ahead of every story whose article failed. Remembered, they are fetched
+// again as before, after those stories. A read that fails forgets them, so
+// they lead once more at the next refresh.
+func (s *Scheduler) unkept(ctx context.Context, id string, run articleRun) map[string]bool {
+	fetched := false
+	for _, try := range run.tried {
+		fetched = fetched || try.outcome == articleStored
+	}
+	if !fetched {
+		return nil
+	}
+	stored, err := s.Store.ArticleStates(ctx, id)
+	if err != nil {
+		return nil
+	}
+	var out map[string]bool
+	for _, try := range run.tried {
+		if try.outcome == articleStored && !stored[try.key].HasBody {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[try.key] = true
+		}
+	}
+	return out
+}
+
 // rememberArticles follows a stored successful refresh that read the list
 // page. A refresh that was not stored, or that failed, has changed nothing,
-// and a 304 lists no stories, so neither may touch the memory. Only failures
-// of listed stories are kept, which bounds a feed's memory by the stories one
-// list page shows, and a story that got its body is forgotten. The memory
-// lives in this process alone: a restart tries every story again, as does an
-// edit, because it changes the version.
-func (s *Scheduler) rememberArticles(f model.Feed, run articleRun) {
+// and a 304 lists no stories, so neither may touch the memory. Only listed
+// stories are kept, which bounds a feed's memory by the stories one list page
+// shows, and a story stored with its body is forgotten. The memory lives in
+// this process alone: a restart tries every story again, as does an edit,
+// because it changes the version.
+func (s *Scheduler) rememberArticles(ctx context.Context, f model.Feed, run articleRun) {
+	// Read before taking the lock, which no query may hold up.
+	unkept := s.unkept(ctx, f.ID, run)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if f.Recipe.Full == nil || f.Recipe.Full.Selector == "" {
@@ -130,17 +170,22 @@ func (s *Scheduler) rememberArticles(f model.Feed, run articleRun) {
 	}
 	now := time.Now()
 	for _, try := range run.tried {
+		key := keyOf(try.key)
 		if try.outcome == articleStored {
-			delete(m.failed, try.key)
+			delete(m.failed, key)
+			if unkept[try.key] {
+				// The page gave its article, so earlier failures are over.
+				m.failed[key] = articleFailure{tried: now, unkept: true}
+			}
 			continue
 		}
-		failure := m.failed[try.key]
-		failure.tried = now
+		failure := m.failed[key]
+		failure.tried, failure.unkept = now, false
 		if try.outcome == articleFault {
 			failure.count++
 			failure.retry = now.Add(min(articleBackoff<<min(failure.count-1, 5), articleBackoffMax))
 		}
-		m.failed[try.key] = failure
+		m.failed[key] = failure
 	}
 	if len(m.failed) == 0 {
 		delete(s.articles, f.ID)

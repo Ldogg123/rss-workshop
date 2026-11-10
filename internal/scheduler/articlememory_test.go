@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"rss-workshop/internal/diagnostics"
 	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/model"
 	"rss-workshop/internal/store"
@@ -188,7 +190,9 @@ func remembered(t *testing.T, jobs *Scheduler, id string, count, first, last int
 	}
 }
 
-const waitingWarning = "Articles waiting to be tried again after failing or coming back empty: %d"
+// waitingLine is the warning's text, repeated here so that a change to what
+// operators read has to be made twice.
+const waitingLine = "Articles waiting to be tried again after failing or coming back empty: %d"
 
 // The ten newest stories link to articles that always answer 404. They used
 // to head the queue at every refresh and take all ten article requests, so
@@ -224,7 +228,7 @@ func TestArticlesThatAlwaysFailLeaveTheBudgetToTheOthers(t *testing.T) {
 		}
 	}
 	// The run says how many stories wait, and nothing else about them.
-	if got, want := latestWarnings(t, s, f.ID), []string{fmt.Sprintf(waitingWarning, 10)}; !slices.Equal(got, want) {
+	if got, want := latestWarnings(t, s, f.ID), []string{fmt.Sprintf(waitingLine, 10)}; !slices.Equal(got, want) {
 		t.Fatalf("warnings %q, want %q", got, want)
 	}
 
@@ -271,9 +275,9 @@ func TestArticleBackoffDoublesUpToADay(t *testing.T) {
 	jobs := New(nil, nil, 1, time.Second)
 	f := model.Feed{ID: "feed", Version: 1, Recipe: fullRecipe()}
 	key := keyOf(articleURL(1))
-	run := articleRun{listed: []string{articleURL(1)}, tried: []articleTry{{key: key, outcome: articleFault}}}
+	run := articleRun{listed: []string{articleURL(1)}, tried: []articleTry{{key: articleURL(1), outcome: articleFault}}}
 	for i, want := range []time.Duration{time.Hour, 2 * time.Hour, 4 * time.Hour, 8 * time.Hour, 16 * time.Hour, 24 * time.Hour, 24 * time.Hour} {
-		jobs.rememberArticles(f, run)
+		jobs.rememberArticles(context.Background(), f, run)
 		failure := failuresOf(jobs, f.ID)[key]
 		if wait := time.Until(failure.retry); failure.count != i+1 || wait > want || wait < want-time.Minute {
 			t.Fatalf("failure %d waits %v, want %v", failure.count, wait, want)
@@ -319,7 +323,7 @@ func TestARecentStoryIsTriedAgainInsideItsBackoff(t *testing.T) {
 	if _, kept := got[keyOf(articleURL(3))]; kept || len(got) != 9 {
 		t.Fatalf("a story with a body is still remembered among %d", len(got))
 	}
-	if warnings := latestWarnings(t, s, f.ID); slices.Contains(warnings, fmt.Sprintf(waitingWarning, 9)) {
+	if warnings := latestWarnings(t, s, f.ID); slices.Contains(warnings, fmt.Sprintf(waitingLine, 9)) {
 		t.Fatalf("recent stories were reported as waiting: %q", warnings)
 	}
 
@@ -328,7 +332,7 @@ func TestARecentStoryIsTriedAgainInsideItsBackoff(t *testing.T) {
 	refreshOnce(t, jobs, f.ID)
 	site.requested(t, 3, 1, 2)
 	site.requested(t, 2, 6, 10)
-	if warnings := latestWarnings(t, s, f.ID); !slices.Contains(warnings, fmt.Sprintf(waitingWarning, 9)) {
+	if warnings := latestWarnings(t, s, f.ID); !slices.Contains(warnings, fmt.Sprintf(waitingLine, 9)) {
 		t.Fatalf("warnings %q do not count the nine waiting stories", warnings)
 	}
 }
@@ -399,7 +403,7 @@ func TestOnlyAStorysOwnFaultsBackItOff(t *testing.T) {
 	site.requested(t, 1, 1, 4)
 	site.requested(t, 2, 5, 5)
 	site.requested(t, 1, 6, 6)
-	if warnings := latestWarnings(t, s, f.ID); len(warnings) != 2 || warnings[0] != fmt.Sprintf(waitingWarning, 4) {
+	if warnings := latestWarnings(t, s, f.ID); len(warnings) != 2 || warnings[0] != fmt.Sprintf(waitingLine, 4) {
 		t.Fatalf("warnings %q, want the count of four waiting stories and the failed connection", warnings)
 	}
 }
@@ -610,7 +614,7 @@ func TestAnArticleThatComesBackEmptyIsBackedOff(t *testing.T) {
 		refreshOnce(t, jobs, f.ID)
 	}
 	site.requested(t, 1, 1, 2)
-	if got, want := latestWarnings(t, s, f.ID), []string{fmt.Sprintf(waitingWarning, 1)}; !slices.Equal(got, want) {
+	if got, want := latestWarnings(t, s, f.ID), []string{fmt.Sprintf(waitingLine, 1)}; !slices.Equal(got, want) {
 		t.Fatalf("warnings %q, want %q", got, want)
 	}
 }
@@ -765,5 +769,266 @@ func TestArticleMemoryKeepsOnlyListedStoriesOfLiveFeeds(t *testing.T) {
 	jobs.Wait()
 	if got := failuresOf(jobs, f.ID); got != nil {
 		t.Fatalf("a deleted feed kept %d remembered articles", len(got))
+	}
+}
+
+// datedListPage lists stories an hour apart, newest first, so MAX_ITEMS
+// retention keeps the first ones listed and never the last.
+func datedListPage(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		date := time.Now().UTC().Add(-time.Duration(i) * time.Hour).Format(time.RFC3339)
+		fmt.Fprintf(&b, `<article><h2>Story %d</h2><a href="https://example.com/a%d">l</a><time>%s</time><p>teaser %d</p></article>`, i, i, date, i)
+	}
+	return b.String()
+}
+
+func datedRecipe() model.Recipe {
+	r := fullRecipe()
+	r.Date = model.Field{Selector: "time"}
+	return r
+}
+
+// A list page can show more stories than MAX_ITEMS keeps. Retention removes
+// the oldest in the refresh that fetched their articles, so they are listed
+// without a stored body at every refresh. Were they forgotten like stories
+// that kept their body, they would count as never tried each time, and ten of
+// them would take every article request ahead of a stored story whose article
+// failed once. They are fetched again after it instead.
+func TestStoriesRetentionDoesNotKeepLeaveAFailedArticleItsTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// fail makes article 5 fail, and returns what ends that.
+		fail func(site *articleSite) (recover func())
+		// lift asks for a Refresh, which ends a backoff.
+		lift bool
+	}{
+		{"connection", func(site *articleSite) func() {
+			site.set(func() { site.down[articleURL(5)] = true })
+			return func() { site.set(func() { site.down = map[string]bool{} }) }
+		}, false},
+		{"status and Refresh", func(site *articleSite) func() {
+			site.answer(503, 5, 5)
+			return func() { site.answer(0, 5, 5) }
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const kept, total = 20, 30
+			s, err := openTestStore(t, kept)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.DB.Close()
+			site := newArticleSite(total)
+			site.list = datedListPage(total)
+			recover := tc.fail(site)
+			jobs := New(s, site, 2, 30*time.Second)
+			f := saveFeed(t, jobs, datedRecipe())
+
+			refreshOnce(t, jobs, f.ID)
+			recover()
+			ageStories(t, s)
+			if tc.lift {
+				jobs.Retry(f.ID)
+			}
+			// Stories never tried go first: 11 to 20, then 21 to 30, which
+			// retention does not keep.
+			refreshOnce(t, jobs, f.ID)
+			refreshOnce(t, jobs, f.ID)
+			site.requested(t, 1, 1, total)
+			if got := storedBodies(t, s, f.ID); len(got) != kept-1 || got["Story 5"] || got["Story 21"] {
+				t.Fatalf("stored bodies for %v, want stories 1 to 20 without 5", got)
+			}
+			// Now story 5 leads the ten that were fetched in vain.
+			refreshOnce(t, jobs, f.ID)
+			site.requested(t, 2, 5, 5)
+			if got := storedBodies(t, s, f.ID); len(got) != kept || !got["Story 5"] {
+				t.Fatalf("stored bodies for %v, want stories 1 to 20", got)
+			}
+			site.requested(t, 2, 21, 29)
+			site.requested(t, 1, 30, 30)
+			// Fetching them was no failure of theirs, so none waits.
+			remembered(t, jobs, f.ID, 0, 21, 30)
+			refreshOnce(t, jobs, f.ID)
+			site.requested(t, 2, 30, 30)
+			if warnings := latestWarnings(t, s, f.ID); len(warnings) != 0 {
+				t.Fatalf("warnings %q for articles that were fetched", warnings)
+			}
+		})
+	}
+}
+
+// While its article fails, a stored story is tried at every refresh ahead of
+// the stories retention does not keep, however many of those have waited
+// longer for their turn. They used to follow it in list order, being the
+// oldest, so it is tried no later than it was.
+func TestAFailedArticleIsTriedBeforeStoriesRetentionDoesNotKeep(t *testing.T) {
+	const kept, total = 20, 45
+	s, err := openTestStore(t, kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	site := newArticleSite(total)
+	site.list = datedListPage(total)
+	site.set(func() { site.down[articleURL(5)] = true })
+	jobs := New(s, site, 2, 30*time.Second)
+	f := saveFeed(t, jobs, datedRecipe())
+
+	// Four refreshes try stories 1 to 40, and the fifth the last five.
+	for range 4 {
+		refreshOnce(t, jobs, f.ID)
+	}
+	site.requested(t, 1, 1, 40)
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 2, 5, 5)
+	site.requested(t, 2, 21, 24)
+	site.requested(t, 1, 25, 45)
+	// Twenty-one stories retention does not keep were fetched before story 5
+	// was last tried, and it still goes first.
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 3, 5, 5)
+	site.requested(t, 2, 25, 33)
+	site.requested(t, 1, 34, 45)
+	site.set(func() { site.down = map[string]bool{} })
+	refreshOnce(t, jobs, f.ID)
+	if got := storedBodies(t, s, f.ID); len(got) != kept || !got["Story 5"] {
+		t.Fatalf("stored bodies for %v, want stories 1 to 20", got)
+	}
+	remembered(t, jobs, f.ID, 0, 21, total)
+}
+
+// A story retention does not keep has no first hour: once its own article
+// failed it waits like any other, and the count includes it, so the count
+// can exceed the number of stories the feed stores.
+func TestAFailedStoryRetentionDoesNotKeepWaitsAndIsCounted(t *testing.T) {
+	const kept, total = 5, 15
+	s, err := openTestStore(t, kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	site := newArticleSite(total)
+	site.list = datedListPage(total)
+	site.answer(404, 1, total)
+	jobs := New(s, site, 2, 30*time.Second)
+	f := saveFeed(t, jobs, datedRecipe())
+
+	refreshOnce(t, jobs, f.ID)
+	ageStories(t, s)
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 1, 1, total)
+	if got, want := latestWarnings(t, s, f.ID)[0], fmt.Sprintf(waitingLine, 10); got != want {
+		t.Fatalf("first warning %q, want %q", got, want)
+	}
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 1, 1, total)
+	remembered(t, jobs, f.ID, 1, 1, total)
+	if items, err := s.Items(context.Background(), f.ID); err != nil || len(items) != kept {
+		t.Fatalf("%d stories are stored (%v), want %d", len(items), err, kept)
+	}
+	if got, want := latestWarnings(t, s, f.ID), []string{fmt.Sprintf(waitingLine, total)}; !slices.Equal(got, want) {
+		t.Fatalf("warnings %q, want %q", got, want)
+	}
+}
+
+// A run keeps only so many warnings, and a list page can fill them all by
+// itself, here with a date the recipe does not recognize in every story.
+// Stories that wait are not tried, so they add no warning of their own: the
+// count is the only line that says why they have no article, and it leads.
+func TestTheWaitingCountIsKeptWhenTheListPageFillsTheWarnings(t *testing.T) {
+	const total = diagnostics.MaxWarnings + 5
+	s, err := openTestStore(t, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	var page strings.Builder
+	for i := 1; i <= total; i++ {
+		fmt.Fprintf(&page, `<article><h2>Story %d</h2><a href="https://example.com/a%d">l</a><time>sometime</time><p>teaser %d</p></article>`, i, i, i)
+	}
+	site := newArticleSite(total)
+	site.list = page.String()
+	site.answer(404, 1, 1)
+	jobs := New(s, site, 2, 30*time.Second)
+	f := saveFeed(t, jobs, datedRecipe())
+
+	for range 3 {
+		refreshOnce(t, jobs, f.ID)
+	}
+	ageStories(t, s)
+	refreshOnce(t, jobs, f.ID)
+	remembered(t, jobs, f.ID, 1, 1, 1)
+	runs, err := s.Runs(context.Background(), f.ID)
+	if err != nil || len(runs) == 0 || runs[0].Diagnostics == nil || len(runs[0].Diagnostics.Attempts) != 1 {
+		t.Fatalf("no stored diagnostics: %v", err)
+	}
+	attempt := runs[0].Diagnostics.Attempts[0]
+	if len(attempt.Warnings) != diagnostics.MaxWarnings || attempt.Warnings[0] != fmt.Sprintf(waitingLine, 1) {
+		t.Fatalf("%d warnings starting with %q, want %d led by the count of waiting stories", len(attempt.Warnings), attempt.Warnings[0], diagnostics.MaxWarnings)
+	}
+	// The line it displaced is counted with the others that did not fit.
+	if want := total + 1 - diagnostics.MaxWarnings; attempt.WarningsOmitted != want {
+		t.Fatalf("%d warnings omitted, want %d", attempt.WarningsOmitted, want)
+	}
+}
+
+// More failed stories than one refresh fetches take turns: the least recently
+// tried go first, or those past the tenth would never be tried again.
+func TestFailedStoriesTakeTurnsLeastRecentlyTriedFirst(t *testing.T) {
+	s, err := openTestStore(t, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	site := newArticleSite(15)
+	site.answer(404, 1, 15)
+	jobs := New(s, site, 2, 30*time.Second)
+	f := saveFeed(t, jobs, fullRecipe())
+
+	// Every story stays in its first hour, so none waits. Stories 11 to 15
+	// are first tried in the second refresh, after which nothing is new.
+	refreshOnce(t, jobs, f.ID)
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 2, 1, 5)
+	site.requested(t, 1, 6, 15)
+	// Stories 6 to 10 were tried longest ago, then 11 to 15. Stories tried in
+	// the same refresh keep their list order.
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 3, 1, 5)
+	site.requested(t, 2, 6, 10)
+	site.requested(t, 1, 11, 15)
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 4, 1, 5)
+	site.requested(t, 2, 6, 10)
+	site.requested(t, 2, 11, 15)
+	remembered(t, jobs, f.ID, 1, 1, 15)
+}
+
+// A feed that no longer fetches articles has none to remember. The edit's
+// new version would hide the old failures, but not free them.
+func TestAFeedWithoutAnArticleSelectorKeepsNoArticleMemory(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTestStore(t, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	site := newArticleSite(2)
+	site.answer(404, 1, 1)
+	jobs := New(s, site, 2, 30*time.Second)
+	f := saveFeed(t, jobs, fullRecipe())
+
+	refreshOnce(t, jobs, f.ID)
+	remembered(t, jobs, f.ID, 1, 1, 1)
+	edited := reload(t, s, f.ID)
+	edited.Recipe.Full = nil
+	if _, err := s.Save(ctx, edited); err != nil {
+		t.Fatal(err)
+	}
+	refreshOnce(t, jobs, f.ID)
+	site.requested(t, 1, 1, 2)
+	if got := failuresOf(jobs, f.ID); got != nil {
+		t.Fatalf("%d articles are still remembered", len(got))
 	}
 }

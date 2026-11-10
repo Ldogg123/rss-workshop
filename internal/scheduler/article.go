@@ -50,6 +50,16 @@ type articleRun struct {
 	// worker took before the deadline. A refresh hands it to rememberArticles
 	// once its result is stored.
 	tried []articleTry
+	// waiting counts the listed stories that were not queued because their
+	// article failed and its backoff has not passed. See waitingWarning.
+	waiting int
+}
+
+// waitingWarning is the one line a run carries about the stories that wait
+// out a backoff: fixed text and a count, with no title, address or selector.
+// The run that tried a story says why it failed.
+func waitingWarning(stories int) string {
+	return fmt.Sprintf("Articles waiting to be tried again after failing or coming back empty: %d", stories)
 }
 
 // fetchArticles fills in item bodies from each item's own page.
@@ -80,6 +90,9 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 	// first, and only once its backoff has passed or while the story is
 	// recent: otherwise articles that always fail would head the queue at
 	// every refresh and take the whole budget from the stories behind them.
+	// Last come the stories whose article was fetched for a refresh that did
+	// not keep them (see unkept), which a list page longer than MAX_ITEMS
+	// shows at every refresh: fetching those again is rarely of use.
 	var failed map[articleKey]articleFailure
 	if !preview {
 		failed = s.articleFailures(f)
@@ -87,14 +100,14 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 	now := time.Now()
 	var fresh, again, recent []int
 	// tries holds the stories without a stored body that are queued: when
-	// each was last tried, and whether a failure of its own in this round
-	// backs it off.
+	// each was last tried, whether that try was fetched in vain, and whether
+	// a failure of its own in this round backs it off.
 	type try struct {
 		last   time.Time
+		unkept bool
 		counts bool
 	}
 	tries := map[int]try{}
-	waiting := 0
 	for i := range items {
 		if items[i].URL == "" {
 			continue
@@ -120,26 +133,26 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 				tries[i] = try{counts: true}
 			case !now.Before(failure.retry):
 				again = append(again, i)
-				tries[i] = try{last: failure.tried, counts: true}
+				tries[i] = try{last: failure.tried, unkept: failure.unkept, counts: true}
 			case isRecent:
 				// The article may not have been there yet. Trying again is
 				// the purpose of the first hour, so it adds no failure.
 				again = append(again, i)
 				tries[i] = try{last: failure.tried}
 			default:
-				waiting++
+				run.waiting++
 			}
 		case isRecent:
 			recent = append(recent, i)
 		}
 	}
-	sort.SliceStable(again, func(a, b int) bool { return tries[again[a]].last.Before(tries[again[b]].last) })
-	if waiting > 0 {
-		// Fixed text and a count, ahead of the warnings for single articles,
-		// which a run keeps only so many of. The run that tried a story says
-		// why it failed.
-		run.warnings = append(run.warnings, fmt.Sprintf("Articles waiting to be tried again after failing or coming back empty: %d", waiting))
-	}
+	sort.SliceStable(again, func(a, b int) bool {
+		one, other := tries[again[a]], tries[again[b]]
+		if one.unkept != other.unkept {
+			return other.unkept
+		}
+		return one.last.Before(other.last)
+	})
 	// Stories waiting out a backoff are not queued, so they are not a backlog
 	// the next refresh would fetch either.
 	missing := append(fresh, again...)
@@ -188,7 +201,7 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 					case queued.counts && ownFault(body, err):
 						outcome = articleFault
 					}
-					run.tried = append(run.tried, articleTry{key: keyOf(items[i].Key), outcome: outcome})
+					run.tried = append(run.tried, articleTry{key: items[i].Key, outcome: outcome})
 				}
 				mu.Unlock()
 			}

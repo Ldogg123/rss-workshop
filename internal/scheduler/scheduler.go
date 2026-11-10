@@ -507,12 +507,19 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 				"feed", f.Title, "feed_id", f.ID, "error", err)
 		}
 		articles = s.fetchArticles(ctx, f, items, known, false)
-		if w := articles.warnings; len(w) > 0 && p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
+		if p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
 			last := &p.Diagnostics.Attempts[len(p.Diagnostics.Attempts)-1]
-			// Appended after extract() sanitized the trace, which is safe
+			// Added after extract() sanitized the trace, which is safe
 			// because store.encodeDiagnostics sanitizes again on write: stored
 			// article warnings are bounded and have their URLs redacted there.
-			last.Warnings = append(last.Warnings, w...)
+			if articles.waiting > 0 {
+				// A run keeps only so many warnings, and the list page's own
+				// can fill them. Stories that wait are not tried, so this
+				// line is all the run says about them: it goes first, and
+				// the write counts the warning it displaces as omitted.
+				last.Warnings = append([]string{waitingWarning(articles.waiting)}, last.Warnings...)
+			}
+			last.Warnings = append(last.Warnings, articles.warnings...)
 		}
 		// Its last article page has been rendered, so the save that follows
 		// leaves the slot to the next job.
@@ -583,7 +590,7 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	s.released(f.ID)
 	if e == nil {
 		if r.Status != 304 {
-			s.rememberArticles(f, articles)
+			s.rememberArticles(saveCtx, f, articles)
 		}
 		s.recordBacklog(saveCtx, f, articles)
 	}
