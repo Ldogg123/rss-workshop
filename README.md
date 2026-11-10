@@ -4,6 +4,8 @@ RSS Workshop is a self-hosted RSS and Atom feed generator for websites that don�
 
 The default Docker installation includes Chromium for JavaScript pages, SQLite, a single-admin interface, and dark mode. Data stays in local folders on your host.
 
+**Documentation: [ldogg123.github.io/rss-workshop](https://ldogg123.github.io/rss-workshop/)**, with every guide below, search, and a demo site to build a first feed from.
+
 ## Why RSS Workshop?
 
 RSS Workshop is designed for people looking for a self-hosted alternative to hosted RSS generators and tools such as Feedless, RSS.app, FetchRSS, and similar website-to-RSS services.
@@ -55,7 +57,7 @@ Already have a feed for the site? Choose **Source → RSS or Atom feed** instead
 
 To build another feed from the same site, such as a different section, or to try other selectors without touching a working feed, choose **Duplicate** on its card. The editor opens a copy with every setting and the same library filters; nothing is saved until you save it, and the copy gets its own reader links.
 
-Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and four ready-made recipes covering every field, XPath, filtering, full article content and an RSS feed source. Serve it, import the recipes, and preview: see [examples](docs/examples/).
+Prefer to see it working before pointing it at a real site? The repository ships a small demo newspaper and four ready-made recipes covering every field, XPath, filtering, full article content and an RSS feed source. Serve it, import the recipes, and preview: see [examples](docs/examples/). The documentation site publishes the same demo, so you can also try it without serving anything.
 
 Reader requests serve saved stories and never fetch the source, so a slow or broken site cannot stall your reader, and a failed refresh keeps the last good output. Anyone holding a feed link can read it; **Reset feed links** revokes a feed’s existing URLs.
 
@@ -123,6 +125,8 @@ Use the same Compose overrides as your installation. Every released database sch
 Every option is an override applied after `compose.yaml`, for example `docker compose -f compose.yaml -f compose.static.yaml up -d --pull always --wait`. [Deployment](docs/deployment.md) has the full configuration reference and the order to combine them in.
 
 ## Documentation
+
+The [documentation site](https://ldogg123.github.io/rss-workshop/) presents these guides with navigation and search. It follows the `main` branch, which can be ahead of the latest release; the [changelog](CHANGELOG.md) lists what each release contains. The same guides are in [docs/](docs/):
 
 - [Visual selectors](docs/visual-selector.md), [RSS and Atom feed sources](docs/feed-sources.md), [story filters](docs/filtering.md), [dates](docs/dates.md), and [RSS/Atom output, full articles and content cleanup](docs/atom.md)
 - [Reverse proxy](docs/reverse-proxy.md), [browser rendering](docs/browser.md), [FlareSolverr](docs/flaresolverr.md), and [Gluetun VPN](docs/gluetun.md)

@@ -24,4 +24,16 @@ Keep both the default browser runtime and the lightweight static runtime usable.
 
 Publishing is a separate, manual step. Follow [release preparation](docs/releases.md) after the proposed changes pass review.
 
-CI runs once per pull-request update and again when code reaches `main`; feature-branch and tag pushes do not create duplicate runs. Documentation-only PRs skip CI for root Markdown files, guides directly under `docs/`, and screenshots. Check their links and commands locally, and run `make release-test` after editing `docs/dependencies.md` or `docs/licensing.md`. License notices and recipe examples still receive checks. Newer automatic runs cancel older runs for the same PR or branch. See [CI behavior](docs/releases.md#validation) for details and manual checks.
+CI runs once per pull-request update and again when code reaches `main`; feature-branch and tag pushes do not create duplicate runs. Documentation-only PRs skip CI for root Markdown files, guides directly under `docs/`, and screenshots; the Documentation workflow builds the site and checks their links instead. Check their commands locally, and run `make release-test` after editing `docs/dependencies.md` or `docs/licensing.md`. License notices and recipe examples still receive checks. Newer automatic runs cancel older runs for the same PR or branch. See [CI behavior](docs/releases.md#validation) for details and manual checks.
+
+## Documentation site
+
+The guides are also published at [ldogg123.github.io/rss-workshop](https://ldogg123.github.io/rss-workshop/), built with [Zensical](https://zensical.org/) from the same Markdown. Write a guide for GitHub: link to other guides, their headings and repository files with relative links, as GitHub resolves them. `scripts/docs-site.py` copies the guides into `website/build/src` for the build and adapts the copy, so a link to a file the site does not publish opens it on GitHub and every heading keeps GitHub's anchor; it never rewrites a guide. Syntax that only the site understands belongs in `website/pages/`, which holds the landing page.
+
+```sh
+make docs-test                # every link and anchor in the guides; standard library only, part of make check
+make docs                     # build website/build/site in strict mode, then check the built pages
+make docs-serve               # preview at http://127.0.0.1:8090/rss-workshop/, restaged when a guide changes
+```
+
+`make docs` installs the pinned Zensical from `website/requirements.txt` into `website/build/venv`, which needs Python's `venv` module (`python3-venv` on Debian and Ubuntu); set `DOCS_VENV` to keep it elsewhere. A new guide under `docs/` also needs a `nav` entry in `website/zensical.toml`, and the build says so. The Documentation workflow builds the site for pull requests that change it and publishes it from `main`.
