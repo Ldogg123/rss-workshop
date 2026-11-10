@@ -153,6 +153,7 @@ func testBrowserFixture(t *testing.T, body, card string) {
 		testDashboardUI(t, tab, s)
 		testNotificationsUI(t, tab, service)
 		testCleanupUI(t, tab, s)
+		testConvertXPathUI(t, tab, s)
 		testFeedSourceUI(t, tab, s)
 	}
 	var overflow bool

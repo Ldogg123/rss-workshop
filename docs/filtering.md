@@ -27,7 +27,7 @@ Feeds use library filters by reference. Editing one in the library changes every
 
 The limits above apply to each feed's combined rules, so a feed with its own rules and several library filters still has at most **500 keywords**, **128 conditions/groups**, and **8 nested levels** in total. A feed can use up to **16** library filters, and the library holds up to **200**. Saving a feed or a library filter that would push any feed past a limit is rejected; when a library filter edit is the cause, the message names the affected feed.
 
-Editing a library filter works like editing a feed's rules. Saved stories are kept by default. Select **Remove already-saved stories that no longer match** to apply the new rules to the saved history of every feed using the filter, in one transaction with the edit and within the same five-second deadline. Refreshes already in progress when you save are discarded, and each affected feed fetches a full copy of its page next time rather than reusing an unchanged response.
+Editing a library filter works like editing a feed's rules. Saved stories are kept by default. Select **Remove already-saved stories that no longer match** to apply the new rules to the saved history of every feed using the filter, in one transaction with the edit and within the same five-second deadline. As for a feed's own rules, each story is judged on [what is stored for it](#previously-saved-stories). Refreshes already in progress when you save are discarded, and each affected feed fetches a full copy of its page next time rather than reusing an unchanged response.
 
 A library filter that feeds still use cannot be deleted. Remove it from those feeds first; the library shows which feeds use each filter.
 

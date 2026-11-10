@@ -27,6 +27,8 @@ type opmlBody struct {
 // text is the only attribute OPML requires; readers disagree about which of
 // text and title they display, so both carry the feed name. htmlUrl points at
 // the source page, which lets a reader link back to the site it was built from.
+// It is optional, and a feed source has none: its address is the upstream feed
+// itself, which a reader's "open website" link would show as raw XML.
 type outline struct {
 	Type    string `xml:"type,attr"`
 	Text    string `xml:"text,attr"`
@@ -34,6 +36,11 @@ type outline struct {
 	XMLURL  string `xml:"xmlUrl,attr"`
 	HTMLURL string `xml:"htmlUrl,attr,omitempty"`
 }
+
+// feedSourceType is extract.FeedType, the recipe type of a feed source. The
+// extract package's tests import this one, so it cannot be imported here; the
+// OPML tests use extract's constant, which keeps the two in step.
+const feedSourceType = "feed"
 
 // RenderOPML lists every feed for a reader to import. Callers fill RSSURL and
 // AtomURL; atom selects which of the two each outline advertises. Paused feeds
@@ -54,7 +61,11 @@ func RenderOPML(title string, feeds []model.Feed, atom bool, created time.Time) 
 			name = f.URL
 		}
 		// "rss" is what OPML uses for any syndication feed, Atom included.
-		doc.Body.Outlines = append(doc.Body.Outlines, outline{Type: "rss", Text: name, Title: name, XMLURL: link, HTMLURL: f.URL})
+		o := outline{Type: "rss", Text: name, Title: name, XMLURL: link}
+		if f.Recipe.Type != feedSourceType {
+			o.HTMLURL = f.URL
+		}
+		doc.Body.Outlines = append(doc.Body.Outlines, o)
 	}
 	b, e := xml.MarshalIndent(doc, "", "  ")
 	if e != nil {
