@@ -133,8 +133,9 @@ const (
 
 // chromiumSlots is the capacity of the Chromium pool, or 0 when the Renderer
 // reports none, which leaves every job unadmitted, as test fakes are. It is
-// called with mu held, so it must not take the pool's lock: browser.Pool.Stats
-// waits while Chromium starts, for up to 15 seconds.
+// called with mu held, so it takes no pool lock at all: not the one a
+// Chromium start holds for up to 15 seconds, nor the stats lock that
+// browser.Pool.Stats takes.
 func (s *Scheduler) chromiumSlots() int {
 	if c, ok := s.Renderer.(interface{ Capacity() int }); ok {
 		return c.Capacity()

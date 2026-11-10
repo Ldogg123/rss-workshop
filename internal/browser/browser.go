@@ -82,7 +82,8 @@ func (p *Pool) Close() {
 	p.proxy.Close()
 }
 
-// addActive and setRoot are called with mu held.
+// addActive, setRoot and setStarted are called with mu held. They are the
+// only writers of what Stats reports, and a native test races them with it.
 func (p *Pool) addActive(n int) {
 	p.statsMu.Lock()
 	p.active += n
@@ -92,6 +93,14 @@ func (p *Pool) addActive(n int) {
 func (p *Pool) setRoot(root context.Context) {
 	p.statsMu.Lock()
 	p.root = root
+	p.statsMu.Unlock()
+}
+
+// setStarted records a Chromium that has just started.
+func (p *Pool) setStarted(root context.Context) {
+	p.statsMu.Lock()
+	p.root = root
+	p.restarts++
 	p.statsMu.Unlock()
 }
 
@@ -141,10 +150,7 @@ func (p *Pool) startLocked() error {
 		allocCancel()
 		return fmt.Errorf("Chromium could not start; check executable, sandbox support, and container profile: %w", err)
 	}
-	p.statsMu.Lock()
-	p.root = root
-	p.restarts++
-	p.statsMu.Unlock()
+	p.setStarted(root)
 	p.completed = 0
 	p.stop = func() { rootCancel(); allocCancel() }
 	return nil

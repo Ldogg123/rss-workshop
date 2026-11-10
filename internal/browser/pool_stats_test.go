@@ -92,7 +92,9 @@ func TestStatsAnswersWhileChromiumStarts(t *testing.T) {
 		_, err := pool.Render(context.Background(), "https://example.com/story", "", 0)
 		rendered <- err
 	}()
-	// Readers that overlap the failing start and Close, for the race detector.
+	// Readers that keep asking through the failing start and Close. This start
+	// writes nothing Stats reports; TestStatsReadsWhileThePoolWrites has the
+	// writers.
 	stopReaders := make(chan struct{})
 	readersDone := make(chan struct{})
 	go func() {
