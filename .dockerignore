@@ -6,6 +6,7 @@ postgres-data
 bin
 dist
 artifacts
+website
 backups
 .github
 .codex
