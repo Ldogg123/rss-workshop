@@ -66,7 +66,7 @@ Article pages are web pages: they are requested as HTML and fetched as plain HTM
 
 ## Published output
 
-A feed source publishes RSS and Atom as any other feed does. The channel `link` in RSS and the `alternate` link in Atom are the address you entered, which here is the source feed rather than a web page. The [OPML export](atom.md#subscribe-to-every-feed-at-once) therefore leaves `htmlUrl` out for a feed source, so a reader's link to the feed's website does not open raw XML; its `xmlUrl` is your reader link, as for any feed. A source whose entries change on every request, such as a comment count or a tracking image with a random address, changes your feed on every refresh too.
+A feed source publishes RSS and Atom as any other feed does. The channel `link` in RSS and the `alternate` link in Atom are the address you entered, which here is the source feed rather than a web page, so a reader that takes a feed's website link from the feed itself opens the source feed. The [OPML export](atom.md#subscribe-to-every-feed-at-once) leaves `htmlUrl` out for a feed source rather than offer that address as its website; its `xmlUrl` is your reader link, as for any feed. A source whose entries change on every request, such as a comment count or a tracking image with a random address, changes your feed on every refresh too.
 
 ## Recipe files
 
