@@ -9,7 +9,7 @@ A site that already publishes an RSS or Atom feed needs no selectors. A **feed s
 3. Add story filters, full article content, content cleanup or date settings if you need them.
 4. Choose **Preview items**, then save.
 
-A saved feed keeps its source: **Edit** shows it locked. A feed and a web page identify stories differently, so switching would publish every saved story a second time. To try the other source, **Duplicate** the feed and choose it in the copy.
+A saved feed keeps its source: **Edit** shows it locked. A feed and a web page identify stories differently, so switching would publish every saved story a second time. To try the other source, **Duplicate** the feed and choose it in the copy. The server enforces this too: a save that would switch a saved feed's source, such as one a script sends, is answered with `400` and the same advice, and changes nothing.
 
 The [demo site](examples/) publishes its own `feed.xml`, and `demo-feed-recipe.json` reads it, filters out the sponsored story and fetches each article.
 
