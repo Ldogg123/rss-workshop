@@ -32,6 +32,17 @@ type SaveOptions struct {
 
 const historyFilterTimeout = 5 * time.Second
 
+// feedSource is the recipe type of a feed source (extract.FeedType); every
+// other type is a web page.
+const feedSource = "feed"
+
+// ErrSourceSwitch refuses an edit that would turn a saved web page feed into
+// a feed source or back. A page's stories are identified by their link and a
+// feed source's by their guid, so every story the source still lists would be
+// stored again under a new identity, and readers would receive it twice. The
+// editor locks the control; this covers saves that do not come from it.
+var ErrSourceSwitch = errors.New("a saved feed keeps its source: a web page and a feed identify stories differently, so switching would publish its stories a second time; use Duplicate to try the other source")
+
 // SaveWithOptions updates the recipe and optional historical pruning together.
 // Updating the feed row also holds PostgreSQL's refresh/version lock until the
 // transaction ends, so an old in-flight refresh cannot restore pruned items.
@@ -86,7 +97,9 @@ func (s *Store) SaveWithOptions(ctx context.Context, f model.Feed, options SaveO
 		// every later refresh and every edit. Clearing the stored bodies when the
 		// article selector changes makes the editor a repair path: the next
 		// refreshes refetch them with the new selector, or leave the list-page
-		// description in place if the operator turned the feature off.
+		// description in place if the operator turned the feature off. The same
+		// read of the stored recipe refuses a switch between a web page and a
+		// feed source, before anything is written.
 		cleared, err := s.articleBodiesChanged(ctx, tx, f)
 		if err != nil {
 			return "", err
@@ -182,6 +195,11 @@ const (
 // fetched again, and stored bodies have lost the class names the rules match,
 // so they cannot be cleaned again in place. Rules do not apply to a body read
 // from an attribute.
+//
+// This is the save's one read of the stored recipe, so it also refuses a
+// recipe that switches the feed between a web page and a feed source, with
+// ErrSourceSwitch. No save changes which of the two a feed is, so reading it
+// before the feed row is locked cannot miss a concurrent edit.
 func (s *Store) articleBodiesChanged(ctx context.Context, tx *sql.Tx, f model.Feed) (bodyClear, error) {
 	var raw string
 	if err := tx.QueryRowContext(ctx, s.bind("SELECT recipe FROM feeds WHERE id=?"), f.ID).Scan(&raw); err != nil {
@@ -195,6 +213,9 @@ func (s *Store) articleBodiesChanged(ctx context.Context, tx *sql.Tx, f model.Fe
 		// An unreadable stored recipe cannot be compared. Refetching is the safe
 		// direction: it costs requests, never content.
 		return clearAllBodies, nil
+	}
+	if (stored.Type == feedSource) != (f.Recipe.Type == feedSource) {
+		return keepBodies, invalid(ErrSourceSwitch)
 	}
 	was, now := stored.Full, f.Recipe.Full
 	switch {
