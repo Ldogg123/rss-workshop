@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -216,9 +217,45 @@ func openStore(c config.Config) (*store.Store, error) {
 	if err := os.MkdirAll(c.DataDir, 0700); err != nil {
 		return nil, err
 	}
+	if err := checkDataDir(c.DataDir); err != nil {
+		return nil, err
+	}
 	s, err := store.OpenWithOptions(filepath.Join(c.DataDir, "rss.db"), c.MaxItems, store.OpenOptions{SkipUpgradeBackup: !c.UpgradeBackup})
 	if errors.Is(err, store.ErrUpgradeBackup) {
 		return nil, fmt.Errorf("%w; fix the cause and start again, or stop the app, take your own backup, and set UPGRADE_BACKUP=false for one start", err)
 	}
 	return s, err
+}
+
+// checkDataDir refuses a data directory this process may not write to before
+// SQLite opens it. SQLite reports that as "unable to open database file (14)",
+// or "attempt to write a readonly database (1544)" when a database is already
+// there, and neither names the directory, the user or the fix. This is what a
+// first Docker start meets when the host directory still belongs to root.
+//
+// The probe is a temporary file, created and removed, because creating files
+// there is what SQLite needs for its journal; a refused directory is left as
+// it was found. Only a permission or read-only error is refused. Any other
+// failure, a full disk for one, is left for the database to report as before.
+func checkDataDir(directory string) error {
+	probe, err := os.CreateTemp(directory, ".write-check-*")
+	if err == nil {
+		probe.Close()
+		err = os.Remove(probe.Name())
+	}
+	readOnly := errors.Is(err, syscall.EROFS)
+	// The cause alone is reported: the full error adds the probe's random name.
+	var cause syscall.Errno
+	if !(readOnly || errors.Is(err, fs.ErrPermission)) || !errors.As(err, &cause) {
+		return nil
+	}
+	hint := "the directory must be writable by that user; with Docker Compose, run sudo chown 65532:65532 <your RSS_DATA_DIR> on the host"
+	if readOnly {
+		hint = "mount the directory read-write"
+	}
+	if absolute, e := filepath.Abs(directory); e == nil {
+		directory = absolute
+	}
+	return fmt.Errorf("cannot write to the data directory %s (DATA_DIR) as uid %d, gid %d: %w; %s, then start again; see docs/deployment.md",
+		directory, os.Geteuid(), os.Getegid(), cause, hint)
 }

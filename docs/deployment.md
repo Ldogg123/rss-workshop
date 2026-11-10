@@ -22,6 +22,14 @@ Use `sudo docker` if your account requires it. Compose defaults to project and s
 
 `RSS_DATA_DIR` selects the host directory mounted at `/data`, defaulting to `./data`. Set it in `.env` to change the location, then use that same path in the directory preparation commands. Relative paths resolve from the directory containing `compose.yaml`; an absolute path such as `/srv/rss-workshop/data` is useful when managing storage separately from the checkout. The directory must exist and be writable by UID/GID 65532 before startup. Compose refuses a missing directory instead of silently creating it as root. The container's `DATA_DIR=/data` remains fixed; `RSS_DATA_DIR` is a host-side Compose setting.
 
+If the app may not write to the directory, it stops at startup and says so before it opens the database:
+
+```text
+cannot write to the data directory /data (DATA_DIR) as uid 65532, gid 65532: permission denied; the directory must be writable by that user; with Docker Compose, run sudo chown 65532:65532 <your RSS_DATA_DIR> on the host, then start again; see docs/deployment.md
+```
+
+The path is the directory as the app sees it, which in a container is `/data`; run the `chown` command on the host directory `RSS_DATA_DIR` names and start again. A directory mounted read-only is reported the same way as a `read-only file system`, with advice to mount it read-write. The check creates one empty file and removes it, and a directory it refuses is left untouched. v1.3.0 and earlier reported this as `unable to open database file (14)`, or as `attempt to write a readonly database (1544)` when the directory already held a database. A [native executable](#run-a-prebuilt-executable) makes the same check and names the user that runs it.
+
 The directory commands assign numeric UID/GID 65532 without creating a host user or group. They avoid `install -o 65532 -g 65532`, which some implementations reject with an `invalid user` error when those IDs have no matching host account. Keep mode `700` on the app directory.
 
 Keep the same host directory on later runs. If upgrading from an existing SQLite named-volume deployment, follow [storage migration and recovery](operations.md#move-an-existing-sqlite-volume-to-a-host-directory) before recreating the app. Changing a mount to an empty directory starts a separate, empty SQLite library; it does not copy the old database. Keep the original data until migration is verified. PostgreSQL storage migration is covered in its [setup guide](postgresql.md#existing-postgresql-named-volumes).
@@ -97,6 +105,8 @@ This builds `Dockerfile` as `rss-workshop:local-static`. Both build overrides se
 ## Public URL and HTTPS
 
 The default binding is `127.0.0.1:8080:8080`, with `PUBLIC_BASE_URL=http://localhost:8080`. For remote access, put the app behind a TLS reverse proxy and set the exact public origin, such as `https://rss.example.net`. Path-prefix hosting is unsupported. Feed URLs and origin checks use this configured address; forwarded headers do not replace it.
+
+Signing in or saving from an address with another scheme or hostname is refused with `cross-origin request rejected; open the app at the address set in PUBLIC_BASE_URL`. Open the app at that address, or set `PUBLIC_BASE_URL` to the address you use and recreate the container. The message names the setting and never its value, so it does not tell someone who reached the server by IP address what its public hostname is.
 
 A host-installed Caddy proxy can use:
 
