@@ -38,7 +38,7 @@ Rules apply to each description in the order above before it is chosen, because 
 - A feed source has no Image selector, so the image in its description is the first one the rules leave: a rule can keep an avatar or a banner from becoming the story's image. Images the entry declares, such as `media:thumbnail`, come first as always and are not affected.
 - The title of an untitled entry is read before cleanup, so rules never change a story's title or [identity](#story-identity), and never leave an entry to be skipped for want of a title.
 
-[Story filters](filtering.md) read the cleaned description, and [full article content](atom.md#full-article-content) is cleaned with the same rules. **Preview items** shows the result a refresh stores.
+[Story filters](filtering.md) read the cleaned description at each refresh, and [full article content](atom.md#full-article-content) is cleaned with the same rules. Removing [already-saved stories](filtering.md#previously-saved-stories) that do not match judges each description as stored, which rules changed in the same edit have not cleaned. **Preview items** shows the result a refresh stores.
 
 ## Story identity
 
