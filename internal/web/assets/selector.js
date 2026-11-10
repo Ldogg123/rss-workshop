@@ -2,12 +2,12 @@
 (() => {
  const dialog=$('#visual-selector'), frameHost=$('#selector-frame-host'), state=$('#selector-status'), field=$('#selector-field'), choices=$('#selector-choices'), apply=$('#selector-apply'), matches=$('#selector-matches');
  const names={items:'Repeated items',title:'Title',link:'Link',content:'Description',image:'Image',date:'Date'}, fields=['title','link','content','image','date'];
- let frame=null, token='', snapshot=null, selected=null, pending=null, abort=null, revision=0, matchRevision=0, timer=null, ready=false, conversion=null, snapshotMode='static', snapshotFeedMode='static', modeChanged=false;
+ let frame=null, token='', snapshot=null, selected=null, pending=null, abort=null, revision=0, matchRevision=0, timer=null, ready=false, conversion=null, snapshotMode='static', snapshotFeedMode='static', modeChanged=false, omitted=false;
  function tell(data){frame?.contentWindow?.postMessage({...data,token},'*');} // Opaque destination; WindowProxy + nonce bind the recipient.
  function resetSelection(){selected=null;pending=null;choices.replaceChildren();apply.disabled=true;$('#selector-level-label').hidden=true;$('#selector-parent').disabled=true;$('#selector-selected').textContent='Click an element in the page preview.';}
  function matchStatus(text,error=false){matches.textContent=text;matches.classList.toggle('error',error);delete matches.dataset.count;delete matches.dataset.items;matches.dataset.error=String(error);}
  function cancelConversion(){if(conversion!==null)state.textContent='Edit a selector or click an element to continue.';conversion=null;$('#selector-convert').disabled=!ready;}
- function clear(){revision++;matchRevision++;clearTimeout(timer);abort?.abort();abort=null;frameHost.replaceChildren();frame=null;snapshot=null;token='';ready=false;cancelConversion();$('#selector-load').disabled=false;resetSelection();matchStatus('Load a page to highlight your selectors.');}
+ function clear(){revision++;matchRevision++;clearTimeout(timer);abort?.abort();abort=null;frameHost.replaceChildren();frame=null;snapshot=null;omitted=false;token='';ready=false;cancelConversion();$('#selector-load').disabled=false;resetSelection();matchStatus('Load a page to highlight your selectors.');}
  function updateLabels(){
   window.dispatchEvent(new Event('rss-selector-syntax-change'));
   const xpath=form.elements.type.value==='xpath';
@@ -54,7 +54,7 @@
    if(snapshotMode==='flaresolverr'&&!flaresolverrAvailable)throw new Error('FlareSolverr is not configured on this server. Choose another page version, or set FLARESOLVERR_URL as docs/flaresolverr.md describes.');
    const data=await api('/selector/snapshot','POST',{url:f.url,recipe:{mode:snapshotMode,wait_selector:f.recipe.wait_selector,settle_ms:f.recipe.settle_ms,user_agent:f.recipe.user_agent,accept_language:f.recipe.accept_language}},abort.signal);
    if(current!==revision||!dialog.open)return;
-   snapshot=data.nodes;$('#selector-source').textContent=data.url||f.url;token=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
+   snapshot=data.nodes;omitted=Number.isInteger(data.omitted)&&data.omitted>0;$('#selector-source').textContent=data.url||f.url;token=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
    fromForm();
    frame=document.createElement('iframe');frame.id='selector-frame';frame.title='Source page preview with live selector highlights';frame.setAttribute('sandbox','allow-scripts');frame.src='/selector/frame';frameHost.append(frame);
    state.textContent='Opening selection preview…';
@@ -93,7 +93,7 @@
   const d=e.data;
   if(d.type==='ready'&&snapshot){tell({type:'init',nodes:snapshot,theme:document.documentElement.dataset.theme});snapshot=null;return;}
   if(!token||d.token!==token)return;
-  if(d.type==='loaded'){ready=true;state.textContent='1. Click a headline or card, or edit a selector on the left. Focus a field to highlight it across the repeated items.';highlight(true);}
+  if(d.type==='loaded'){ready=true;state.textContent='1. Click a headline or card, or edit a selector on the left. Focus a field to highlight it across the repeated items.'+(omitted?' Part of this page is inside elements this preview cannot show. For that part, type selectors by hand and check them with Preview items.':'');highlight(true);}
   if(d.type==='matches'&&d.revision===matchRevision&&d.field===field.value){
    if(typeof d.error!=='string'||d.error.length>1000||![d.items,d.count,d.visible].every(n=>Number.isInteger(n)&&n>=0&&n<=12000))return;
    const detail=field.value==='items'?`${d.items} repeated item${d.items===1?'':'s'}`:`${names[field.value]}: ${d.count} of ${d.items} item${d.items===1?'':'s'} matched`;

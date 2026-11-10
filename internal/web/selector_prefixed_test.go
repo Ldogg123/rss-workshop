@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -265,5 +266,134 @@ func TestSelectorSnapshotOpensPageWithPrefixedElements(t *testing.T) {
 		if strings.Contains(w.Body.String(), forbidden) {
 			t.Errorf("%q reached the browser", forbidden)
 		}
+	}
+}
+
+// An unknown element the page never closes takes everything up to the end of
+// its parent as its children, so its placeholder hides stories that are on
+// the page. The preview cannot show them, but the snapshot must say so.
+const (
+	unclosedWidgetPage = `<body><div id="main"><fb:like href="https://example.com/liked" /><article><h2>Swallowed-one</h2></article><article><h2>Swallowed-two</h2></article></div></body>`
+	// What Word writes: empty or blank <o:p>, smart tags around a word, and
+	// an <o:p/> the paragraph's own end tag closes.
+	wordOnlyPage = `<body><h1>Parish news</h1>
+<p class="MsoNormal">Notes from <st1:place w:st="on"><st1:City w:st="on">Paris</st1:City></st1:place> this week<o:p></o:p></p>
+<o:p>&nbsp;</o:p>
+<p class="MsoNormal"><a href="/one">First story</a><o:p/></p>
+<p class="MsoNormal"><a href="/two">Second story</a><o:p></o:p></p>
+</body>`
+)
+
+func TestSelectorTreeCountsPlaceholdersThatHideElements(t *testing.T) {
+	for name, c := range map[string]struct {
+		source string
+		want   int
+	}{
+		"unclosed widget before the stories": {unclosedWidgetPage, 1},
+		"address typed as a tag":             {`<body><h1>News</h1>Contact <editor@example.com> for details.<article><h2>One</h2></article><article><h2>Two</h2></article></body>`, 1},
+		"unclosed o:p between paragraphs":    {`<div class="news"><p class="s">One</p><o:p /><p class="s">Two</p><p class="s">Three</p></div>`, 1},
+		"one for each such element":          {`<div><o:p /><p>One</p></div><div><o:p /><p>Two</p></div>`, 2},
+		"closed element around an element":   {prefixedPage, 1}, // the span inside fb:like
+		"inside a nested unknown element":    {`<p>From <st1:place><st1:City><b>Paris</b></st1:City></st1:place></p>`, 1},
+		"after a nested unknown element":     {`<p>From <st1:place><st1:City>Paris</st1:City><b>France</b></st1:place></p>`, 1},
+		"word markup":                        {wordOnlyPage, 0},
+		"text only":                          {`<p>Write to <editor@example.com> today</p><p>after</p>`, 0},
+		"only elements hidden anywhere":      {`<p>Story</p><g:plusone size="tall" /><script>plus()</script><svg><circle r="1"/></svg><form><p>Search</p></form>`, 0},
+		"empty":                              {`<p>One</p><o:p></o:p><p>Two</p>`, 0},
+		"no unknown element":                 {`<article><h2>Story</h2><form><p>Search</p></form></article>`, 0},
+	} {
+		nodes, omitted, err := selectorTreeOmitted([]byte(c.source))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if omitted != c.want {
+			t.Errorf("%s: omitted = %d, want %d", name, omitted, c.want)
+		}
+		// The count is beside the tree, never in it: the frame receives the
+		// nodes, and they are what selectorTree alone returns.
+		plain, err := selectorTree([]byte(c.source))
+		if err != nil || !reflect.DeepEqual(plain, nodes) {
+			t.Errorf("%s: counting changed the tree: %v", name, err)
+		}
+	}
+	// A placeholder is not entered, so the walk's 100 levels do not bound
+	// what is under it; the check reaches as deep as the parser allows.
+	deep := strings.Repeat("<o:p>", 500)
+	if _, omitted, err := selectorTreeOmitted([]byte(deep + "text")); err != nil || omitted != 0 {
+		t.Fatalf("deeply nested unknown elements: omitted = %d, %v", omitted, err)
+	}
+	if _, omitted, err := selectorTreeOmitted([]byte(deep + "<p>found</p>")); err != nil || omitted != 1 {
+		t.Fatalf("an element under deeply nested unknown elements: omitted = %d, %v", omitted, err)
+	}
+}
+
+// The snapshot reply says how many placeholders hide elements, as a number
+// and nothing else, and says nothing at all for a page without any, so the
+// reply for every other page is what it was.
+func TestSelectorSnapshotReportsOmittedContent(t *testing.T) {
+	authn, err := auth.New("selector-test-password", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &fixtureFetcher{body: []byte(`<article><h2>Story</h2></article>`), pages: map[string][]byte{
+		"https://example.com/unclosed": []byte(unclosedWidgetPage),
+		"https://example.com/word":     []byte(wordOnlyPage),
+	}}
+	app := &App{Auth: authn, BaseURL: "http://localhost:8080", Scheduler: scheduler.New(nil, fetcher, 1, time.Second)}
+	session, err := authn.Login("selector-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := httptest.NewRecorder()
+	authn.Cookie(cookie, session)
+	snapshot := func(address string) (map[string]json.RawMessage, string) {
+		t.Helper()
+		r := httptest.NewRequest("POST", "/api/selector/snapshot", strings.NewReader(`{"url":"`+address+`","recipe":{"mode":"static"}}`))
+		r.Header.Set("Origin", app.BaseURL)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-CSRF-Token", session.CSRF)
+		r.AddCookie(cookie.Result().Cookies()[0])
+		w := httptest.NewRecorder()
+		app.Handler().ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("%s: snapshot = %d %s", address, w.Code, w.Body.String())
+		}
+		var reply map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+			t.Fatal(err)
+		}
+		return reply, w.Body.String()
+	}
+	keys := func(reply map[string]json.RawMessage) string {
+		var names []string
+		for k := range reply {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		return strings.Join(names, " ")
+	}
+
+	reply, body := snapshot("https://example.com/unclosed")
+	if keys(reply) != "nodes omitted url" || string(reply["omitted"]) != "1" {
+		t.Fatalf("unclosed element: keys %q, omitted %s", keys(reply), reply["omitted"])
+	}
+	for _, forbidden := range []string{"fb:like", "liked", "Swallowed", "article", "h2"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("%q reached the browser", forbidden)
+		}
+	}
+	for _, address := range []string{"https://example.com/word", "https://example.com/plain"} {
+		if reply, _ := snapshot(address); keys(reply) != "nodes url" {
+			t.Errorf("%s: keys %q, want only nodes and url", address, keys(reply))
+		}
+	}
+	// A page without unknown elements gets the bytes it always got.
+	nodes, err := selectorTree(fetcher.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal(map[string]any{"nodes": nodes, "url": "https://example.com/plain"})
+	if _, body := snapshot("https://example.com/plain"); body != string(want) {
+		t.Fatalf("reply for a page without unknown elements changed: %s", body)
 	}
 }

@@ -21,7 +21,8 @@ import (
 // visual selector, shows nothing of those elements, and still counts them as
 // siblings: the positional CSS and XPath the picker suggests for a story after
 // them, and hand-written :nth-child, find that story in the frame and again
-// when Preview items runs the Go extractor on the real page.
+// when Preview items runs the Go extractor on the real page. Stories that an
+// unclosed element of that kind holds cannot be shown, and the status says so.
 func TestBrowserUIPrefixedElements(t *testing.T) {
 	if os.Getenv("RSS_BROWSER_TEST") != "1" {
 		t.Skip("run in the browser-tests Docker target")
@@ -37,7 +38,10 @@ func TestBrowserUIPrefixedElements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs := scheduler.New(s, &fixtureFetcher{body: []byte(prefixedPage)}, 2, time.Second)
+	jobs := scheduler.New(s, &fixtureFetcher{body: []byte(prefixedPage), pages: map[string][]byte{
+		"https://example.com/unclosed": []byte(unclosedWidgetPage),
+		"https://example.com/word":     []byte(wordOnlyPage),
+	}}, 2, time.Second)
 	jobs.Start(ctx)
 	defer func() { cancel(); jobs.Wait() }()
 	app := &App{Store: s, Scheduler: jobs, Auth: a}
@@ -193,6 +197,33 @@ func TestBrowserUIPrefixedElements(t *testing.T) {
 	extracted(xpath)
 	must(chromedp.Evaluate(`(()=>{const set=(name,value)=>{const el=form.elements[name];el.value=value;el.dispatchEvent(new Event(el.localName==='select'?'change':'input',{bubbles:true}))};set('type','css');set('items',`+quote(css)+`);set('title_selector','a');set('link_selector','a');set('link_attr','');document.querySelector('#preview').replaceChildren()})()`, nil))
 	extracted(css)
+
+	// An unclosed <fb:like/> holds every story of its page, so the preview
+	// is empty. The status says why; it says nothing of the kind for plain
+	// Word markup, and a note does not outlive the page that raised it.
+	const note = "Part of this page is inside elements this preview cannot show."
+	opened := func(address string) string {
+		t.Helper()
+		var status string
+		err := chromedp.Run(tab, chromedp.Evaluate(`(()=>{const el=form.elements.url;el.value=`+quote(address)+`;el.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#selector-status').textContent=''})()`, nil),
+			chromedp.Click("#visual-button"),
+			chromedp.Poll(`!['','Loading page…','Opening selection preview…'].includes(document.querySelector('#selector-status').textContent)`, nil))
+		chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#selector-status').textContent`, &status))
+		if err != nil || !strings.HasPrefix(status, "1.") {
+			t.Fatalf("%s did not open in the visual selector: %q %v", address, status, err)
+		}
+		// Closing clears the dialog from its close event, which the browser
+		// delivers later. Opening it again before that would have the event
+		// cancel the new load, so wait until the frame is gone.
+		must(chromedp.Click("#selector-close"), chromedp.WaitNotVisible("#visual-selector"), chromedp.Poll(`!document.querySelector('#selector-frame')`, nil))
+		return status
+	}
+	if status := opened("https://example.com/unclosed"); !strings.Contains(status, note) {
+		t.Fatalf("a page whose stories are inside an unclosed element opened without a note: %s", status)
+	}
+	if status := opened("https://example.com/word"); strings.Contains(status, "cannot show") {
+		t.Fatalf("plain Word markup raised the note: %s", status)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
