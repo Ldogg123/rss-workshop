@@ -159,10 +159,16 @@ func TestChromiumReportsDocumentStatusOverHTTPS(t *testing.T) {
 	}
 	l, e := net.Listen("tcp", "127.0.0.1:443")
 	if e != nil {
-		t.Fatal(e)
+		t.Fatalf("the HTTPS fixture needs port 443, the only one the proxy lets Chromium reach over TLS: %v", e)
 	}
 	pages, _ := statusPages()
-	srv := httptest.NewUnstartedServer(pages)
+	var proto atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			proto.Store(int32(r.ProtoMajor))
+		}
+		pages.ServeHTTP(w, r)
+	}))
 	srv.Listener.Close()
 	srv.Listener = l
 	srv.EnableHTTP2 = true
@@ -184,5 +190,8 @@ func TestChromiumReportsDocumentStatusOverHTTPS(t *testing.T) {
 	requireStatus(t, r, e, "No such page", 404)
 	if !strings.HasPrefix(r.URL, "https://") {
 		t.Fatalf("rendered %q, want the HTTPS page", r.URL)
+	}
+	if got := proto.Load(); got != 2 {
+		t.Errorf("the page was requested over HTTP/%d, want HTTP/2 as HTTPS sources serve", got)
 	}
 }
