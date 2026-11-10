@@ -75,6 +75,11 @@ type Scheduler struct {
 	// left stories without an article body that the next one should fetch.
 	// See draining.
 	backlog map[string]bool
+	// articles remembers, per full-content feed, the listed stories whose
+	// article this process tried without getting a body, so that articles
+	// that always fail cannot take every refresh's article budget. See
+	// rememberArticles.
+	articles map[string]*articleMemory
 	// finished records when each refresh ended, until the next tick. A list
 	// read before then can still show the feed due, because its new schedule
 	// was saved after the read, and would start it again straight away.
@@ -267,7 +272,8 @@ func (s *Scheduler) Held(id string) bool {
 // request. That write proves less than a stored result would, because a disk
 // can refuse new stories while still accepting a small update, so the failure
 // count stays: a write that fails again holds the feed twice as long as the
-// last one rather than starting over at two minutes.
+// last one rather than starting over at two minutes. It lifts the backoffs of
+// the feed's failed articles on the same terms (see retryArticles).
 func (s *Scheduler) Retry(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -275,6 +281,7 @@ func (s *Scheduler) Retry(id string) {
 		h.until = time.Time{}
 		s.held[id] = h
 	}
+	s.retryArticles(id)
 }
 
 // released clears the backoff once a result is stored again.
@@ -431,6 +438,7 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 	}
 	s.forgetHolds(fs)
 	s.forgetBacklog(fs)
+	s.forgetArticles(fs)
 	s.alerts.forget(fs)
 	s.forgetFinished(listed)
 	for _, f := range fs {
@@ -574,6 +582,9 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	}
 	s.released(f.ID)
 	if e == nil {
+		if r.Status != 304 {
+			s.rememberArticles(f, articles)
+		}
 		s.recordBacklog(saveCtx, f, articles)
 	}
 	s.alertRefresh(f, e)
