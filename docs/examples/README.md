@@ -13,6 +13,21 @@ whose terms you are agreeing to while you learn the tool.
 | [demo-feed-recipe.json](demo-feed-recipe.json) | A [feed source](../feed-sources.md): the site's own RSS feed, with the same filter and full article content, and no selectors |
 | [all-demo-recipes.json](all-demo-recipes.json) | All four, to import in one step |
 
+## Try it without serving anything
+
+The documentation site publishes this demo site at
+[ldogg123.github.io/rss-workshop/examples/demo-site/](https://ldogg123.github.io/rss-workshop/examples/demo-site/index.html),
+a public address that RSS Workshop fetches without an `ALLOW_CIDRS` exception.
+Enter it as the page of a **New feed** to try the
+[visual selector](../visual-selector.md) on it, or save and import
+[all-demo-recipes.json for the published demo](https://ldogg123.github.io/rss-workshop/examples/hosted/all-demo-recipes.json):
+the four recipes above with that address in place of `http://127.0.0.1:8000/`,
+written when the site is built. The published demo follows the `main` branch.
+
+The recipes in this folder keep the local address on purpose. They work
+offline, the tests import them and extract from the demo site beside them, and
+a feed built from them does not depend on the published copy.
+
 ## Run the demo
 
 Serve the demo site, then start RSS Workshop with loopback fetching allowed:

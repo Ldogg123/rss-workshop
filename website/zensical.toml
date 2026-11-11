@@ -1,0 +1,122 @@
+# The documentation site, https://ldogg123.github.io/rss-workshop/.
+#
+# Build it with "make docs" and preview it with "make docs-serve"; see
+# CONTRIBUTING.md. Zensical does not read the guides in place:
+# scripts/docs-site.py first copies them into build/src, the docs_dir below,
+# so nav paths are site paths. docs/NAME.md is NAME.md, the root documents are
+# changelog.md, contributing.md and security.md, and pages/ holds what is
+# written for the site alone.
+
+[project]
+site_name = "RSS Workshop"
+site_description = "Self-hosted RSS and Atom feeds for websites that do not provide them."
+site_url = "https://ldogg123.github.io/rss-workshop/"
+repo_url = "https://github.com/Ldogg123/rss-workshop"
+repo_name = "Ldogg123/rss-workshop"
+copyright = "RSS Workshop is MIT licensed."
+docs_dir = "build/src"
+site_dir = "build/site"
+extra_css = ["stylesheets/extra.css"]
+
+# Grouped by what a reader has come to do. Every page must be listed: the
+# build fails for a guide that is staged but missing here.
+nav = [
+  { "Home" = "index.md" },
+  { "Get started" = [
+    { "Install and build a first feed" = "get-started.md" },
+    { "Example recipes and demo site" = "examples/README.md" },
+  ] },
+  { "Build feeds" = [
+    { "Visual selection" = "visual-selector.md" },
+    { "RSS and Atom feed sources" = "feed-sources.md" },
+    { "Story filters" = "filtering.md" },
+    { "Publication dates" = "dates.md" },
+    { "Output, full articles and cleanup" = "atom.md" },
+    { "Recipe export and import" = "recipe-portability.md" },
+  ] },
+  { "Fetching" = [
+    { "Chromium rendering" = "browser.md" },
+    { "FlareSolverr" = "flaresolverr.md" },
+  ] },
+  { "Run it" = [
+    { "Deployment and configuration" = "deployment.md" },
+    { "Reverse proxy" = "reverse-proxy.md" },
+    { "Monitoring, backups and upgrades" = "operations.md" },
+    { "PostgreSQL" = "postgresql.md" },
+    { "Gluetun VPN" = "gluetun.md" },
+  ] },
+  { "Project" = [
+    { "Changelog" = "changelog.md" },
+    { "Security" = "security.md" },
+    { "Contributing" = "contributing.md" },
+    { "Builds and releases" = "releases.md" },
+    { "Licensing" = "licensing.md" },
+    { "Dependency notices" = "dependencies.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+custom_dir = "overrides"
+# System fonts: nothing is fetched from Google Fonts when a page is viewed.
+font = false
+favicon = "assets/favicon.svg"
+features = [
+  "announce.dismiss",
+  "content.action.edit",
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "search.highlight",
+  "toc.follow",
+]
+
+[project.theme.icon]
+logo = "lucide/rss"
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+# The guides are GitHub-flavoured Markdown, so only extensions that read it the
+# way GitHub does are on, plus what pages/ needs for the landing page. Leave
+# out extensions that give plain text a meaning GitHub does not, such as
+# smartsymbols, caret, mark and keys.
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+footnotes = {}
+md_in_html = {}
+sane_lists = {}
+tables = {}
+toc.permalink = true
+# Staging gives every heading GitHub's anchor; this covers anything it missed.
+toc.slugify.object = "pymdownx.slugs.slugify"
+toc.slugify.kwds.case = "lower"
+pymdownx.betterem = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.magiclink = {}
+# GitHub alerts ("> [!NOTE]") become admonitions.
+pymdownx.quotes.callouts = true
+pymdownx.superfences = {}
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde.subscript = false

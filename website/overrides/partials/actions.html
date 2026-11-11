@@ -1,0 +1,11 @@
+{#-
+  The edit button. The theme builds its address from the page's path in
+  docs_dir, but pages are staged from several places in the repository, so
+  scripts/docs-site.py records each page's real path as source_path.
+-#}
+{% if "content.action.edit" in features and page.meta and page.meta.source_path %}
+  <a href="{{ config.repo_url }}/edit/main/{{ page.meta.source_path }}" title="{{ lang.t('action.edit') }}" class="md-content__button md-icon" rel="edit">
+    {% set icon = config.theme.icon.edit or "material/file-edit-outline" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </a>
+{% endif %}

@@ -1,0 +1,64 @@
+/* Site-only styling: the application's blue, and the landing page. */
+
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1955d1;
+  --md-primary-fg-color--light: #3f74e0;
+  --md-primary-fg-color--dark: #194aad;
+  --md-accent-fg-color: #1955d1;
+  --md-accent-fg-color--transparent: #1955d11a;
+  --md-typeset-a-color: #1955d1;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #356dcc;
+  --md-accent-fg-color: #91b8ff;
+  --md-accent-fg-color--transparent: #91b8ff1a;
+  --md-typeset-a-color: #91b8ff;
+}
+
+/* Names in a table's first column, such as environment variables, stay in one
+   piece; a table too wide for a phone scrolls sideways instead. */
+.md-typeset table:not([class]) td:first-child code {
+  white-space: nowrap;
+}
+
+.rw-hero {
+  margin: 1.2rem 0 1.6rem;
+  max-width: 34rem;
+}
+
+.md-typeset .rw-hero h1 {
+  margin-bottom: 0.4rem;
+  font-size: clamp(1.9rem, 6vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.md-typeset .rw-lead {
+  margin-top: 0;
+  font-size: 1.15rem;
+  line-height: 1.4;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset .rw-hero .md-button {
+  margin: 0.4rem 0.4rem 0 0;
+}
+
+.md-typeset img.rw-shot {
+  display: block;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.6rem 1.8rem #0000002e;
+}
+
+.md-typeset .rw-gallery figure {
+  margin: 0;
+}
+
+.md-typeset .rw-gallery figcaption {
+  max-width: none;
+  margin: 0.6rem 0 0;
+  font-style: normal;
+}

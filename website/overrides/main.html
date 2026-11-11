@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{#- The one place that says which version the site describes. -#}
+{% block announce %}
+  These pages describe the <code>main</code> branch, which can be ahead of the
+  latest release. The <a href="{{ 'changelog/' | url }}">changelog</a> lists
+  what each release contains.
+{% endblock %}
