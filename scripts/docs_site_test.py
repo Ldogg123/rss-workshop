@@ -133,6 +133,16 @@ class AnchorTest(unittest.TestCase):
     def test_repeated_headings_are_numbered_with_hyphens(self):
         self.assertEqual(self.anchors('## New\n## Fixes\n## New\n## New\n## New-1'), ['new', 'fixes', 'new-1', 'new-2', 'new-1-1'])
 
+    def test_code_is_fenced_or_indented(self):
+        lines = ('para\n    still the paragraph\n\n    code\n\n    more code\ntext\n\n- item\n\n    item text\n\n      item code\n'
+                 '  ```\n\n  fenced\n  ```\n1. one\n\n    one text\n\n       one code').split('\n')
+        self.assertEqual([lines[index] for index in sorted(docs_site.code_lines(lines))],
+                         ['    code', '    more code', '      item code', '  ```', '', '  fenced', '  ```', '       one code'])
+
+    def test_table_rows_are_found(self):
+        lines = 'a | b\n\n| a | b |\n|---|:-:|\n| 1 | 2 |\n\ntext\n---\n\n```\n| a |\n| - |\n```\nc | d\n- | -\ne | f'.split('\n')
+        self.assertEqual(sorted(docs_site.table_lines(lines, docs_site.code_lines(lines))), [2, 3, 4, 13, 14, 15])
+
     def test_code_blocks_and_front_matter_hold_no_headings(self):
         text = '---\ntitle: x\n# not this\n---\n# Real\n```sh\n# Edit .env first\n```\n~~~\n## nor this\n~~~\n## After { #chosen }'
         self.assertEqual(self.anchors(text), ['real', 'chosen'])
@@ -156,7 +166,27 @@ class IndentTest(unittest.TestCase):
         self.assertIndent(text, text)
 
     def test_a_list_may_interrupt_a_paragraph(self):
-        self.assertIndent('Intro:\n- one\n- two\nText\n2. not a list', 'Intro:\n\n- one\n- two\nText\n2. not a list')
+        self.assertIndent('Intro:\n- one\n- two\nText', 'Intro:\n\n- one\n- two\nText')
+        self.assertIndent('Intro:\n1. one\n   - nested\n2. two', 'Intro:\n\n1. one\n    - nested\n2. two')
+
+    def test_a_list_of_the_other_kind_starts_a_new_list(self):
+        # GitHub ends the bulleted list here and starts a numbered one at 2.
+        self.assertIndent('- one\n- two\nText\n2. numbered\n- bulleted', '- one\n- two\nText\n\n2. numbered\n\n- bulleted')
+        self.assertIndent('- one\n  - nested\n  2. numbered', '- one\n    - nested\n\n    2. numbered')
+
+    def test_a_wrapped_line_that_begins_with_a_number_stays_text(self):
+        self.assertIndent('- Keeps at most\n  50. Then it continues\n  and ends here.\n- two',
+                          '- Keeps at most\n    50\\. Then it continues\n    and ends here.\n- two')
+        self.assertIndent('1. first\n   7. still the first item\n2. second', '1. first\n    7\\. still the first item\n2. second')
+        self.assertIndent('Released in\n2026. More text', 'Released in\n2026\\. More text')
+        # A list that starts at 1 may interrupt a paragraph, and a blank line lets any number start one.
+        self.assertIndent('- one\n  1. nested\n\n  7. seventh', '- one\n    1. nested\n\n    7. seventh')
+
+    def test_indented_code_is_not_read_as_a_list(self):
+        text = 'para\n\n    - not a list\n      - nor this\n    3. nor this\n\ntext'
+        self.assertIndent(text, text)
+        self.assertIndent('- one\n\n      - code\n        more\n\n  text\n- two',
+                          '- one\n\n        - code\n          more\n\n    text\n- two')
 
 
 class StageTest(unittest.TestCase):
@@ -213,6 +243,33 @@ class StageTest(unittest.TestCase):
                       f'[versions]({REPO}/blob/main/README.md#versioning)', start)
         self.assertNotIn('Stable.', start)
         self.assertNotIn('Intro with', start)
+
+    def test_a_footnote_is_not_a_link_reference(self):
+        self.fixture.write('docs/other.md', OTHER + '\nA note[^1] and a [reference][ref].\n\n'
+                           '[^1]: The note, with [a guide](guide.md) and [a file](../compose.yaml).\n\n[ref]: guide.md\n')
+        site, _, staged = self.fixture.prepare()
+        self.assertEqual(site.problems, [])
+        self.assertIn(f'\n[^1]: The note, with [a guide](guide.md) and [a file]({REPO}/blob/main/compose.yaml).\n\n[ref]: guide.md\n',
+                      staged['other.md'])
+        self.fixture.edit('docs/other.md', '[ref]: guide.md', '[ref]: gone.md')
+        self.assertProblems('docs/other.md:14: link gone.md points to docs/gone.md')
+
+    def test_indented_code_keeps_its_text(self):
+        self.fixture.write('docs/other.md', '# Other\n\n## New\n\n## New\n\nRun:\n\n    cat [not a link](missing.md)\n    <details>\n\n'
+                           '- Step\n\n      see [nor this](missing.md)\n\n  but [this is](guide.md)\n')
+        site, _, staged = self.fixture.prepare()
+        self.assertEqual(site.problems, [])
+        self.assertIn('Run:\n\n    cat [not a link](missing.md)\n    <details>\n\n'
+                      '- Step\n\n        see [nor this](missing.md)\n\n    but [this is](guide.md)\n', staged['other.md'])
+
+    def test_an_escaped_pipe_in_a_table_cell_s_code_is_a_pipe(self):
+        # GitHub shows `a | b` for this cell; Python-Markdown would keep the backslash.
+        self.fixture.write('docs/other.md', '# Other\n\n## New\n\n## New\n\n| Selector | Meaning |\n| --- | --- |\n'
+                           '| `//a \\| //b` | either \\| both, see [other](guide.md) and `x \\| y` |\n\n'
+                           'Outside a table `a \\| b` keeps its backslash.\n\n```\n| `a \\| b` |\n| --- |\n```\n')
+        _, _, staged = self.fixture.prepare()
+        self.assertIn('\n| `//a | //b` | either \\| both, see [other](guide.md) and `x | y` |\n\n'
+                      'Outside a table `a \\| b` keeps its backslash.\n\n```\n| `a \\| b` |\n| --- |\n```\n', staged['other.md'])
 
     def test_the_site_offers_the_recipes_with_its_own_address(self):
         _, _, staged = self.fixture.prepare()
@@ -352,12 +409,15 @@ class VerifyTest(unittest.TestCase):
 
     def test_markdown_left_as_text_fails(self):
         self.page('changelog/', '<h1 id="changelog">Changelog</h1><h2 id="v100--2026-01-01">v1.0.0 { #v100--2026-01-01 }</h2>'
-                                '<p>Intro:\n- one\n- two</p><p>A [link](guide.md) and <code>**kept**</code></p>')
+                                '<p>Intro:\n- one\n- two</p><p>A [link](guide.md) and <code>**kept**</code></p>'
+                                '<p>Steps:\n1. one\n2. two</p><p>3. three</p><ul><li>Keeps at most\n    50. Then it goes on</li></ul>')
         problems, _ = self.verify()
         self.assertEqual(problems, [
             "changelog/index.html: shows Markdown as text (a heading anchor): 'v1.0.0 { #v100--2026-01-01 }'",
             "changelog/index.html: shows Markdown as text (a list item): 'Intro: - one - two'",
-            "changelog/index.html: shows Markdown as text (a link): 'A [link](guide.md) and'"])
+            "changelog/index.html: shows Markdown as text (a link): 'A [link](guide.md) and'",
+            "changelog/index.html: shows Markdown as text (a list item): 'Steps: 1. one 2. two'",
+            "changelog/index.html: shows Markdown as text (a list item): '3. three'"])
 
     def test_missing_pages_and_changed_files_fail(self):
         (self.site / 'changelog/index.html').unlink()

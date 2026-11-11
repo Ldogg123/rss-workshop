@@ -65,7 +65,9 @@ LIST_ITEM = re.compile(r'^( *)([-*+]|\d{1,9}[.)])( +)(?=\S)')
 INCLUDE = re.compile(r'^<!-- include ([^\s#]+)#([^\s#]+) -->$')
 CODE_SPAN = re.compile(r'(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)')
 INLINE_LINK = re.compile(r'\]\(\s*(<[^<>]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(\s+(?:"[^"]*"|\'[^\']*\'))?\s*\)')
-REFERENCE = re.compile(r'^ {0,3}\[[^\]]+\]:\s*(<[^<>]*>|\S+)')
+# A reference definition. "[^1]:" is a footnote, whose text is not an address.
+REFERENCE = re.compile(r'^ {0,3}\[(?!\^)[^\]]+\]:\s*(<[^<>]*>|\S+)')
+TABLE_RULE = re.compile(r'^ *\|?(?: *:?-+:? *\|)+(?: *:?-+:? *)?$')
 HTML_ATTRIBUTE = re.compile(r'<[a-zA-Z][^<>]*?\s(?:href|src)="([^"]*)"')
 AUTOLINK = re.compile(r'<([a-zA-Z][a-zA-Z0-9+.-]*://[^<>\s]+)>')
 SCHEME = re.compile(r'[a-zA-Z][a-zA-Z0-9+.-]*:')
@@ -105,20 +107,92 @@ class Heading:
     explicit: bool
 
 
+class Nesting:
+    """Follow Markdown line by line the way GitHub nests it.
+
+    read() says what a line is: 'blank', 'fence' (a fence that opens a block),
+    'fenced' (a line inside one, its closing fence included), 'code' (indented
+    code), 'lazy' (a paragraph going on to the left of its list item), 'item',
+    'number' (paragraph text that only looks like a numbered item) or 'text'.
+    """
+
+    def __init__(self):
+        self.items, self.kinds = [], []     # each open list item's content column, and 'ol' or 'ul'
+        self.fence = None                   # the fence that opened the block being read
+        self.blank = True                   # the line before was blank
+        self.paragraph = False              # the line before left a paragraph open
+        self.quote_or_table = False         # the line before began with > or |
+        # About the line just read: how many items hold it and the innermost
+        # one's content column, and whether it starts a list of another kind.
+        self.depth, self.column, self.switched = 0, 0, False
+
+    def read(self, line):
+        """Return (kind, the list marker's match for 'item' and 'number')."""
+        if not line.strip():
+            self.blank, self.paragraph = True, False
+            return 'blank', None
+        blank, paragraph, plain = self.blank, self.paragraph, not self.quote_or_table
+        text = line.lstrip(' ')
+        indent = len(line) - len(text)
+        self.blank, self.paragraph, self.switched = False, False, False
+        self.quote_or_table = text.startswith(('>', '|'))
+        fence = FENCE.match(line)
+        if self.fence is not None:
+            if fence and fence.group(2)[0] == self.fence[0] and len(fence.group(2)) >= len(self.fence) \
+                    and not fence.group(3).strip():
+                self.fence = None
+            return 'fenced', None
+        item = LIST_ITEM.match(line)
+        kind = None if not item else 'ol' if item.group(2)[:-1].isdigit() else 'ul'
+        inside = not self.items or indent >= self.items[-1]
+        if paragraph and not inside and not item and not fence and not text.startswith('#'):
+            self.paragraph = True
+            return 'lazy', None
+        left = None
+        while self.items and indent < self.items[-1]:
+            self.items.pop()
+            left = self.kinds.pop()
+        self.depth, self.column = len(self.items), self.items[-1] if self.items else 0
+        if not paragraph and indent - self.column >= 4:
+            return 'code', None
+        if fence:
+            self.fence = fence.group(2)
+            return 'fence', None
+        self.paragraph = not text.startswith('#')
+        if paragraph and plain and inside and kind == 'ol' and int(item.group(2)[:-1]) != 1:
+            # Only a list that starts at 1 may interrupt a paragraph, so a
+            # wrapped line that begins "50. " is still the paragraph's text.
+            return 'number', item
+        if item:
+            # GitHub ends a list where an item of the other kind begins.
+            self.switched = not blank and left is not None and left != kind
+            spaces = len(item.group(3)) if len(item.group(3)) <= 4 else 1
+            self.items.append(indent + len(item.group(2)) + spaces)
+            self.kinds.append(kind)
+        return ('item', item) if item else ('text', None)
+
+
 def code_lines(lines):
-    """Return the indexes of the lines inside fenced code blocks, fences included."""
-    inside, fence = set(), None
+    """Return the indexes of the lines inside code blocks: fenced, fences included, or indented."""
+    inside, nesting = set(), Nesting()
     for index, line in enumerate(lines):
-        match = FENCE.match(line)
-        if fence is None:
-            if match:
-                fence = match.group(2)
-                inside.add(index)
-        else:
+        kind, _ = nesting.read(line)
+        if kind in ('fence', 'fenced', 'code') or kind == 'blank' and nesting.fence is not None:
             inside.add(index)
-            if match and match.group(2)[0] == fence[0] and len(match.group(2)) >= len(fence) and not match.group(3).strip():
-                fence = None
     return inside
+
+
+def table_lines(lines, code):
+    """Return the indexes of the lines that are rows of a table."""
+    rows, index = set(), 1
+    while index < len(lines):
+        if index not in code and index - 1 not in code and TABLE_RULE.match(lines[index]) and '|' in lines[index - 1]:
+            rows.add(index - 1)
+            while index < len(lines) and lines[index].strip() and index not in code:
+                rows.add(index)
+                index += 1
+        index += 1
+    return rows
 
 
 def body_start(lines):
@@ -161,45 +235,35 @@ def reindent(lines):
 
     GitHub nests a list or continues an item at the column where the item's
     text starts, two or three columns in. Python-Markdown wants four spaces for
-    each level and otherwise flattens the list or ends it.
+    each level and otherwise flattens the list or ends it. It also needs a
+    blank line where GitHub lets a list begin without one, and would start a
+    list at a wrapped line that begins with a number.
     """
-    out, items, fence, previous_blank = [], [], None, True
+    out, nesting, moved = [], Nesting(), 0
     for line in lines:
-        if not line.strip():
+        in_list, previous_blank = bool(nesting.items), nesting.blank
+        kind, item = nesting.read(line)
+        if kind in ('blank', 'lazy'):
             out.append(line)
-            previous_blank = True
             continue
         indent = len(line) - len(line.lstrip(' '))
-        if fence is not None:
+        if kind == 'fenced':
             # A fenced block moves as a whole with the line that opened it.
-            out.append(' ' * max(0, indent + fence[1]) + line.lstrip(' '))
-            match = FENCE.match(line)
-            if match and match.group(2)[0] == fence[0][0] and len(match.group(2)) >= len(fence[0]) and not match.group(3).strip():
-                fence = None
-            previous_blank = False
+            out.append(' ' * max(0, indent + moved) + line.lstrip(' '))
             continue
-        item = LIST_ITEM.match(line)
-        if items and indent < items[-1] and not item and not previous_blank:
-            # A lazy continuation: the paragraph above goes on, less indented.
-            out.append(line)
-            continue
-        in_list = bool(items)
-        while items and indent < items[-1]:
-            items.pop()
-        shifted = 4 * len(items) + indent - items[-1] if items else indent
-        if item and not previous_blank and not in_list and out and not out[-1].lstrip().startswith(('#', '>', '|')) \
-                and item.group(2) in ('-', '*', '+', '1.', '1)'):
-            # GitHub lets a list interrupt a paragraph; Python-Markdown needs
-            # the blank line.
+        shifted = 4 * nesting.depth + indent - nesting.column if nesting.depth else indent
+        if kind == 'number':
+            period = item.end(2) - 1
+            line = line[:period] + '\\' + line[period:]
+        elif kind == 'item' and (nesting.switched or not previous_blank and not in_list and out
+                                 and not out[-1].lstrip().startswith(('#', '>', '|'))
+                                 and item.group(2) in ('-', '*', '+', '1.', '1)')):
+            # GitHub lets a list interrupt a paragraph, or follow a list of
+            # the other kind; Python-Markdown needs the blank line.
             out.append('')
+        elif kind == 'fence':
+            moved = shifted - indent
         out.append(' ' * shifted + line.lstrip(' '))
-        match = FENCE.match(line)
-        if match:
-            fence = (match.group(2), shifted - indent)
-        if item:
-            spaces = len(item.group(3)) if len(item.group(3)) <= 4 else 1
-            items.append(indent + len(item.group(2)) + spaces)
-        previous_blank = False
     return out
 
 
@@ -436,6 +500,16 @@ def rewrite_links(site, origin, number, line, page):
     return line
 
 
+def unescape_pipes(line):
+    """Return a table row with "\\|" in its code spans written "|".
+
+    GitHub reads an escaped pipe in a table cell as a pipe even inside code.
+    Python-Markdown does not split a cell at a pipe in code, and would show
+    the backslash.
+    """
+    return CODE_SPAN.sub(lambda match: match.group(0).replace('\\|', '|'), line)
+
+
 # --- Staging ------------------------------------------------------------------
 
 def render(site, origin, page):
@@ -443,10 +517,13 @@ def render(site, origin, page):
     lines, found = site.lines(origin)
     anchors = {heading.line: heading for heading in found}
     code = code_lines(lines)
+    tables = table_lines(lines, code)
     rendered = []
     for index, line in enumerate(lines):
         if index not in code and index >= body_start(lines):
             line = rewrite_links(site, origin, index + 1, line, page)
+            if index in tables:
+                line = unescape_pipes(line)
             heading = anchors.get(index + 1)
             if heading and not heading.explicit:
                 line = f'{line.rstrip()} {{ #{heading.anchor} }}'
@@ -608,7 +685,9 @@ def summary(site):
 # --- The built site -----------------------------------------------------------
 
 LEAKS = (
-    (re.compile(r'(^|\n)\s*([-*+]|\d+[.)]) \S'), 'a list item'),
+    # A wrapped line may begin with a number other than 1 and still be text;
+    # see Nesting.
+    (re.compile(r'(^|\n)\s*([-*+]|1[.)]) \S|^\s*\d+[.)] \S'), 'a list item'),
     (re.compile(r'```|~~~'), 'a code fence'),
     (re.compile(r'\]\([^)\s]+\)'), 'a link'),
     (re.compile(r'\*\*\S|\S\*\*'), 'bold markers'),
