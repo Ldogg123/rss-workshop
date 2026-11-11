@@ -94,7 +94,7 @@ Use focused tests while editing, then run `make check` for Go or application cha
 
 | Change | Additional checks |
 | --- | --- |
-| Visual editor, embedded UI or Chromium integration | `make browser-test` (sandboxed Chromium and UI fixture tests); add `RSS_UI_DOCS=1` to also capture the documentation images into `artifacts/browser`, then copy them into `docs/screenshots/` (see docs/browser.md) |
+| Visual editor, embedded UI or Chromium integration, including a `CHROMIUM_VERSION`, chromedp or cdproto update | `make browser-test` (sandboxed Chromium and UI fixture tests); add `RSS_UI_DOCS=1` to also capture the documentation images into `artifacts/browser`, then copy them into `docs/screenshots/` (see docs/browser.md). `Render` assumes 200 when no status event arrives and chromedp drops events it cannot decode, so `TestChromiumReportsDocumentStatus` and its `OverHTTPS` companion must keep failing when a rendered 404 or 500 succeeds. Their fixtures are loopback servers, the HTTPS one self-signed, so a pass does not cover every value a public HTTPS response carries: also render a real HTTPS error page on such an update |
 | Dockerfiles, Compose, executable paths, deployment wiring or a new environment setting | `make compose-test` (merged configuration) and `make docker-smoke` (both images, including restart persistence). `compose.yaml` passes an explicit variable list, so a new setting needs an entry there, or Docker deployments silently ignore it, plus `.env.example`, the environment table in docs/deployment.md and an assertion in `scripts/compose_test.py` |
 | Both of the above | `make check-containers` |
 | Backup/restore tooling | `make backup-test` and the opt-in Docker roundtrip below |
