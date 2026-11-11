@@ -3,4 +3,8 @@
 # pip-tools:
 #
 #   pip-compile --generate-hashes --output-file=website/requirements.txt website/requirements.in
+#
+# The pinned set installs on Python 3.11.5 or newer (pymdown-extensions 13.0
+# needs it). CONTRIBUTING.md and AGENTS.md give that minimum; keep them in step
+# when a new pin moves it.
 zensical==0.1.1

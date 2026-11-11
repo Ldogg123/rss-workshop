@@ -6,7 +6,7 @@ This file applies to the entire repository. Use `rss-workshop` for the Go module
 
 - Run commands from the repository root. Use the Go version declared in `go.mod`, Python 3.11 or newer (standard library only), and Make. Race tests also require a C compiler.
 - Docker Engine and the Compose plugin are needed for container checks. Use Compose 2.24.4 or newer because the overrides use `!reset` and `!override`. Check Docker access before running container tests; `DOCKER='sudo docker'` works with Make's container targets when necessary.
-- The documentation site is the one optional extra: `make docs` installs the pinned Zensical from `website/requirements.txt` into the ignored `website/build/venv` (`DOCS_VENV` moves it), never into the system Python.
+- The documentation site is the one optional extra: `make docs` installs the pinned Zensical from `website/requirements.txt` into the ignored `website/build/venv` (`DOCS_VENV` moves it), never into the system Python. The pinned packages need Python 3.11.5 or newer; `make docs-test` and the rest of `make check` keep to 3.11 and the standard library.
 - No Node install or frontend build is needed. Templates, CSS, JavaScript, and database schemas are embedded in the Go executable. Rebuild/restart the server after changing them.
 - Check the existing setup before installing tools, recreating services, or changing configuration. `make GO=/absolute/path/to/go ...` supports an existing Go installation outside `PATH`.
 
