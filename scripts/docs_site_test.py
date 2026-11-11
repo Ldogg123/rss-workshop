@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Offline checks for the documentation site's staging and link checks."""
 
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -333,6 +335,19 @@ class StageTest(unittest.TestCase):
         self.fixture.write('docs/changelog.md', '# Another changelog\n')
         site, _, _ = self.fixture.prepare()
         self.assertIn('docs/changelog.md: would be published as changelog.md, which CHANGELOG.md already is.', site.problems)
+
+    def test_only_the_repository_the_site_is_configured_for_publishes_it(self):
+        self.assertEqual(docs_site.pages_address('Example/Project'), 'https://example.github.io/Project/')
+        self.assertEqual(docs_site.pages_address('Example/example.github.io'), 'https://example.github.io/')
+        self.fixture.edit('website/zensical.toml', SITE, 'https://example.github.io/project/')
+        # A broken guide must not change the answer: the build reports that.
+        self.fixture.edit('docs/guide.md', '[other](other.md)', '[other](gone.md)')
+        for repository, expected in (('Example/project', 'true'), ('someone/project', 'false'), ('example/other', 'false'),
+                                     ('', 'false')):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(docs_site.main(['publishes', '--root', str(self.fixture.root), '--repository', repository]), 0)
+            self.assertEqual(output.getvalue(), expected + '\n', repository)
 
     def test_writing_touches_only_what_changed(self):
         target = self.fixture.root / 'website/build/src'

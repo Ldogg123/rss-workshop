@@ -15,6 +15,8 @@ are never rewritten.
   verify  check the built site in website/build/site: links, anchors, images,
           repository links, the navigation and what a page loads when viewed
   serve   stage, run "zensical serve" and stage again when a guide changes
+  publishes  print "true" if --repository is the one whose GitHub Pages address
+          is the configured site_url, else "false"; no check, no build
 
 Standard library only; the site generator is pinned in website/requirements.txt.
 """
@@ -378,6 +380,14 @@ def load_site(root):
         project = tomllib.load(file)['project']
     site_url = project['site_url'].rstrip('/') + '/'
     return Site(root, site_url, project['repo_url'].rstrip('/'), repository_files(root)), project
+
+
+def pages_address(repository):
+    """Return the address GitHub Pages gives the site of a repository named OWNER/NAME."""
+    owner, _, name = repository.lower().partition('/')
+    if name == owner + '.github.io':
+        return f'https://{name}/'
+    return f'https://{owner}.github.io/{repository.partition("/")[2]}/'
 
 
 # --- Links --------------------------------------------------------------------
@@ -905,12 +915,18 @@ def serve(root, source, command):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('command', choices=('check', 'stage', 'verify', 'serve'))
+    parser.add_argument('command', choices=('check', 'stage', 'verify', 'serve', 'publishes'))
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root')
     parser.add_argument('--zensical', default='zensical', help='zensical command, for serve')
     parser.add_argument('--address', default='127.0.0.1:8090', help='address the preview listens on, for serve')
+    parser.add_argument('--repository', default='', help='OWNER/NAME on GitHub, for publishes')
     args = parser.parse_args(argv)
     root = args.root.resolve()
+    if args.command == 'publishes':
+        # A fork or a copy keeps this repository's site_url until its owner
+        # changes it, and until then has no site of its own to publish.
+        print('true' if load_site(root)[0].site_url == pages_address(args.repository) else 'false')
+        return 0
     site, project, staged = prepare(root)
     source = root / posixpath.dirname(CONFIG) / project['docs_dir']
     if args.command == 'verify':
