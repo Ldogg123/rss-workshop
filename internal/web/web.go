@@ -384,6 +384,33 @@ func validate(f model.Feed) error {
 	}
 	return extract.Validate(f.Recipe)
 }
+
+// validateNew applies the checks that only a selector entered in this save
+// has to pass (extract.ValidateNew), which validate leaves out because
+// imports and library filter edits use it for recipes nobody is editing. The
+// stored recipe is read only when the submitted one has such a selector, and
+// outside the save's transaction: an edit saved in between can at worst let
+// this one keep a selector the other replaced, as a stale editor always could.
+func (a *App) validateNew(ctx context.Context, f model.Feed) error {
+	e := extract.ValidateNew(f.Recipe, nil)
+	if e == nil {
+		return nil
+	}
+	if f.ID != "" {
+		stored, err := a.Store.Get(ctx, f.ID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// The save reports a feed that no longer exists.
+			return nil
+		case err != nil:
+			return err
+		}
+		if e = extract.ValidateNew(f.Recipe, &stored.Recipe); e == nil {
+			return nil
+		}
+	}
+	return &store.InvalidError{Err: e}
+}
 func (a *App) save(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		model.Feed
@@ -403,6 +430,10 @@ func (a *App) save(w http.ResponseWriter, r *http.Request) {
 	trimRecipe(&f.Recipe)
 	if e := validate(f); e != nil {
 		failure(w, 400, e)
+		return
+	}
+	if e := a.validateNew(r.Context(), f); e != nil {
+		a.saveFailure(w, r, e, false, "could not save feed")
 		return
 	}
 	keep := f.ID != "" && in.LoadedEnabled != nil && *in.LoadedEnabled == f.Enabled

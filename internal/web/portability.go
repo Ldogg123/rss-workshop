@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"rss-workshop/internal/extract"
 	"rss-workshop/internal/model"
 )
 
@@ -27,6 +28,13 @@ type portableFeed struct {
 
 func (p portableFeed) model() model.Feed {
 	return model.Feed{Title: p.Title, URL: p.URL, Interval: p.Interval, Recipe: p.Recipe, Enabled: false}
+}
+
+// reviewedFeed is a recipe as the import review shows it. The warnings are
+// for the reader of that review; an import stores the file's recipe as it is.
+type reviewedFeed struct {
+	portableFeed
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type recipeDocument struct {
@@ -113,7 +121,13 @@ func (a *App) previewRecipes(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, err)
 		return
 	}
-	reply(w, 200, map[string]any{"count": len(doc.Feeds), "feeds": doc.Feeds})
+	// An import accepts what the release that wrote the file accepted, so a
+	// selector an editor save would now refuse is only pointed out here.
+	feeds := make([]reviewedFeed, 0, len(doc.Feeds))
+	for _, f := range doc.Feeds {
+		feeds = append(feeds, reviewedFeed{portableFeed: f, Warnings: extract.SelectorWarnings(f.Recipe)})
+	}
+	reply(w, 200, map[string]any{"count": len(feeds), "feeds": feeds})
 }
 
 func (a *App) importRecipes(w http.ResponseWriter, r *http.Request) {
