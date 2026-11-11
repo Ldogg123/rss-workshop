@@ -9,7 +9,7 @@ ENV HOME=/tmp CHROMIUM_PATH=/usr/bin/chromium DATA_DIR=/data LISTEN_ADDR=:8080
 USER 65532:65532
 WORKDIR /data
 
-FROM --platform=$BUILDPLATFORM golang:1.27.3 AS source
+FROM --platform=$BUILDPLATFORM golang:1.27.4 AS source
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
