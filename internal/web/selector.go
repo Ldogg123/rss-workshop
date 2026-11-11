@@ -21,6 +21,23 @@ import (
 // preview. Omitted subtrees keep their root in the mirror so sibling positions
 // remain accurate. Attribute values belong only to the inert XML mirror, never
 // to visible HTML. No source HTML, CSS, script, or active subtree is transmitted.
+//
+// The mirror carries only plain lower-case element names. The HTML parser
+// accepts others: Word's <o:p> and <st1:City>, a widget's <fb:like>, an
+// address typed as <editor@example.com>. Such an element is sent as a hidden
+// root under selectorPlaceholder, without its name, attributes or subtree,
+// instead of refusing the page. The extractor sees an element with a name of
+// its own there, so the placeholder keeps its neighbours' :nth-child and *[n]
+// positions, and its name is one selectorTag refuses, so no element of the
+// page is sent under it and it never joins a neighbour's :nth-of-type or
+// name[n] count. A selector that names such an element, or reaches inside
+// it, matches nothing in the mirror and still works in extraction.
+//
+// An unknown element the page never closes takes the rest of its parent as
+// its children, so a placeholder can hide whole stories. The snapshot counts
+// the placeholders that hide an element the preview would have shown, and
+// the editor adds a fixed sentence to its status when there are any; the
+// count is all that says so, and the frame never receives it.
 type selectorNode struct {
 	Parent   int               `json:"parent"`
 	Tag      string            `json:"tag,omitempty"`
@@ -37,6 +54,50 @@ type selectorNode struct {
 
 var selectorTag = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 var selectorAttr = regexp.MustCompile(`^[a-z_][a-z0-9_.-]*$`)
+
+const selectorPlaceholder = "unsupported_element"
+
+const selectorHiddenTags = " head script style iframe frame frameset object embed template noscript svg math canvas audio video source track link meta base form input textarea select option button "
+
+// selectorHides reports whether an element with a supported name is sent as
+// a hidden root, without its attributes or subtree.
+func selectorHides(n *html.Node) bool {
+	return n.Namespace != "" || strings.Contains(selectorHiddenTags, " "+n.Data+" ")
+}
+
+// selectorOmits reports whether a placeholder's subtree holds an element the
+// preview would have shown anywhere else. Text alone does not count, nor do
+// elements that are hidden wherever they stand: Word's <o:p>&nbsp;</o:p> and
+// <st1:City>Paris</st1:City> leave out a word at most, and a widget followed
+// only by scripts leaves out nothing. Unlike walk it has no depth limit of
+// its own, only the parser's, so it does not recurse; it looks at each node
+// at most once, because walk never enters a placeholder.
+func selectorOmits(root *html.Node) bool {
+	n := root.FirstChild
+	for n != nil {
+		inside := false
+		if n.Type == html.ElementNode {
+			if !selectorTag.MatchString(n.Data) {
+				// A placeholder of its own if it stood elsewhere.
+				inside = n.FirstChild != nil
+			} else if !selectorHides(n) {
+				return true
+			}
+		}
+		if inside {
+			n = n.FirstChild
+			continue
+		}
+		for n != root && n.NextSibling == nil {
+			n = n.Parent
+		}
+		if n == root {
+			return false
+		}
+		n = n.NextSibling
+	}
+	return false
+}
 
 const maxSelectorAttrs = 64
 
@@ -72,14 +133,22 @@ func selectorAttribute(name, value string) bool {
 }
 
 func selectorTree(body []byte) ([]selectorNode, error) {
+	nodes, _, err := selectorTreeOmitted(body)
+	return nodes, err
+}
+
+// selectorTreeOmitted also returns the number of placeholders that hide an
+// element the preview would otherwise show (see selectorOmits).
+func selectorTreeOmitted(body []byte) ([]selectorNode, int, error) {
 	if len(body) > fetch.MaxBody {
-		return nil, errors.New("page exceeds the 4 MiB snapshot limit")
+		return nil, 0, errors.New("page exceeds the 4 MiB snapshot limit")
 	}
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
-		return nil, errors.New("could not parse page")
+		return nil, 0, errors.New("could not parse page")
 	}
 	nodes := []selectorNode{}
+	omitted := 0
 	var walk func(*html.Node, int, int) error
 	walk = func(n *html.Node, parent, depth int) error {
 		if depth > 100 || len(nodes) >= 12000 {
@@ -91,11 +160,14 @@ func selectorTree(body []byte) ([]selectorNode, error) {
 			return nil
 		}
 		if n.Type == html.ElementNode {
-			if !selectorTag.MatchString(n.Data) {
-				return errors.New("page contains unsupported element names; use manual selectors")
-			}
 			v := selectorNode{Parent: parent, Tag: n.Data}
-			v.Hidden = n.Namespace != "" || strings.Contains(" head script style iframe frame frameset object embed template noscript svg math canvas audio video source track link meta base form input textarea select option button ", " "+n.Data+" ")
+			v.Hidden = selectorHides(n)
+			if !selectorTag.MatchString(n.Data) {
+				v.Tag, v.Hidden = selectorPlaceholder, true
+				if selectorOmits(n) {
+					omitted++
+				}
+			}
 			for _, a := range n.Attr {
 				if v.Hidden || len(v.Attrs) >= maxSelectorAttrs {
 					break
@@ -141,9 +213,9 @@ func selectorTree(body []byte) ([]selectorNode, error) {
 		return nil
 	}
 	if err := walk(doc, -1, 0); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return nodes, nil
+	return nodes, omitted, nil
 }
 
 func (a *App) selectorSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -173,12 +245,18 @@ func (a *App) selectorSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "source did not return a complete page", 422)
 		return
 	}
-	nodes, err := selectorTree(result.Body)
+	nodes, omitted, err := selectorTreeOmitted(result.Body)
 	if err != nil {
 		failure(w, 422, err)
 		return
 	}
-	data, err := json.Marshal(map[string]any{"nodes": nodes, "url": result.URL})
+	reply := map[string]any{"nodes": nodes, "url": result.URL}
+	if omitted > 0 {
+		// Only a count, and only when there is something to say, so the
+		// reply for every other page keeps its bytes.
+		reply["omitted"] = omitted
+	}
+	data, err := json.Marshal(reply)
 	if err != nil || len(data) > 4<<20 {
 		http.Error(w, "sanitized snapshot exceeds 4 MiB; use manual selectors", 422)
 		return
