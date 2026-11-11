@@ -11,6 +11,8 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"rss-workshop/internal/auth"
+	"rss-workshop/internal/browser"
+	"rss-workshop/internal/fetch"
 	"rss-workshop/internal/model"
 	"rss-workshop/internal/scheduler"
 	"rss-workshop/internal/store"
@@ -91,7 +93,19 @@ func TestBrowserUIDocumentation(t *testing.T) {
 			}
 		}
 	}
-	app := &App{Store: s, Scheduler: jobs, Auth: a, Version: "0.2 preview"}
+	// The default image runs Chromium, so the status line shows its slots as
+	// that deployment does. A pool starts Chromium only for a render, and no
+	// capture renders one: both feeds and the selector's page are Static HTTP.
+	policy, err := fetch.New(time.Second, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := browser.New(os.Getenv("CHROMIUM_PATH"), 2, 30*time.Second, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	app := &App{Store: s, Scheduler: jobs, Auth: a, Browsers: pool, Version: "0.2 preview"}
 	// Notifications on, so the dashboard's status line shows the channel and
 	// its test button. They go to a local receiver; no capture presses the
 	// button, and the page never shows the address.
@@ -116,7 +130,7 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	must(chromedp.EmulateViewport(1440, 1100), chromedp.Navigate(server.URL), chromedp.WaitVisible("#login-form"),
 		chromedp.SendKeys("#password", "documentation-fixture-only"), chromedp.Click("#login-form button"), chromedp.WaitVisible(".feed-card"),
 		chromedp.Evaluate(`if(document.documentElement.dataset.theme!=='dark')document.querySelector('#theme-toggle').click()`, nil),
-		chromedp.Poll(`document.querySelectorAll('.feed-card .badge')[1]?.textContent==='Quiet'&&document.querySelector('#notifications').textContent==='Notifications: JSON webhook'&&!document.querySelector('#test-notification').hidden`, nil))
+		chromedp.Poll(`document.querySelectorAll('.feed-card .badge')[1]?.textContent==='Quiet'&&document.querySelector('#queue').textContent.includes('Chromium 0/2 slots')&&document.querySelector('#notifications').textContent==='Notifications: JSON webhook'&&!document.querySelector('#test-notification').hidden`, nil))
 	captureTrial(t, tab, "docs-dashboard")
 	must(clickCurrent("Edit on the first card", `document.querySelectorAll('.feed-card')[0].querySelector('button')`),
 		chromedp.Click("#visual-button"), chromedp.WaitVisible("#selector-frame"), chromedp.Poll(`document.querySelector('#selector-matches').dataset.items==='3'`, nil),
@@ -148,13 +162,15 @@ func TestBrowserUIDocumentation(t *testing.T) {
 	}
 
 	// Full article content, the newest editor section, with the preview showing
-	// what a reader would receive.
+	// what a reader would receive. The recipe has been XPath since the visual
+	// selector capture converted it, so the article selector is XPath too: CSS
+	// left there is the mistake the hint under the field warns about.
 	must(chromedp.EmulateViewport(820, 760),
 		chromedp.Evaluate(`document.querySelector('#story-filters').open=false;document.querySelector('#full-content').open=true`, nil),
-		chromedp.SetValue(`[name="full_selector"]`, ".article-body"),
+		chromedp.SetValue(`[name="full_selector"]`, "//div[@class='article-body']"),
 		chromedp.Evaluate(`document.querySelector('[name=full_selector]').dispatchEvent(new Event('input'));`+
 			`document.querySelector('#full-content').scrollIntoView({block:'start'});window.scrollBy(0,-24)`, nil),
-		chromedp.Poll(`document.querySelector('#full-summary').textContent==='On'`, nil),
+		chromedp.Poll(`document.querySelector('#full-summary').textContent==='On'&&document.querySelector('#full-syntax-help').textContent.startsWith('An XPath article selector')`, nil),
 		chromedp.Sleep(300*time.Millisecond))
 	captureTrial(t, tab, "docs-full-content")
 
