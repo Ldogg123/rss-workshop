@@ -67,6 +67,9 @@ CODE_SPAN = re.compile(r'(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)')
 INLINE_LINK = re.compile(r'\]\(\s*(<[^<>]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(\s+(?:"[^"]*"|\'[^\']*\'))?\s*\)')
 # A reference definition. "[^1]:" is a footnote, whose text is not an address.
 REFERENCE = re.compile(r'^ {0,3}\[(?!\^)[^\]]+\]:\s*(<[^<>]*>|\S+)')
+# An image that is not already a link's text, with the attribute list a
+# site-only page may give it.
+IMAGE = re.compile(r'(?<!\[)(!\[[^\]]*\]\(\s*([^\s()<>]+)(?:\s+"[^"]*")?\s*\)(?:\{[^{}]*\})?)')
 TABLE_RULE = re.compile(r'^ *\|?(?: *:?-+:? *\|)+(?: *:?-+:? *)?$')
 HTML_ATTRIBUTE = re.compile(r'<[a-zA-Z][^<>]*?\s(?:href|src)="([^"]*)"')
 AUTOLINK = re.compile(r'<([a-zA-Z][a-zA-Z0-9+.-]*://[^<>\s]+)>')
@@ -500,6 +503,16 @@ def rewrite_links(site, origin, number, line, page):
     return line
 
 
+def link_images(line):
+    """Make each image a link to its file, as GitHub does, so it opens at full size."""
+    masked = mask_code(line)
+    for match in reversed(list(IMAGE.finditer(masked))):
+        target = line[match.start(2):match.end(2)]
+        if not SCHEME.match(target) and not target.startswith(('#', '//')):
+            line = f'{line[:match.start(1)]}[{line[match.start(1):match.end(1)]}]({target}){line[match.end(1):]}'
+    return line
+
+
 def unescape_pipes(line):
     """Return a table row with "\\|" in its code spans written "|".
 
@@ -521,7 +534,7 @@ def render(site, origin, page):
     rendered = []
     for index, line in enumerate(lines):
         if index not in code and index >= body_start(lines):
-            line = rewrite_links(site, origin, index + 1, line, page)
+            line = link_images(rewrite_links(site, origin, index + 1, line, page))
             if index in tables:
                 line = unescape_pipes(line)
             heading = anchors.get(index + 1)

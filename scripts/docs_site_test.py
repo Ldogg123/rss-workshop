@@ -237,12 +237,27 @@ class StageTest(unittest.TestCase):
         start = staged['start.md']
         self.assertIn('# Start { #start }\n\n## Quickstart { #quickstart }\n', start)
         self.assertIn('[the guide\'s limits](guide.md#limits--failures) or [first feed](#your-first-feed)', start)
-        self.assertIn('![Dashboard](screenshots/dashboard.png)', start)
+        self.assertIn('\n[![Dashboard](screenshots/dashboard.png)](screenshots/dashboard.png)\n', start)
         self.assertIn('<details markdown="1">\n<summary>More</summary>', start)
         self.assertIn(f'[Quickstart](#quickstart), the [license]({REPO}/blob/main/LICENSE) and the '
                       f'[versions]({REPO}/blob/main/README.md#versioning)', start)
         self.assertNotIn('Stable.', start)
         self.assertNotIn('Intro with', start)
+
+    def test_images_open_at_full_size(self):
+        # GitHub links every image to its file; the site's copy does the same.
+        self.fixture.write('docs/other.md', '# Other\n\n## New\n\n## New\n\n'
+                           '![One](screenshots/dashboard.png "Title") and ![two](screenshots/dashboard.png).\n\n'
+                           '[![Linked](screenshots/dashboard.png)](guide.md) and `![code](missing.png)` and '
+                           '![badge](https://img.example/badge.svg)\n')
+        self.fixture.edit('website/pages/index.md', '[Guide]', '![Shot](../../docs/screenshots/dashboard.png){ .wide }\n\n[Guide]')
+        site, _, staged = self.fixture.prepare()
+        self.assertEqual(site.problems, [])
+        self.assertIn('\n[![One](screenshots/dashboard.png "Title")](screenshots/dashboard.png) and '
+                      '[![two](screenshots/dashboard.png)](screenshots/dashboard.png).\n', staged['other.md'])
+        self.assertIn('\n[![Linked](screenshots/dashboard.png)](guide.md) and `![code](missing.png)` and '
+                      '![badge](https://img.example/badge.svg)\n', staged['other.md'])
+        self.assertIn('\n[![Shot](screenshots/dashboard.png){ .wide }](screenshots/dashboard.png)\n', staged['index.md'])
 
     def test_a_footnote_is_not_a_link_reference(self):
         self.fixture.write('docs/other.md', OTHER + '\nA note[^1] and a [reference][ref].\n\n'
