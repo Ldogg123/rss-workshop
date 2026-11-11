@@ -51,8 +51,11 @@ func TestSelectorSnapshotBoundary(t *testing.T) {
 			t.Fatal("hidden root retained source metadata", n)
 		}
 	}
-	if _, err := selectorTree([]byte(`<invalid@tag>text</invalid@tag>`)); err == nil {
-		t.Fatal("unsupported DOM names must return a usable error")
+	// A name the mirror cannot carry opens as a placeholder rather than
+	// reaching the frame; selector_prefixed_test.go covers what it keeps.
+	unnamed, err := selectorTree([]byte(`<invalid@tag>inside</invalid@tag>`))
+	if b, _ := json.Marshal(unnamed); err != nil || strings.Contains(string(b), "invalid") || strings.Contains(string(b), "inside") {
+		t.Fatal("unsupported DOM names must open without reaching the snapshot", err, string(b))
 	}
 	for name, source := range map[string]string{"bytes": strings.Repeat("x", (4<<20)+1), "nodes": strings.Repeat("<p>x</p>", 6000), "depth": strings.Repeat("<div>", 110)} {
 		t.Run(name, func(t *testing.T) {
