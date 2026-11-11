@@ -51,7 +51,7 @@ A pull request runs the full matrix. A push to `main` runs only the Go and nativ
 
 A newer automatic run cancels an unfinished run for the same PR or `main` branch. CI has read-only repository permissions and publishes no images. Separate native `ubuntu-24.04` and `ubuntu-24.04-arm` jobs run:
 
-1. Module verification, reachable Go vulnerability checking, formatting, the full race suite, `go vet`, backup and release-source verification tests, the [dependency and notice check](dependencies.md#checking-the-table), a CGo-free build, and the native fixture workflow.
+1. Module verification, reachable Go vulnerability checking, formatting, the full race suite, `go vet`, backup and release-source verification tests, the [dependency and notice check](dependencies.md#checking-the-table), the link and anchor check of the guides, a CGo-free build, and the native fixture workflow.
 2. Static and browser runtime builds, plus the dedicated browser test target.
 3. Real Chromium tests with the deployed seccomp profile, non-root user, read-only filesystem, dropped capabilities, and memory/process limits. These check Chromium's sandbox, network policy, recovery, and the visual editor.
 4. Compose configuration checks for published defaults, image selection, and local build overrides, plus browser/static smoke tests covering health, extraction, RSS/Atom output, recipe portability, and persistence through restart.
