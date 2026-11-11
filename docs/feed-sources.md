@@ -9,7 +9,7 @@ A site that already publishes an RSS or Atom feed needs no selectors. A **feed s
 3. Add story filters, full article content, content cleanup or date settings if you need them.
 4. Choose **Preview items**, then save.
 
-A saved feed keeps its source: **Edit** shows it locked. A feed and a web page identify stories differently, so switching would publish every saved story a second time. To try the other source, **Duplicate** the feed and choose it in the copy.
+A saved feed keeps its source: **Edit** shows it locked. A feed and a web page identify stories differently, so switching would publish every saved story a second time. To try the other source, **Duplicate** the feed and choose it in the copy. The server enforces this too: a save that would switch a saved feed's source, such as one a script sends, is answered with `400` and the same advice, and changes nothing.
 
 The [demo site](examples/) publishes its own `feed.xml`, and `demo-feed-recipe.json` reads it, filters out the sponsored story and fetches each article.
 
@@ -38,7 +38,7 @@ Rules apply to each description in the order above before it is chosen, because 
 - A feed source has no Image selector, so the image in its description is the first one the rules leave: a rule can keep an avatar or a banner from becoming the story's image. Images the entry declares, such as `media:thumbnail`, come first as always and are not affected.
 - The title of an untitled entry is read before cleanup, so rules never change a story's title or [identity](#story-identity), and never leave an entry to be skipped for want of a title.
 
-[Story filters](filtering.md) read the cleaned description, and [full article content](atom.md#full-article-content) is cleaned with the same rules. **Preview items** shows the result a refresh stores.
+[Story filters](filtering.md) read the cleaned description at each refresh, and [full article content](atom.md#full-article-content) is cleaned with the same rules. Removing [already-saved stories](filtering.md#previously-saved-stories) that do not match judges each description as stored, which rules changed in the same edit have not cleaned. **Preview items** shows the result a refresh stores.
 
 ## Story identity
 
@@ -66,7 +66,7 @@ Article pages are web pages: they are requested as HTML and fetched as plain HTM
 
 ## Published output
 
-A feed source publishes RSS and Atom as any other feed does. The channel `link` in RSS, the `alternate` link in Atom and the `htmlUrl` in the OPML export are the address you entered, which here is the source feed rather than a web page. A source whose entries change on every request, such as a comment count or a tracking image with a random address, changes your feed on every refresh too.
+A feed source publishes RSS and Atom as any other feed does. The channel `link` in RSS and the `alternate` link in Atom are the address you entered, which here is the source feed rather than a web page, so a reader that takes a feed's website link from the feed itself opens the source feed. The [OPML export](atom.md#subscribe-to-every-feed-at-once) leaves `htmlUrl` out for a feed source rather than offer that address as its website; its `xmlUrl` is your reader link, as for any feed. A source whose entries change on every request, such as a comment count or a tracking image with a random address, changes your feed on every refresh too.
 
 ## Recipe files
 

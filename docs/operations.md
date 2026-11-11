@@ -100,7 +100,7 @@ Aggregates cover the library, saved stories, refresh/Chromium/FlareSolverr capac
 | `rss_workshop_feed_items` | Stories saved for one feed |
 | `rss_workshop_refresh_active` / `_capacity` | Whether refreshes are queueing |
 | `rss_workshop_browser_active` / `_capacity` | Chromium jobs running and allowed; `0` without Chromium |
-| `rss_workshop_browser_ready` | `1` while a started Chromium is running. Chromium starts on first use, so this is `0` after every app start until the first render, and always `0` without Chromium; it is not a health check |
+| `rss_workshop_browser_ready` | `1` while a started Chromium is running. Chromium starts on first use, so this is `0` after every app start until the first render, and always `0` without Chromium; it is not a health check. It is also `0` for the seconds a launch or relaunch takes, up to 15 when Chromium hangs while starting (one that is missing or exits at once fails immediately); a scrape during one is answered at once, and the render waiting for it counts in `rss_workshop_browser_active` only once Chromium is running |
 | `rss_workshop_browser_restarts_total` | Chromium launches since the app started: the first one, a relaunch after a crash, and the routine relaunch after every 100 renders, so a rise alone does not mean a crash |
 | `rss_workshop_flaresolverr_active` / `_capacity` | FlareSolverr slots in use and configured, counting a slot still held after an interrupted request (see [capacity](flaresolverr.md#capacity)); `0` without a solver |
 | `rss_workshop_notifications_total` | [Notification](#notifications) messages by `result`: `sent`, or `failed` after every attempt. `0` while notifications are off |

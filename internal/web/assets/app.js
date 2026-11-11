@@ -225,6 +225,9 @@ function help(){
  // A feed source's rules are CSS, whatever the hidden selector type says.
  const xpath=form.elements.source.value!=='feed'&&form.elements.type.value==='xpath';
  $('#selector-help').textContent=xpath?'Use relative XPath fields starting with ., such as .//h2 or .//a/@href. Use . for the card itself.':'Fields are relative to each card. Use . for the card itself. Choose an attribute separately, such as href or datetime.';
+ // The article page is selected from its root, as the repeated items are.
+ form.elements.full_selector.placeholder=xpath?"//div[@class='entry-content']":'article.content';
+ $('#full-syntax-help').textContent=xpath?'An XPath article selector reads the article page from its root, as the repeated item selector reads the list page: //div[@class=\'entry-content\'], for example. A CSS selector left here, such as .entry-content, would select the whole page.':'A CSS selector for the block that holds the article on each story’s own page, such as article.content or .entry-content.';
  $('#cleanup-syntax-help').textContent=xpath?'XPath rules start with ./, such as .//div[@class=\'share\'] or .//p[contains(., \'appeared first on\')].':'For example .share, aside.related or p:containsOwn("appeared first on"), which ignores case.';
 }
 $('#login-form').onsubmit=e=>{e.preventDefault();busy(e.submitter,async()=>{const out=await api('/login','POST',{password:$('#password').value});csrf=out.csrf;$('#password').value='';await showApp();});};

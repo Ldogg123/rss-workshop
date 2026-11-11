@@ -26,6 +26,8 @@
    if(feed.recipe.user_agent)item.append(node('p',`User-Agent: ${feed.recipe.user_agent}`,'meta'));
    if(feed.recipe.accept_language)item.append(node('p',`Accept-Language: ${feed.recipe.accept_language}`,'meta'));
    if(feed.recipe.quiet_days)item.append(node('p',`Mark as Quiet after: ${feed.recipe.quiet_days<0?'Never':feed.recipe.quiet_days+' days'}`,'meta'));
+   // The server's warnings about this recipe, such as CSS left in an XPath selector.
+   for(const warning of Array.isArray(feed.warnings)?feed.warnings:[])if(typeof warning==='string')item.append(node('p',warning,'diagnostic'));
    // A feed source has no item or field selectors to review.
    const feedSource=feed.recipe.type==='feed';
    if(feedSource)item.append(node('p','Source: RSS or Atom feed','meta'));
