@@ -300,7 +300,7 @@ Named-volume restore remains available for existing deployments and accepts back
 ```sh
 sudo python3 scripts/backup.py restore /var/backups/rss-workshop/before-upgrade \
   --volume rss-workshop-restored \
-  --image ghcr.io/ldogg123/rss-workshop:v1.3.0-browser
+  --image ghcr.io/ldogg123/rss-workshop:v1.3.1-browser
 ```
 
 This verifies the copy with UID/GID 65532 ownership, never pulls an image or starts the app, and refuses an existing volume. Its temporary container is removed; a failed restore leaves the new volume for inspection. Manifest format 1 is unchanged; backups of every schema the utility supports, including [automatic pre-upgrade copies](#automatic-copy-before-an-sqlite-upgrade), remain usable with the current utility. Select an app version that supports the restored database schema.
