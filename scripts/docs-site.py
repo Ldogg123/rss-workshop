@@ -518,6 +518,10 @@ def link_images(line):
     masked = mask_code(line)
     for match in reversed(list(IMAGE.finditer(masked))):
         target = line[match.start(2):match.end(2)]
+        # An image inside a link's text keeps that link: a link cannot hold another.
+        before = masked[:match.start(1)].replace('\\[', '').replace('\\]', '')
+        if before.count('[') > before.count(']'):
+            continue
         if not SCHEME.match(target) and not target.startswith(('#', '//')):
             line = f'{line[:match.start(1)]}[{line[match.start(1):match.end(1)]}]({target}){line[match.end(1):]}'
     return line

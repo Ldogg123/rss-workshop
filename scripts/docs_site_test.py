@@ -251,7 +251,8 @@ class StageTest(unittest.TestCase):
         self.fixture.write('docs/other.md', '# Other\n\n## New\n\n## New\n\n'
                            '![One](screenshots/dashboard.png "Title") and ![two](screenshots/dashboard.png).\n\n'
                            '[![Linked](screenshots/dashboard.png)](guide.md) and `![code](missing.png)` and '
-                           '![badge](https://img.example/badge.svg)\n')
+                           '![badge](https://img.example/badge.svg)\n\n'
+                           'A [link with ![an icon](screenshots/dashboard.png) inside](guide.md) keeps its target.\n')
         self.fixture.edit('website/pages/index.md', '[Guide]', '![Shot](../../docs/screenshots/dashboard.png){ .wide }\n\n[Guide]')
         site, _, staged = self.fixture.prepare()
         self.assertEqual(site.problems, [])
@@ -260,6 +261,7 @@ class StageTest(unittest.TestCase):
         self.assertIn('\n[![Linked](screenshots/dashboard.png)](guide.md) and `![code](missing.png)` and '
                       '![badge](https://img.example/badge.svg)\n', staged['other.md'])
         self.assertIn('\n[![Shot](screenshots/dashboard.png){ .wide }](screenshots/dashboard.png)\n', staged['index.md'])
+        self.assertIn('\nA [link with ![an icon](screenshots/dashboard.png) inside](guide.md) keeps its target.\n', staged['other.md'])
 
     def test_a_footnote_is_not_a_link_reference(self):
         self.fixture.write('docs/other.md', OTHER + '\nA note[^1] and a [reference][ref].\n\n'
