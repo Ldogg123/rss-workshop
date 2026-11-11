@@ -78,7 +78,9 @@ management requests are rejected unless the browser's `Origin` header matches
 it. Forwarded headers do not replace it, and a path prefix is unsupported.
 
 **Preserve the browser's `Origin` header.** A proxy that strips or rewrites it
-makes every save, delete and refresh fail with a cross-origin rejection.
+makes every sign-in, save, delete and refresh fail with `cross-origin request
+rejected; open the app at the address set in PUBLIC_BASE_URL`, even when the
+address in the browser is the right one.
 
 **Allow at least 150 seconds** for the response. The app answers within 140
 seconds at most: the 2-minute maximum `FLARESOLVERR_TIMEOUT`, 10 seconds for
@@ -102,4 +104,7 @@ docker compose -f compose.yaml -f compose.proxy.yaml exec -T rss-workshop /rss-w
 
 Sign in through the public address rather than a forwarded port: signing in
 somewhere else produces a session whose origin does not match, and every
-management action will be refused.
+management action will be refused with `cross-origin request rejected; open
+the app at the address set in PUBLIC_BASE_URL`. The message names the setting
+rather than its value, so compare the address in your browser with the one in
+`.env`.

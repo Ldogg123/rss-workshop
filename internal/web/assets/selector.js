@@ -105,9 +105,18 @@
    if(d.error){state.textContent=String(d.error).slice(0,1000)+' Your selectors were kept.';sendRecipe();return;}
    const r=d.recipe;
    if(!r||r.type!=='xpath'||typeof r.items!=='string'||r.items.length>1000||!fields.every(k=>r[k]&&typeof r[k].selector==='string'&&r[k].selector.length<=1000&&typeof r[k].attr==='string'&&r[k].attr.length<=2048))return;
+   // The article body selector and the cleanup rules are not shown here, but
+   // they follow the selector type. The reply must convert each one the form
+   // holds, or it would stay CSS in an XPath recipe.
+   const full=form.elements.full_selector.value.trim(), rules=cleanupRules(), remove=r.remove===undefined?[]:r.remove;
+   if(full&&!(r.full_content&&typeof r.full_content.selector==='string'&&r.full_content.selector.trim()&&r.full_content.selector.length<=1000))return;
+   if(!Array.isArray(remove)||remove.length!==rules.length||!remove.every(rule=>typeof rule==='string'&&rule.startsWith('./')&&rule.length<=1000&&rule===rule.trim()&&!/[\r\n]/.test(rule)))return;
    form.elements.type.value='xpath';form.elements.items.value=r.items;
    for(const k of fields){form.elements[k+'_selector'].value=r[k].selector;form.elements[k+'_attr'].value=r[k].attr;}
-   help();fromForm();resetSelection();$('#preview').replaceChildren();highlight(true);state.textContent='Converted to XPath. Fine-tune any expression and check its highlights on the right.';
+   if(full)form.elements.full_selector.value=r.full_content.selector;
+   if(rules.length)form.elements.cleanup.value=remove.join('\n');
+   const also=[...(full?['the article body selector']:[]),...(rules.length?[rules.length===1?'1 cleanup rule':rules.length+' cleanup rules']:[])].join(' and ');
+   help();fromForm();resetSelection();$('#preview').replaceChildren();highlight(true);state.textContent='Converted to XPath'+(also?', including '+also+' in the feed editor':'')+'. Fine-tune any expression and check its highlights on the right.';
   }
   if(d.type==='selection'&&d.field===field.value&&typeof d.label==='string'&&d.label.length<=200&&Array.isArray(d.choices)&&d.choices.length<=14){
    if(!d.choices.every(c=>c&&typeof c.selector==='string'&&c.selector.length<=1000&&Number.isInteger(c.count)&&c.count>=0&&c.count<=1000))return;

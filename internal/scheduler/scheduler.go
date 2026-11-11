@@ -75,6 +75,11 @@ type Scheduler struct {
 	// left stories without an article body that the next one should fetch.
 	// See draining.
 	backlog map[string]bool
+	// articles remembers, per full-content feed, the listed stories whose
+	// article this process tried without getting a body, so that articles
+	// that always fail cannot take every refresh's article budget. See
+	// rememberArticles.
+	articles map[string]*articleMemory
 	// finished records when each refresh ended, until the next tick. A list
 	// read before then can still show the feed due, because its new schedule
 	// was saved after the read, and would start it again straight away.
@@ -268,7 +273,8 @@ func (s *Scheduler) Held(id string) bool {
 // request. That write proves less than a stored result would, because a disk
 // can refuse new stories while still accepting a small update, so the failure
 // count stays: a write that fails again holds the feed twice as long as the
-// last one rather than starting over at two minutes.
+// last one rather than starting over at two minutes. It lifts the backoffs of
+// the feed's failed articles on the same terms (see retryArticles).
 func (s *Scheduler) Retry(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -276,6 +282,7 @@ func (s *Scheduler) Retry(id string) {
 		h.until = time.Time{}
 		s.held[id] = h
 	}
+	s.retryArticles(id)
 }
 
 // released clears the backoff once a result is stored again.
@@ -432,6 +439,7 @@ func (s *Scheduler) dispatch(ctx context.Context, fs []model.Feed, listed time.T
 	}
 	s.forgetHolds(fs)
 	s.forgetBacklog(fs)
+	s.forgetArticles(fs)
 	s.alerts.forget(fs)
 	s.forgetFinished(listed)
 	for _, f := range fs {
@@ -500,12 +508,19 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 				"feed", f.Title, "feed_id", f.ID, "error", err)
 		}
 		articles = s.fetchArticles(ctx, f, items, known, false)
-		if w := articles.warnings; len(w) > 0 && p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
+		if p.Diagnostics != nil && len(p.Diagnostics.Attempts) > 0 {
 			last := &p.Diagnostics.Attempts[len(p.Diagnostics.Attempts)-1]
-			// Appended after extract() sanitized the trace, which is safe
+			// Added after extract() sanitized the trace, which is safe
 			// because store.encodeDiagnostics sanitizes again on write: stored
 			// article warnings are bounded and have their URLs redacted there.
-			last.Warnings = append(last.Warnings, w...)
+			if articles.waiting > 0 {
+				// A run keeps only so many warnings, and the list page's own
+				// can fill them. Stories that wait are not tried, so this
+				// line is all the run says about them: it goes first, and
+				// the write counts the warning it displaces as omitted.
+				last.Warnings = append([]string{waitingWarning(articles.waiting)}, last.Warnings...)
+			}
+			last.Warnings = append(last.Warnings, articles.warnings...)
 		}
 		// Its last article page has been rendered, so the save that follows
 		// leaves the slot to the next job.
@@ -575,6 +590,9 @@ func (s *Scheduler) refresh(parent context.Context, f model.Feed) {
 	}
 	s.released(f.ID)
 	if e == nil {
+		if r.Status != 304 {
+			s.rememberArticles(saveCtx, f, articles)
+		}
 		s.recordBacklog(saveCtx, f, articles)
 	}
 	s.alertRefresh(f, e)
