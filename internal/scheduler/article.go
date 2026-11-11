@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -45,6 +46,20 @@ type articleRun struct {
 	// many of them known showed with a body before this round.
 	listed []string
 	had    int
+	// tried holds the outcome for each story without a stored body that a
+	// worker took before the deadline. A refresh hands it to rememberArticles
+	// once its result is stored.
+	tried []articleTry
+	// waiting counts the listed stories that were not queued because their
+	// article failed and its backoff has not passed. See waitingWarning.
+	waiting int
+}
+
+// waitingWarning is the one line a run carries about the stories that wait
+// out a backoff: fixed text and a count, with no title, address or selector.
+// The run that tried a story says why it failed.
+func waitingWarning(stories int) string {
+	return fmt.Sprintf("Articles waiting to be tried again after failing or coming back empty: %d", stories)
 }
 
 // fetchArticles fills in item bodies from each item's own page.
@@ -53,6 +68,10 @@ type articleRun struct {
 // the item was first seen; a refresh passes the saved state so an article is
 // fetched once and then left alone, and a preview passes nil. Items are never dropped or reordered: an item whose
 // article cannot be fetched keeps the list-page teaser it already has.
+//
+// A refresh also reads what this process remembers of the feed's failed
+// articles, and reports what it tried for rememberArticles. A preview does
+// neither: it tries the first stories listed.
 func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []model.Item, known map[string]store.ArticleState, preview bool) (run articleRun) {
 	if f.Recipe.Full == nil || f.Recipe.Full.Selector == "" {
 		return run
@@ -65,7 +84,30 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 	// competes for the same budget, so without this priority a feed larger than
 	// the per-run cap would keep refreshing its newest stories and never reach
 	// the backlog behind them.
-	var missing, recent []int
+	//
+	// Among them, stories whose article this process has not tried lead, in
+	// list order. One whose article failed follows, least recently tried
+	// first, and only once its backoff has passed or while the story is
+	// recent: otherwise articles that always fail would head the queue at
+	// every refresh and take the whole budget from the stories behind them.
+	// Last come the stories whose article was fetched for a refresh that did
+	// not keep them (see unkept), which a list page longer than MAX_ITEMS
+	// shows at every refresh: fetching those again is rarely of use.
+	var failed map[articleKey]articleFailure
+	if !preview {
+		failed = s.articleFailures(f)
+	}
+	now := time.Now()
+	var fresh, again, recent []int
+	// tries holds the stories without a stored body that are queued: when
+	// each was last tried, whether that try was fetched in vain, and whether
+	// a failure of its own in this round backs it off.
+	type try struct {
+		last   time.Time
+		unkept bool
+		counts bool
+	}
+	tries := map[int]try{}
 	for i := range items {
 		if items[i].URL == "" {
 			continue
@@ -75,15 +117,46 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 		if prior.HasBody {
 			run.had++
 		}
+		// A source may finish an article minutes after listing it.
+		isRecent := ok && (prior.FirstSeen.IsZero() || now.Sub(prior.FirstSeen) <= articleRecency)
 		switch {
-		case preview, !ok, !prior.HasBody:
-			missing = append(missing, i)
-		case prior.FirstSeen.IsZero() || time.Since(prior.FirstSeen) <= articleRecency:
-			// A source may finish an article minutes after listing it.
+		case preview:
+			fresh = append(fresh, i)
+		case !ok, !prior.HasBody:
+			failure, tried := articleFailure{}, false
+			if len(failed) > 0 {
+				failure, tried = failed[keyOf(items[i].Key)]
+			}
+			switch {
+			case !tried:
+				fresh = append(fresh, i)
+				tries[i] = try{counts: true}
+			case !now.Before(failure.retry):
+				again = append(again, i)
+				tries[i] = try{last: failure.tried, unkept: failure.unkept, counts: true}
+			case isRecent:
+				// The article may not have been there yet. Trying again is
+				// the purpose of the first hour, so it adds no failure.
+				again = append(again, i)
+				tries[i] = try{last: failure.tried}
+			default:
+				run.waiting++
+			}
+		case isRecent:
 			recent = append(recent, i)
 		}
 	}
-	targets := append(missing, recent...)
+	sort.SliceStable(again, func(a, b int) bool {
+		one, other := tries[again[a]], tries[again[b]]
+		if one.unkept != other.unkept {
+			return other.unkept
+		}
+		return one.last.Before(other.last)
+	})
+	// Stories waiting out a backoff are not queued, so they are not a backlog
+	// the next refresh would fetch either.
+	missing := append(fresh, again...)
+	targets := append(missing[:len(missing):len(missing)], recent...)
 	if len(targets) > limit {
 		targets = targets[:limit]
 	}
@@ -107,6 +180,8 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 		go func() {
 			defer wg.Done()
 			for i := range queue {
+				// A story handed over after the deadline was not tried.
+				live := ctx.Err() == nil
 				body, err := s.article(ctx, f, items[i].URL)
 				mu.Lock()
 				if err != nil {
@@ -117,6 +192,16 @@ func (s *Scheduler) fetchArticles(ctx context.Context, f model.Feed, items []mod
 					if body != "" {
 						run.fetched = append(run.fetched, items[i].Key)
 					}
+				}
+				if queued, ok := tries[i]; ok && live {
+					outcome := articleDeferred
+					switch {
+					case err == nil && body != "":
+						outcome = articleStored
+					case queued.counts && ownFault(body, err):
+						outcome = articleFault
+					}
+					run.tried = append(run.tried, articleTry{key: items[i].Key, outcome: outcome})
 				}
 				mu.Unlock()
 			}
@@ -180,8 +265,13 @@ func (s *Scheduler) article(ctx context.Context, f model.Feed, rawURL string) (s
 	if err != nil {
 		return "", err
 	}
+	// From here on a failure is the page's own; see ownFault.
 	if r.Status == 304 {
-		return "", fmt.Errorf("source returned 304 for an article page")
+		return "", pageFault{fmt.Errorf("source returned 304 for an article page")}
 	}
-	return extract.Article(r.Body, r.URL, f.Recipe)
+	body, err := extract.Article(r.Body, r.URL, f.Recipe)
+	if err != nil {
+		return "", pageFault{err}
+	}
+	return body, nil
 }
